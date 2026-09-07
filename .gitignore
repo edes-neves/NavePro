@@ -1,8 +1,29 @@
+# Ambientes, IDEs e caches
 /.idea
-/SistemaEnommerce
-/__pycache__
-/build
-/config.json
-/novohinario.spec
-/tempCodeRunnerFile.py
+/.venv
 /venv
+/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Projetos antigos / não relacionados
+/SistemaEnommerce
+/Sistema.AppDir
+/hinario.py
+/novohinario.py
+/novohinario.spec
+
+# Builds e artefatos gerados
+/build
+/dist
+/AppDir
+/tmp
+/NavePro.zip
+/appimagetool-*.AppImage
+
+# Configuração local e utilitários
+/config.json
+/tempCodeRunnerFile.py
+
+# Banco de dados local (não versionar)
+*.db

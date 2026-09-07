@@ -1,0 +1,32 @@
++ Thought: 5.0s
+O appimagetool já está instalado e a pasta AppDir/ já está quase pronta. Segue o passo a passo:
+1. Garantir que a versão corrigida está na AppDir
+O NavePro.py corrigido já está em AppDir/usr/bin/NavePro.py (sincronizei antes). Se você editar o código de novo, rode:
+cp NavePro.py AppDir/usr/bin/NavePro.py
+2. Copiar os recursos que o app procura (opcional, recomendado)
+O script procura Icon.xbm (ícone da janela), midia.db e uploads/ ao lado do próprio script (AppDir/usr/bin/). O app tem fallback se não existirem, mas é melhor incluir:
+cp Icon.xbm AppDir/usr/bin/
+# se existirem no projeto:
+cp midia.db AppDir/usr/bin/ 2>/dev/null
+cp -r uploads AppDir/usr/bin/ 2>/dev/null
+3. Limpar o pycache (evita arquivos desnecessários)
+rm -rf AppDir/usr/bin/__pycache__
+4. Verificar a estrutura antes de empacotar
+Deve ficar assim:
+AppDir/
+├── AppRun               (executa o NavePro.py via python3)
+├── .DirIcon -> Icon.png
+├── Icon.png
+├── navepro.desktop      (Name=NavePro, Exec=NavePro, Icon=Icon)
+└── usr/bin/
+    ├── NavePro.py
+    └── Icon.xbm
+Confira que AppRun e navepro.desktop estão com permissão de execução:
+chmod +x AppDir/AppRun AppDir/navepro.desktop
+5. Gerar o .AppImage
+ARCH=x86_64 appimagetool AppDir NavePro.AppImage
+Use ARCH=$(uname -m) se não for x86_64 (ou apenas appimagetool AppDir). Na primeira execução ele baixa o "runtime" — precisa de internet uma única vez.
+6. Testar
+chmod +x NavePro.AppImage
+./NavePro.AppImage
+Pronto. O arquivo NavePro.AppImage é o app empacotado — pode copiar para outras máquinas (precisando de python3 e tkinter instalados, já que o AppRun usa o python do sistema).
