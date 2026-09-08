@@ -1,0 +1,64 @@
+# NavePro.AppImage — como gerar (PyInstaller + appimagetool)
+
+O AppImage é **autocontido**: o binário PyInstaller embute o interpretador
+Python e o **Tk 8.6 do sistema**, então NÃO precisa de python3/tkinter
+instalados na máquina de destino — e as fontes/botões ficam iguais em
+qualquer lugar.
+
+> Por que Tk 8.6? O Tk 9.0 (ex.: do python/conda) **não resolve os aliases
+> de fonte do fontconfig**: "Arial" vira `fixed` (fonte bitmap minúscula),
+> deixando textos pequenos e botões "quadradinhos". Já o Tk 8.6 resolve
+> "Arial" → Liberation Sans, "Montserrat" (se instalada) e "Noto Sans".
+> **Empacote com o `python` do sistema (Tk 8.6)** — o mesmo que roda bem o
+> `python NavePro.py`.
+
+## Passo a passo
+
+1. **Empacotar com PyInstaller** (na raiz do projeto). Use um **Python que
+   tenha Tk 8.6** — neste sistema, `/usr/sbin/python`:
+
+   ```bash
+   /usr/sbin/python -m PyInstaller --noconfirm --clean --onefile \
+       --name NavePro --hidden-import "PIL._tkinter_finder" \
+       --add-data "Icon.xbm:." --add-data "Icon.png:." NavePro.py
+   ```
+   Gera `dist/NavePro` (binário único, ~51 MB).
+
+   > `PIL._tkinter_finder` é necessário para o `ImageTk` (logo) funcionar no
+   > modo empacotado; sem ele o PyInstaller não o coleta e o logo não aparece.
+   > `Icon.png` precisa ser empacotado (logo) além de `Icon.xbm` (ícone da janela).
+
+   > Para conferir qual Tk o python usa: `python -c "import tkinter; print(tkinter.TkVersion)"`.
+   > Se for 9.0, o AppImage terá fontes minúsculas/quadradinhos — use um com Tk 8.6.
+
+2. **Preparar o AppDir**:
+
+   ```bash
+   cp dist/NavePro AppDir/usr/bin/NavePro
+   chmod +x AppDir/usr/bin/NavePro
+   # AppDir/AppRun já executa "$APPDIR/usr/bin/NavePro"
+   ```
+
+3. **Gerar o AppImage**:
+
+   ```bash
+   rm -f NavePro.AppImage
+   ARCH=x86_64 appimagetool AppDir NavePro.AppImage
+   ```
+   Use `ARCH=$(uname -m)` se a máquina não for x86_64.
+
+4. **Testar**:
+
+   ```bash
+   chmod +x NavePro.AppImage
+   ./NavePro.AppImage
+   ```
+
+## Observações
+
+- `python NavePro.py` (código-fonte) é a forma de desenvolvimento; o
+  AppImage é apenas o pacote de distribuição.
+- A cada mudança no código: repita o passo 1 e o passo 3 (o binário embute
+  o fonte).
+- O ícone `Icon.xbm` é embutido dentro do binário (usado como ícone das
+  janelas do Tk).

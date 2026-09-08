@@ -1,0 +1,30 @@
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+python
+
+# ── Build (PyInstaller + AppImage) ─────────────────────
+build/
+dist/
+*.spec.bak
+squashfs-root/
+AppDir/usr/bin/NavePro
+NavePro.AppImage
+appimagetool
+
+# ── Dados locais / runtime (não versionar) ─────────────
+config.json
+tempCodeRunnerFile.py
+
+# ── Cópias antigas / projetos não relacionados ─────────
+tmp/
+NavePro.zip
+Sistema.AppDir/
+SistemaEnommerce/
+
+# ── Editores ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=NavePro
+Exec=NavePro
+Icon=Icon
+Categories=Utility;
+StartupWMClass=Navepro
