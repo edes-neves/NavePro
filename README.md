@@ -115,22 +115,35 @@ Notas:
 
 ## Como executar
 
-**Requisitos:** Python 3 + Tkinter (no Ubuntu: `sudo apt install python3-tk`).
+**Requisitos (desenvolvimento):** Python 3 + Tkinter, idealmente o **Tk 9.0**
+(ex.: python do conda). Em Ubuntu, `python3 -c "import tkinter"` vira Tk 8.6 e
+renderiza fontes pequenas — use `python NavePro.py` com o ambiente que tem
+Tk 9.0.
 
 ```bash
-python3 NavePro.py
+python NavePro.py
 ```
 
+> O AppImage (seção abaixo) já resolve isso: embute o Tk 9.0.
+
 ### Gerar AppImage
-Siga o passo a passo em `Gerar.AppImage` (resumo):
+O AppImage é **autocontido** (PyInstaller embute Python + **Tk 9.0**), então
+não precisa de python3/tkinter na máquina de destino e as fontes ficam
+idênticas em qualquer lugar. Faça pela ordem do `Gerar.AppImage` (resumo):
 ```bash
-cp NavePro.py AppDir/usr/bin/NavePro.py
-chmod +x AppDir/AppRun AppDir/navepro.desktop
+python -m PyInstaller --noconfirm --clean --onefile \
+    --name NavePro --add-data "Icon.xbm:." NavePro.py   # gera dist/NavePro
+cp dist/NavePro AppDir/usr/bin/NavePro && chmod +x AppDir/usr/bin/NavePro
 ARCH=x86_64 appimagetool AppDir NavePro.AppImage
 ./NavePro.AppImage
 ```
 
-> Importante: **edite sempre `NavePro.py` na raiz** e só depois copie para `AppDir/usr/bin/`. As cópias em `AppDir/`, `tmp/` e `Sistema.AppDir/` são artefatos de build (ignorados pelo git).
+> **Por que PyInstaller?** O AppRun antigo usava o `python3` do sistema
+> (Tk 8.6), cujo fallback de fonte deixava textos minúsculos e botões
+> "quadradinhos". O binário PyInstaller garante o Tk 9.0 (mesmo do
+> terminal/conda) dentro do AppImage.
+> **Edite sempre `NavePro.py` na raiz** e repita os 2 comandos de build;
+> `AppDir/usr/bin/NavePro.py` não é mais usado (virou o binário).
 
 ---
 
