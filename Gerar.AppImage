@@ -1,23 +1,35 @@
 # NavPro.AppImage — como gerar (PyInstaller + appimagetool)
 
 O AppImage é **autocontido**: o binário PyInstaller embute o interpretador
-Python e o **Tk 9.0**, então NÃO precisa de python3/tkinter instalados na
-máquina de destino — e as fontes/botões ficam iguais em qualquer lugar.
+Python e o **Tk 8.6 do sistema**, então NÃO precisa de python3/tkinter
+instalados na máquina de destino — e as fontes/botões ficam iguais em
+qualquer lugar.
 
-> Por que Tk 9.0? Rodar via `python3` do sistema (Tk 8.6) deixava fontes
-> minúsculas e botões "quadradinhos" (fallback de fonte do X11). O Tk 9.0
-> tem motor de fonte novo e renderiza corretamente. Use o **mesmo `python`
-> do terminal** (conda/Tk 9.0) ao empacotar.
+> Por que Tk 8.6? O Tk 9.0 (ex.: do python/conda) **não resolve os aliases
+> de fonte do fontconfig**: "Arial" vira `fixed` (fonte bitmap minúscula),
+> deixando textos pequenos e botões "quadradinhos". Já o Tk 8.6 resolve
+> "Arial" → Liberation Sans, "Montserrat" (se instalada) e "Noto Sans".
+> **Empacote com o `python` do sistema (Tk 8.6)** — o mesmo que roda bem o
+> `python NavePro.py`.
 
 ## Passo a passo
 
-1. **Empacotar com PyInstaller** (na raiz do projeto):
+1. **Empacotar com PyInstaller** (na raiz do projeto). Use um **Python que
+   tenha Tk 8.6** — neste sistema, `/usr/sbin/python`:
 
    ```bash
-   python -m PyInstaller --noconfirm --clean --onefile \
-       --name NavePro --add-data "Icon.xbm:." NavePro.py
+   /usr/sbin/python -m PyInstaller --noconfirm --clean --onefile \
+       --name NavePro --hidden-import "PIL._tkinter_finder" \
+       --add-data "Icon.xbm:." --add-data "Icon.png:." NavePro.py
    ```
-   Gera `dist/NavePro` (binário único, ~33 MB).
+   Gera `dist/NavePro` (binário único, ~51 MB).
+
+   > `PIL._tkinter_finder` é necessário para o `ImageTk` (logo) funcionar no
+   > modo empacotado; sem ele o PyInstaller não o coleta e o logo não aparece.
+   > `Icon.png` precisa ser empacotado (logo) além de `Icon.xbm` (ícone da janela).
+
+   > Para conferir qual Tk o python usa: `python -c "import tkinter; print(tkinter.TkVersion)"`.
+   > Se for 9.0, o AppImage terá fontes minúsculas/quadradinhos — use um com Tk 8.6.
 
 2. **Preparar o AppDir**:
 

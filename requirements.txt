@@ -1,0 +1,14 @@
+# NavePro — dependências do projeto
+#
+# Instalar com um Python de Tk 8.6 (NÃO usar Tk 9.0: quebra as fontes):
+#   /usr/sbin/python -m pip install -r requirements.txt
+#
+# Python 3.10+ com tkinter/tk (Tk 8.6) já é obrigatório.
+
+# ── Runtime ──
+screeninfo>=0.7          # Detecção real de monitores (com fallback para xrandr/tkinter)
+Pillow>=10.0.0           # Logo/ícone na interface (ImageTk)
+
+# ── Build (gerar o AppImage) ──
+# https://github.com/pyinstaller/pyinstaller
+pyinstaller>=6.22.0

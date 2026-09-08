@@ -115,33 +115,41 @@ Notas:
 
 ## Como executar
 
-**Requisitos (desenvolvimento):** Python 3 + Tkinter, idealmente o **Tk 9.0**
-(ex.: python do conda). Em Ubuntu, `python3 -c "import tkinter"` vira Tk 8.6 e
-renderiza fontes pequenas — use `python NavePro.py` com o ambiente que tem
-Tk 9.0.
+**Requisitos (desenvolvimento):** Python 3 + Tkinter com **Tk 8.6** (o que
+resolve os aliases de fonte do fontconfig: "Arial" → Liberation Sans).
+O **Tk 9.0** (ex.: python do conda) **não** resolve esses aliases e deixa
+fontes minúsculas/botões "quadradinhos" — evite. Para o logo aparecer,
+instale o **Pillow (PIL)** no python usado para rodar/empacotar
+(`pip install Pillow`). O AppImage usa as fontes instaladas no sistema de
+destino; em qualquer Linux desktop (que tenha fontes liberation/dejavu/noto)
+o "Arial" resolve para uma sans-serif equivalente.
 
 ```bash
 python NavePro.py
 ```
 
-> O AppImage (seção abaixo) já resolve isso: embute o Tk 9.0.
+> O AppImage (seção abaixo) embute o mesmo Tk 8.6, então fica idêntico ao
+> `python NavePro.py`.
 
 ### Gerar AppImage
-O AppImage é **autocontido** (PyInstaller embute Python + **Tk 9.0**), então
+O AppImage é **autocontido** (PyInstaller embute Python + **Tk 8.6**), então
 não precisa de python3/tkinter na máquina de destino e as fontes ficam
-idênticas em qualquer lugar. Faça pela ordem do `Gerar.AppImage` (resumo):
+idênticas em qualquer lugar. Faça pela ordem do `Gerar.AppImage` (resumo),
+usando um python com Tk 8.6:
 ```bash
-python -m PyInstaller --noconfirm --clean --onefile \
-    --name NavePro --add-data "Icon.xbm:." NavePro.py   # gera dist/NavePro
+/usr/sbin/python -m PyInstaller --noconfirm --clean --onefile \
+    --name NavePro --hidden-import "PIL._tkinter_finder" \
+    --add-data "Icon.xbm:." --add-data "Icon.png:." NavePro.py   # gera dist/NavePro
 cp dist/NavePro AppDir/usr/bin/NavePro && chmod +x AppDir/usr/bin/NavePro
 ARCH=x86_64 appimagetool AppDir NavePro.AppImage
 ./NavePro.AppImage
 ```
 
 > **Por que PyInstaller?** O AppRun antigo usava o `python3` do sistema
-> (Tk 8.6), cujo fallback de fonte deixava textos minúsculos e botões
-> "quadradinhos". O binário PyInstaller garante o Tk 9.0 (mesmo do
-> terminal/conda) dentro do AppImage.
+> (Tk 8.6), que é o que funciona bem. A troca errada anterior para o **Tk 9.0**
+> (conda) quebrava as fontes: o Tk 9.0 não resolve "Arial" → Liberation Sans
+> e caía para a fonte bitmap `fixed` (minúscula + quadradinhos). O binário
+> PyInstaller garante o **Tk 8.6** dentro do AppImage.
 > **Edite sempre `NavePro.py` na raiz** e repita os 2 comandos de build;
 > `AppDir/usr/bin/NavePro.py` não é mais usado (virou o binário).
 

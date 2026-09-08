@@ -3173,7 +3173,7 @@ class AppInterface:
         logo_frame.pack(pady=(0, 8))
         try:
             from PIL import Image, ImageTk
-            logo_img = Image.open('Icon.png').resize((48, 48), Image.LANCZOS)
+            logo_img = Image.open(_caminho_recurso('Icon.png')).resize((48, 48), Image.LANCZOS)
             self._logo_tk = ImageTk.PhotoImage(logo_img)
             tk.Label(logo_frame, image=self._logo_tk, bg='#0d1117').pack(side='left', padx=(0, 10))
         except Exception:
