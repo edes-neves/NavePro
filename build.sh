@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
-# build.sh — Gera o NavePro.AppImage (PyInstaller + appimagetool)
+# build.sh — Gera o AppImage do NavePro (PyInstaller + appimagetool)
 #
-# Uso:  ./build.sh
-# Saída: NavePro.AppImage (executável, pronto para distribuir)
+# Uso:  ./build.sh [VERSÃO]
+#   ./build.sh           → usa a versão do tag git mais próximo (sem o 'v')
+#   ./build.sh 1.9.0     → usa a versão informada
+#   VERSION=1.9.0 ./build.sh
+#
+# Saída: NavePro-<VERSÃO>.AppImage (ex.: NavePro-1.9.0.AppImage)
+#
+# IMPORTANTE: a VERSÃO também é gravada em APP_VERSION no NavePro.py
+# (fonte único de verdade). Assim o AppImage baixado sempre mostra a
+# versão do seu release no GitHub — evita o problema de subir um release
+# 1.9.0 com um binário que ainda dizia 1.8.0.
 #
 # Requisitos:
 #   - Python com Tk **8.6** (ex.: /usr/sbin/python) — Tk 9.0 quebra as fontes.
@@ -19,7 +28,40 @@ APPIMAGE_TOOL="${APPIMAGE_TOOL:-appimagetool}"
 ARCH="${ARCH:-$(uname -m)}"
 
 # ────────────────────────────────────────────────────────────────────
-# 0. Pré-verificações
+# 0. Determinando a versão do release
+# ────────────────────────────────────────────────────────────────────
+VERSION=""
+if [ -n "${1:-}" ]; then
+    VERSION="$1"
+elif [ -n "${VERSION:-}" ]; then
+    VERSION="${VERSION}${1:+}"
+elif VERSION_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"; then
+    VERSION="${VERSION_TAG#v}"
+fi
+
+if [ -z "$VERSION" ]; then
+    echo "❌ Não foi possível determinar a versão."
+    echo "   Use:  ./build.sh 1.9.0      (ou VERSION=1.9.0, ou crie um tag git v1.9.0)"
+    exit 1
+fi
+
+# Valida formato X.Y.Z (ou X.Y)
+if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}([-+][0-9A-Za-z.]+)?$ ]]; then
+    echo "❌ Versão '$VERSION' em formato inválido (esperado algo como 1.9.0)."
+    exit 1
+fi
+
+# Sincroniza APP_VERSION no fonte (single source of truth) — só quando difere.
+if ! grep -q "^APP_VERSION: str = \"$VERSION\"$" "$APP_NAME.py"; then
+    echo "🔄 Gravando APP_VERSION = $VERSION em $APP_NAME.py"
+    sed -i "s/^APP_VERSION: str = \".*\"/APP_VERSION: str = \"$VERSION\"/" "$APP_NAME.py"
+    grep -q "^APP_VERSION: str = \"$VERSION\"$" "$APP_NAME.py" \
+        || { echo "❌ Não consegui atualizar APP_VERSION em $APP_NAME.py"; exit 1; }
+fi
+echo "✅ Versão do build: $VERSION (APP_VERSION = $VERSION em $APP_NAME.py)"
+
+# ────────────────────────────────────────────────────────────────────
+# 1. Pré-verificações
 # ────────────────────────────────────────────────────────────────────
 if ! command -v "$APPIMAGE_TOOL" >/dev/null 2>&1; then
     echo "❌ appimagetool não encontrado (procurei: $APPIMAGE_TOOL)."
@@ -60,7 +102,7 @@ done
 echo "✅ Dependências: PIL/Pillow e screeninfo OK"
 
 # ────────────────────────────────────────────────────────────────────
-# 1. Empacotar com PyInstaller (onefile)
+# 2. Empacotar com PyInstaller (onefile)
 # ────────────────────────────────────────────────────────────────────
 echo "📦 Empacotando com PyInstaller..."
 "$PYTHON_BIN" -m PyInstaller --noconfirm --clean --onefile \
@@ -72,24 +114,26 @@ echo "📦 Empacotando com PyInstaller..."
 echo "✅ Binário gerado: dist/$APP_NAME"
 
 # ────────────────────────────────────────────────────────────────────
-# 2. Montar o AppDir
+# 3. Montar o AppDir
 # ────────────────────────────────────────────────────────────────────
 echo "📁 Atualizando AppDir/usr/bin/$APP_NAME..."
 cp dist/"$APP_NAME" "AppDir/usr/bin/$APP_NAME"
 chmod 755 "AppDir/usr/bin/$APP_NAME"
 
 # ────────────────────────────────────────────────────────────────────
-# 3. Gerar o AppImage (perm. de execução só para o dono)
+# 4. Gerar o AppImage (perm. de execução só para o dono)
 # ────────────────────────────────────────────────────────────────────
-echo "📀 Gerando ${APP_NAME}.AppImage..."
-rm -f "${APP_NAME}.AppImage"
+APPIMAGE_FINAL="${APP_NAME}-${VERSION}.AppImage"
+echo "📀 Gerando ${APPIMAGE_FINAL}..."
+rm -f "${APPIMAGE_FINAL}"
 chmod +x AppDir/AppRun
-"$APPIMAGE_TOOL" AppDir "${APP_NAME}.AppImage"
+"$APPIMAGE_TOOL" AppDir "${APPIMAGE_FINAL}"
 
 # Permissão de execução somente para o usuário (700)
-chmod 700 "${APP_NAME}.AppImage"
-echo "✅ AppImage gerenciado: $(pwd)/${APP_NAME}.AppImage"
-ls -l "${APP_NAME}.AppImage"
+chmod 700 "${APPIMAGE_FINAL}"
+echo "✅ AppImage gerenciado: $(pwd)/${APPIMAGE_FINAL}"
+ls -l "${APPIMAGE_FINAL}"
 
 echo ""
-echo "🎉 Pronto! Para executar:  ./${APP_NAME}.AppImage"
+echo "🎉 Pronto! Para executar:  ./${APPIMAGE_FINAL}"
+echo "   Publique o release com:  gh release create v${VERSION} ${APPIMAGE_FINAL} --title \"NavePro ${VERSION}\" --notes \"...\" (ou anexe o arquivo no GitHub)"

@@ -12,6 +12,7 @@ dist/
 squashfs-root/
 AppDir/usr/bin/NavePro
 NavePro.AppImage
+NavePro-*.AppImage
 appimagetool
 
 # ── Dados locais / runtime (não versionar) ─────────────

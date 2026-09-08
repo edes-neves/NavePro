@@ -146,7 +146,7 @@ def _baixar(url, timeout: int = 8, **kwargs):
 # CONSTANTES
 # ────────────────────────────────────────────────────────────────────
 
-APP_VERSION: str = "1.8.0"
+APP_VERSION: str = "1.9.0"
 CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
 PLAYER_PADRAO: str = "smplayer"
 BACKEND_PORT: int = 5897

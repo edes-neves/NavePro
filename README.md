@@ -40,12 +40,20 @@ O NavePro consulta o repositório **`edes-neves/NavePro`** no GitHub:
 
 ### Como publicar uma versão nova
 
-1. Gere o AppImage novo (seção abaixo) e teste.
-2. Faça commit das mudanças e crie um **tag** na versão (ex.: `1.9.0`).
-3. Crie o release no GitHub anexando o AppImage (nome `NavePro-1.9.0.AppImage`). Exemplo com a CLI `gh`:
+1. Gere o AppImage novo **passando a versão** — o `build.sh` atualiza o `APP_VERSION` no `NavePro.py` e nomeia o arquivo com a versão:
 
    ```bash
-   gh release create v1.9.0 NavePro.AppImage --title "NavePro 1.9.0" --notes "O que mudou nesta versão..."
+   ./build.sh 1.9.0                 # gera NavePro-1.9.0.AppImage com versão 1.9.0 gravada
+   ./NavePro-1.9.0.AppImage         # teste
+   ```
+
+   > ⚠️ **Não pule a versão**: se criar um release `v1.9.0` com um AppImage ainda em `1.8.0`, o binário se achará desatualizado e oferecerá "atualizar" baixando a si mesmo. O `./build.sh <versão>` previne isso (grava e confere o `APP_VERSION`).
+
+2. Faça commit das mudanças e crie um **tag** na versão (ex.: `v1.9.0`).
+3. Crie o release no GitHub anexando o AppImage. Exemplo com a CLI `gh`:
+
+   ```bash
+   gh release create v1.9.0 NavePro-1.9.0.AppImage --title "NavePro 1.9.0" --notes "O que mudou nesta versão..."
    ```
 
 O app considera o `tag_name` do release mais recente como a versão a oferecer; o primeiro asset `*.AppImage` é o que será baixado.
@@ -172,7 +180,7 @@ idênticas em qualquer lugar. Use `build.sh` (reproduz o passo a passo do
 `Gerar.AppImage`) com um python de Tk 8.6:
 
 ```bash
-./build.sh          # usa o python com Tk 8.6; PYTHON_BIN=/usr/sbin/python ./build.sh
+./build.sh 1.9.0       # usa o python com Tk 8.6; PYTHON_BIN=.venv/bin/python ./build.sh
 ```
 
 Ou, manualmente:
@@ -181,8 +189,8 @@ Ou, manualmente:
     --name NavePro --hidden-import "PIL._tkinter_finder" \
     --add-data "Icon.xbm:." --add-data "Icon.png:." NavePro.py   # gera dist/NavePro
 cp dist/NavePro AppDir/usr/bin/NavePro && chmod +x AppDir/usr/bin/NavePro
-ARCH=x86_64 appimagetool AppDir NavePro.AppImage
-./NavePro.AppImage
+ARCH=x86_64 appimagetool AppDir NavePro-1.9.0.AppImage
+./NavePro-1.9.0.AppImage
 ```
 
 > **Por que PyInstaller?** O AppRun antigo usava o `python3` do sistema
