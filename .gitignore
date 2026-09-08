@@ -12,6 +12,7 @@
 /hinario.py
 /novohinario.py
 /novohinario.spec
+/NavePro.spec
 
 # Builds e artefatos gerados
 /build
@@ -19,6 +20,7 @@
 /AppDir
 /tmp
 /NavePro.zip
+/NavePro.AppImage
 /appimagetool-*.AppImage
 
 # Configuração local e utilitários

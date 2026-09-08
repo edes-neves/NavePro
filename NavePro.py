@@ -1269,6 +1269,30 @@ def get_monitors_config() -> List[MonitorInfo]:
 # ────────────────────────────────────────────────────────────────────
 
 
+def _normalizar_escala_tk(root) -> float:
+    """Garante texto legível e consistente entre Python/Tk diferentes.
+
+    O AppImage usa o python do sistema (AppRun), que pode ter um Tk com
+    'tk scaling' baixo (ex.: dpi desconhecido), deixando botões e fontes
+    minúsculos no monitor 1 e as letras pequenas no telão. Este ajuste
+    aplica um piso de zoom (1.3 px/ponto, ≈96dpi) em qualquer interpretador.
+    """
+    escala_min = 1.3
+    try:
+        pixels_por_pol = float(root.winfo_fpixels('1i'))
+        escala = pixels_por_pol / 72.0
+        if escala < escala_min:
+            escala = escala_min
+        root.tk.call('tk', 'scaling', escala)
+        return escala
+    except Exception:
+        try:
+            root.tk.call('tk', 'scaling', escala_min)
+        except Exception:
+            pass
+        return escala_min
+
+
 class TelaoWindow:
     """Janela de projeção exibida no telão (monitor secundário).
 
@@ -1285,6 +1309,7 @@ class TelaoWindow:
     def __init__(self, monitor_index: int = 1) -> None:
         self.root = tk.Tk(className="NavePro")
         self.root.title("TELÃO")
+        _normalizar_escala_tk(self.root)
         try:
             icon_path = _caminho_recurso("Icon.xbm")
             if os.path.exists(icon_path):
@@ -1370,7 +1395,7 @@ class TelaoWindow:
         self._slide_index = 0
         self._proj_cfg: dict = {
             "fonte": "Montserrat",
-            "tamanho_pct": 3.2,
+            "tamanho_pct": 5.0,
             "cor": "#FFFFFF",
             "duracao_seg": 30,
         }
@@ -1596,7 +1621,7 @@ class TelaoWindow:
         """Define as configurações de aparência da projeção de texto."""
         defaults = {
             "fonte": "Montserrat",
-            "tamanho_pct": 3.2,
+            "tamanho_pct": 5.0,
             "cor": "#FFFFFF",
             "duracao_seg": 30,
         }
@@ -1668,10 +1693,20 @@ class TelaoWindow:
         # Calcula largura de quebra e fonte inicial
         w = self.canvas.winfo_width() or self._monitor.width
         h = self.canvas.winfo_height() or self._monitor.height
-        wrap_width = max(200, int(w * 0.85))
-        tamanho = max(18, int(h * (float(cfg.get("tamanho_pct", 3.2)) / 100.0)))
+        wrap_width = max(200, int(w * 0.95))
+        tamanho = max(18, int(h * (float(cfg.get("tamanho_pct", 5.0)) / 100.0)))
         familia = cfg.get("fonte", "Montserrat")
         cor = cfg.get("cor", "#FFFFFF")
+
+        # Fallback de fonte: Montserrat/Arial podem não existir no python do
+        # sistema usado pelo AppImage; cai para uma fonte sans confirmada.
+        disp = set(tkfont.families(self.root))
+        if disp and familia not in disp:
+            familia = next(
+                (f for f in ("DejaVu Sans", "Liberation Sans", "Helvetica",
+                             "Noto Sans", "TkDefaultFont") if f in disp),
+                "TkDefaultFont")
+            cfg["fonte"] = familia
 
         # Ajusta tamanho para não transbordar verticalmente
         ref = tkfont.Font(family=familia, size=tamanho)
@@ -1683,7 +1718,7 @@ class TelaoWindow:
                 comp = ref.measure(parte)
                 linhas += max(1, int(comp / wrap_width)) if comp > wrap_width else 1
         altura_total = linhas * max(1, ref.metrics("linespace"))
-        max_altura = int(h * 0.85)
+        max_altura = int(h * 0.92)
         if altura_total > max_altura and altura_total > 0:
             fator = max_altura / altura_total
             tamanho = max(12, int(tamanho * fator))
@@ -2474,6 +2509,9 @@ class AppInterface:
         if 'GDK_BACKEND' not in os.environ:
             os.environ['GDK_BACKEND'] = 'x11'
         self.root = tk.Tk(className="NavePro")
+        # Normaliza a escala de fontes (AppImage usa o python do sistema,
+        # que pode ter 'tk scaling' baixo e deixar tudo minúsculo)
+        _normalizar_escala_tk(self.root)
         # Força tema clam via Tcl (acima do ttk.Style)
         try:
             self.root.tk.call('tk', 'Theme', 'SetTheme', 'clam')
@@ -2768,7 +2806,7 @@ class AppInterface:
         janela = parent or self.root
         cfg_atual = dict(getattr(self.player.telao, "_proj_cfg", {}))
         cfg_atual.setdefault("fonte", "Montserrat")
-        cfg_atual.setdefault("tamanho_pct", 3.2)
+        cfg_atual.setdefault("tamanho_pct", 5.0)
         cfg_atual.setdefault("cor", "#FFFFFF")
         cfg_atual.setdefault("duracao_seg", 30)
 
@@ -2802,7 +2840,7 @@ class AppInterface:
                  ).pack(fill='x')
         var_tamanho = tk.DoubleVar(value=float(cfg_atual["tamanho_pct"]))
         scale_tamanho = tk.Scale(
-            c_main, from_=1.0, to=12.0, resolution=0.2, orient="horizontal",
+            c_main, from_=1.0, to=15.0, resolution=0.2, orient="horizontal",
             variable=var_tamanho, bg='#0d1117', fg='#c9d1d9',
             troughcolor='#21262d', highlightthickness=0, font=("Arial", 10))
         scale_tamanho.pack(fill='x', pady=(0, 10))
@@ -4606,11 +4644,11 @@ class AppInterface:
                  ).pack(side='left', padx=(14, 2))
         tk.Button(nav_frame, text="A−", font=("Arial", 11, "bold"),
                   bg='#8957e5', fg='white', activebackground='#a371f7',
-                  command=lambda: _ajustar_fonte(-0.4), cursor='hand2', padx=10, pady=2
+                  command=lambda: _ajustar_fonte(-0.8), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
         tk.Button(nav_frame, text="A+", font=("Arial", 11, "bold"),
                   bg='#8957e5', fg='white', activebackground='#a371f7',
-                  command=lambda: _ajustar_fonte(0.4), cursor='hand2', padx=10, pady=2
+                  command=lambda: _ajustar_fonte(0.8), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
 
         label_slide = tk.Label(nav_frame, text="Sem projeção",
@@ -4664,7 +4702,7 @@ class AppInterface:
             if cfg is None:
                 telao.configurar_projecao()
                 cfg = telao._proj_cfg
-            novo = min(12.0, max(1.0, float(cfg.get("tamanho_pct", 3.2)) + delta))
+            novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
             cfg["tamanho_pct"] = novo
             telao._proj_cfg = cfg
             if getattr(telao, "_em_slides", False) and telao._slides:
@@ -5463,11 +5501,11 @@ class AppInterface:
                  ).pack(side='left', padx=(14, 2))
         tk.Button(nav_frame, text="A−", font=("Arial", 11, "bold"),
                   bg='#8957e5', fg='white', activebackground='#a371f7',
-                  command=lambda: _ajustar_fonte(-0.4), cursor='hand2', padx=10, pady=2
+                  command=lambda: _ajustar_fonte(-0.8), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
         tk.Button(nav_frame, text="A+", font=("Arial", 11, "bold"),
                   bg='#8957e5', fg='white', activebackground='#a371f7',
-                  command=lambda: _ajustar_fonte(0.4), cursor='hand2', padx=10, pady=2
+                  command=lambda: _ajustar_fonte(0.8), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
 
         label_slide = tk.Label(nav_frame, text="Sem projeção",
@@ -5567,7 +5605,7 @@ class AppInterface:
             if cfg is None:
                 telao.configurar_projecao()
                 cfg = telao._proj_cfg
-            novo = min(12.0, max(1.0, float(cfg.get("tamanho_pct", 3.2)) + delta))
+            novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
             cfg["tamanho_pct"] = novo
             telao._proj_cfg = cfg
             if getattr(telao, "_em_slides", False) and telao._slides:
