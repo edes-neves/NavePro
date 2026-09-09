@@ -37,6 +37,11 @@ finish-args:
   - --filesystem=xdg-download
   # Players de mídia do sistema (smplayer/mpv/vlc) via /run/host/usr/bin
   - --filesystem=host-os
+  # flatpak-spawn --host: executa o smplayer/mpv/vlc DO SISTEMA fora do sandbox
+  - --talk-name=org.freedesktop.Flatpak
+  # Pausa/sincronização via D-Bus (MPRIS) com o player do host
+  - --talk-name=org.mpris.MediaPlayer2.smplayer
+  - --talk-name=org.mpris.MediaPlayer2.vlc
   # Notificações e "abrir pasta Downloads"
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.freedesktop.FileManager1
@@ -106,15 +111,20 @@ modules:
     buildsystem: simple
     build-commands:
       - install -Dm755 navepro.sh /app/bin/navepro
+      - install -Dm755 smplayer-host /app/bin/smplayer
       - install -Dm644 NavePro.py config.json AS21.xml biblia-em-txt.txt -t /app/lib/navepro/
       - install -Dm644 Icon.png Icon.xbm midia.db -t /app/lib/navepro/
-      - cp -r NHA HASD icones /app/lib/navepro/
+      # Sem icones/: os botões usam emojis coloridos (runtime traz NotoColorEmoji),
+      # como no AppImage. Os PNGs amarelos ficariam feios/desnecessários.
+      - cp -r NHA HASD /app/lib/navepro/
       - install -Dm644 io.github.edesneves.NavePro.desktop -t /app/share/applications/
       - install -Dm644 io.github.edesneves.NavePro.metainfo.xml -t /app/share/metainfo/
       - install -Dm644 Icon.png /app/share/icons/hicolor/256x256/apps/io.github.edesneves.NavePro.png
     sources:
       - type: file
         path: navepro.sh
+      - type: file
+        path: smplayer-host
       - type: file
         path: ../NavePro.py
       - type: file
@@ -135,9 +145,6 @@ modules:
       - type: dir
         path: ../HASD
         dest: HASD
-      - type: dir
-        path: ../icones
-        dest: icones
       - type: file
         path: io.github.edesneves.NavePro.desktop
       - type: file
