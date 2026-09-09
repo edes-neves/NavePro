@@ -1,4 +1,4 @@
-# NavPro.AppImage — como gerar (PyInstaller + appimagetool)
+# NavePro-<VERSÃO>.AppImage — como gerar (PyInstaller + appimagetool)
 
 O AppImage é **autocontido**: o binário PyInstaller embute o interpretador
 Python e o **Tk 8.6 do sistema**, então NÃO precisa de python3/tkinter
@@ -12,7 +12,26 @@ qualquer lugar.
 > **Empacote com o `python` do sistema (Tk 8.6)** — o mesmo que roda bem o
 > `python NavePro.py`.
 
-## Passo a passo
+## Passo a passo (recomendado — versão automática)
+
+O `build.sh` cuida de tudo o que há abaixo e ainda **grava a versão no
+NavePro.py** (`APP_VERSION`) para o AppImage sempre mostrar a mesma versão
+do seu release no GitHub:
+
+```bash
+PYTHON_BIN=.venv/bin/python ./build.sh 1.9.0
+./NavePro-1.9.0.AppImage        # testar
+```
+
+A versão também pode vir de `VERSION=1.9.0 ./build.sh` ou do tag git
+mais próximo (`./build.sh`, ex.: `v1.9.0` → 1.9.0).
+
+> ⚠️ **Sempre passe a mesma versão do release que vai criar.** Se o nº do
+> release no GitHub for maior que o `APP_VERSION` gravado no binário,
+> o app vai achar que está desatualizado (e vai oferecer "atualizar"
+> baixando a si mesmo). Use o `build.sh`, que evita isso.
+
+## Passo a passo (manual)
 
 1. **Empacotar com PyInstaller** (na raiz do projeto). Use um **Python que
    tenha Tk 8.6** — neste sistema, `/usr/sbin/python`:
@@ -42,23 +61,34 @@ qualquer lugar.
 3. **Gerar o AppImage**:
 
    ```bash
-   rm -f NavePro.AppImage
-   ARCH=x86_64 appimagetool AppDir NavePro.AppImage
+   rm -f NavePro-1.9.0.AppImage
+   ARCH=x86_64 appimagetool AppDir NavePro-1.9.0.AppImage
    ```
    Use `ARCH=$(uname -m)` se a máquina não for x86_64.
 
 4. **Testar**:
 
    ```bash
-   chmod +x NavePro.AppImage
-   ./NavePro.AppImage
+   chmod +x NavePro-1.9.0.AppImage
+   ./NavePro-1.9.0.AppImage
    ```
+
+## Para publicar uma versão nova no GitHub (Release)
+
+```bash
+./build.sh 1.9.0                                            # AppImage já com a versão 1.9.0
+gh release create v1.9.0 NavePro-1.9.0.AppImage \
+    --title "NavePro 1.9.0" --notes "Novidades desta versão..."
+```
+
+O app em execução detecta o `v1.9.0`, avisa o usuário e baixa
+`NavePro-1.9.0.AppImage` para `~/Downloads`.
 
 ## Observações
 
 - `python NavePro.py` (código-fonte) é a forma de desenvolvimento; o
   AppImage é apenas o pacote de distribuição.
-- A cada mudança no código: repita o passo 1 e o passo 3 (o binário embute
-  o fonte).
+- A cada mudança no código: gere um novo AppImage com `build.sh` (o binário
+  embute o fonte), **atualizando a versão**.
 - O ícone `Icon.xbm` é embutido dentro do binário (usado como ícone das
   janelas do Tk).

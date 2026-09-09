@@ -1,6 +1,6 @@
 """
 NavePro - Sistema de Projeção para Igrejas
-Versão: 1.8.0
+Versão: 1.9.1
 Licença: GPLv3
 Autor: José Edes Neves - Julho 2026 edes.neves7@gmail.com
 Aplicação para reprodução de mídia com projeção em telão,
@@ -17,6 +17,7 @@ import shutil
 import signal
 import sqlite3
 import subprocess
+import ssl
 import sys
 import threading
 import time
@@ -41,13 +42,127 @@ except ImportError:
     _HAS_SCREENINFO = False
 
 # ────────────────────────────────────────────────────────────────────
+# AMBIENTE LIMPO PARA PROCESSOS EXTERNOS
+# ────────────────────────────────────────────────────────────────────
+
+def _ambiente_sem_appimage() -> dict[str, str]:
+    """Retorna um ambiente SEM as bibliotecas embutidas do AppImage.
+
+    Quando o NavePro roda dentro de um AppImage, o runtime injeta
+    LD_LIBRARY_PATH (e ARGV0/APPDIR/OWD) apontando para as libs embutidas
+    (fontconfig, pango, glib...). Ao lançar programas do sistema
+    (smplayer -> mpv, ffprobe, dbus-send, vlc, xrandr...), essa variável
+    faz com que eles carreguem versões ERRADAS das bibliotecas e quebrem
+    com "symbol lookup error" (ex.: libpangoft2 vs fontconfig).
+
+    Aqui removemos QUALQUER LDLIBRARY_PATH herdado do AppImage antes de
+    executar programas externos. O processo NavePro já carregou todas as
+    libs que precisa em memória no arranque, então é seguro repassar
+    um ambiente sem essa variável aos filhos do sistema.
+    """
+    env = os.environ.copy()
+    for var in ('LD_LIBRARY_PATH', 'APPDIR', 'APPIMAGE', 'OWD', 'ARGV0'):
+        env.pop(var, None)
+    return env
+
+
+# ────────────────────────────────────────────────────────────────────
+# CONTEXTO SSL USANDO OS CERTIFICADOS DO SISTEMA
+# ────────────────────────────────────────────────────────────────────
+
+_SSL_CONTEXTO: Optional[ssl.SSLContext] = None
+_SSL_CONTEXTO_LOCK: threading.Lock = threading.Lock()
+# Locais comuns do bundle de CA do sistema
+_CAMINHOS_CACERT: tuple[str, ...] = (
+    "/etc/ssl/certs/ca-certificates.crt",   # Debian/Ubuntu/derivados (BigLinux)
+    "/etc/ssl/cert.pem",                    # macOS/Fedora
+    "/etc/pki/tls/certs/ca-bundle.crt",     # RHEL/Fedora
+    "/etc/ssl/ca-bundle.pem",               # openSUSE
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+)
+# Caminhos onde o host pode ter CAs corporativas (MITM/proxy) adicionais
+_CAMINHOS_CLIENTE: tuple[str, ...] = (
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/cert.pem",
+)
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Retorna um contexto SSL com as CAs do SISTEMA (não as embutidas).
+
+    Dentro do AppImage, o Python embutido usa um bundle de CA próprio que
+    nem sempre confia nas raízes (ex.: proxy corporativo, ou distribuições
+    em que as CAs ficam em local específico — como no BigLinux). Isso
+    causa "SSL: CERTIFICATE_VERIFY_FAILED". Aqui carregamos o bundle de CA
+    do sistema do host de verdade.
+    """
+    global _SSL_CONTEXTO
+    if _SSL_CONTEXTO is not None:
+        return _SSL_CONTEXTO
+    with _SSL_CONTEXTO_LOCK:
+        if _SSL_CONTEXTO is not None:
+            return _SSL_CONTEXTO
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+
+        # 1) Tenta carregar explicitamente o bundle de CA do sistema.
+        for cafile in _CAMINHOS_CACERT:
+            try:
+                if os.path.isfile(cafile):
+                    ctx.load_verify_locations(cafile=cafile)
+                    break
+            except (ssl.SSLError, OSError):
+                continue
+
+        # 2) Tenta um bundle de cliente/CA corporativa (evita MITM falso).
+        for cafile in _CAMINHOS_CLIENTE:
+            try:
+                if os.path.isfile(cafile):
+                    ctx.load_verify_locations(cafile=cafile)
+                    break
+            except (ssl.SSLError, OSError):
+                continue
+
+        _SSL_CONTEXTO = ctx
+        return ctx
+
+
+def _baixar(url, timeout: int = 8, **kwargs):
+    """Faz uma requisição HTTPS usando o certificado do sistema.
+
+    Aceita uma URL (str) ou um urllib.request.Request já montado
+    (headers/User-Agent etc.). Encapsular um Request em outro Request
+    quebra a URL e levanta 'ValueError: unknown url type'.
+    """
+    if not isinstance(url, urllib.request.Request):
+        url = urllib.request.Request(url, **kwargs)
+    return urllib.request.urlopen(url, timeout=timeout, context=_ssl_context())
+
+
+# ────────────────────────────────────────────────────────────────────
 # CONSTANTES
 # ────────────────────────────────────────────────────────────────────
 
+APP_VERSION: str = "1.9.1"
 CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
 PLAYER_PADRAO: str = "smplayer"
 BACKEND_PORT: int = 5897
 BACKEND_URL: str = f"http://127.0.0.1:{BACKEND_PORT}"
+
+# ── Atualização automática (GitHub Releases) ──
+# O NavePro consulta o release mais recente em
+# https://github.com/{GITHUB_REPO}/releases/latest e, se houver versão
+# nova, oferece baixar o AppImage para ~/Downloads com instruções de
+# substituição do arquivo antigo.
+GITHUB_USER: str = "edes-neves"
+GITHUB_REPO: str = "NavePro"
+RELEASES_API_URL: str = (
+    f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
+)
+SEGUNDOS_PARA_VERIFICAR_ATUALIZACAO: int = 20
 
 EXTENSOES_VIDEO: frozenset = frozenset({'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm'})
 EXTENSOES_AUDIO: frozenset = frozenset({'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'})
@@ -92,6 +207,69 @@ UPLOAD_FOLDER: str = os.path.join(DATA_USER_DIR, "uploads")
 DIR_BASE: str = _caminho_base()
 DB_EMBUTIDO: str = _caminho_recurso("midia.db")
 UPLOADS_EMBUTIDO: str = _caminho_recurso("uploads")
+ANUNCIOS_FILE: str = os.path.join(DATA_USER_DIR, "anuncios.json")
+
+
+# ────────────────────────────────────────────────────────────────────
+# ATUALIZAÇÃO AUTOMÁTICA
+# ────────────────────────────────────────────────────────────────────
+
+
+def _versao_tuple(versao: str) -> tuple:
+    """Converte '1.8.0'/'v1.9.1' em tupla numérica para comparação."""
+    partes: list[int] = []
+    for p in re.split(r'\D+', versao):
+        if p:
+            try:
+                partes.append(int(p))
+            except ValueError:
+                partes.append(0)
+    return tuple(partes) or (0,)
+
+
+def _versao_nova(remota: str, local: str = APP_VERSION) -> bool:
+    """True se a versão remota (GitHub) for maior que a instalada."""
+    return _versao_tuple(remota) > _versao_tuple(local)
+
+
+def _buscar_release_latest(timeout: int = 10) -> Optional[dict]:
+    """Consulta o release mais recente na API do GitHub (thread-safe).
+
+    Retorna dict com 'tag_name', 'name', 'body' e 'assets' (lista de
+    assets do release, cada um com 'name' e 'browser_download_url').
+    """
+    try:
+        req = urllib.request.Request(
+            RELEASES_API_URL, headers={
+                "User-Agent": f"NavePro/{APP_VERSION}",
+                "Accept": "application/vnd.github+json",
+            }
+        )
+        with _baixar(req, timeout=timeout) as resp:
+            dados = json.loads(resp.read().decode('utf-8'))
+        if not isinstance(dados, dict) or not dados.get('tag_name'):
+            return None
+        return dados
+    except Exception as e:
+        print(f"⚠️  Verificação de atualização falhou: {e}")
+        return None
+
+
+def _procurar_asset_appimage(release: dict) -> Optional[dict]:
+    """Encontra o primeiro asset .AppImage do release."""
+    for asset in release.get('assets', []) or []:
+        nome = str(asset.get('name', '')).lower()
+        if nome.endswith('.appimage'):
+            return asset
+    return None
+
+
+def _pasta_downloads() -> str:
+    """Retorna ~/Downloads (ou ~ como fallback) para salvar o instalador."""
+    downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+    if not os.path.isdir(downloads):
+        downloads = os.path.expanduser("~")
+    return downloads
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -1070,16 +1248,17 @@ def obter_temperatura(cidade: str, estado: str) -> str:
         for consulta in consultas:
             geo_url = (
                 f"https://geocoding-api.open-meteo.com/v1/search?"
-                f"name={urllib.parse.quote(consulta)}&count=5&language=pt&format=json"
+                f"name={urllib.parse.quote(consulta)}&count=8&language=pt&format=json"
                 f"&country=BR"
             )
             if estado:
                 geo_url += f"&admin1={urllib.parse.quote(estado_nome)}"
 
             try:
-                with urllib.request.urlopen(geo_url, timeout=5) as response:
+                with _baixar(geo_url, timeout=8) as response:
                     geo_data = json.loads(response.read().decode())
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ Geocoding falhou ({consulta!r}): {e}")
                 continue
 
             if 'results' not in geo_data or not geo_data['results']:
@@ -1097,6 +1276,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                     break
 
             if resultado is None:
+                print(f"⚠️ Geocoding sem resultado válido para {consulta!r}")
                 continue
 
             lat = resultado.get('latitude')
@@ -1108,8 +1288,12 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                 f"https://api.open-meteo.com/v1/forecast?"
                 f"latitude={lat}&longitude={lon}&current_weather=true"
             )
-            with urllib.request.urlopen(weather_url, timeout=5) as response:
-                weather_data = json.loads(response.read().decode())
+            try:
+                with _baixar(weather_url, timeout=8) as response:
+                    weather_data = json.loads(response.read().decode())
+            except Exception as e:
+                print(f"⚠️ Weather falhou ({cidade!r} {lat},{lon}): {e}")
+                continue
 
             if 'current_weather' in weather_data:
                 temp = weather_data['current_weather']['temperature']
@@ -1125,7 +1309,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                 f"&format=json&limit=3"
             )
             req = urllib.request.Request(geo_url, headers={'User-Agent': 'HinarioApp/1.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
+            with _baixar(req, timeout=8) as response:
                 geo_data = json.loads(response.read().decode())
 
             for item in geo_data:
@@ -1137,15 +1321,15 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                     f"https://api.open-meteo.com/v1/forecast?"
                     f"latitude={lat}&longitude={lon}&current_weather=true"
                 )
-                with urllib.request.urlopen(weather_url, timeout=5) as response:
+                with _baixar(weather_url, timeout=8) as response:
                     weather_data = json.loads(response.read().decode())
                 if 'current_weather' in weather_data:
                     return f"{weather_data['current_weather']['temperature']}°C"
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ Nominatim falhou ({cidade!r}): {e}")
             pass
 
         if estado:
-            # Remove acentos do nome do estado para a mensagem
             estado_upper = remover_acentos(estado_nome).upper()
             return f"NAO PERTENCE AO ESTADO DE: {estado_upper}."
         return "NAO ENCONTRADA"
@@ -1210,7 +1394,8 @@ def get_monitors_config() -> List[MonitorInfo]:
     # diferentes (ex.: 1920x1080 + 1280x720).
     try:
         result = subprocess.run(
-            ['xrandr'], capture_output=True, text=True, timeout=5
+            ['xrandr'], capture_output=True, text=True, timeout=5,
+            env=_ambiente_sem_appimage()
         )
         connected: list[MonitorInfo] = []
         for line in result.stdout.split('\n'):
@@ -2071,7 +2256,8 @@ class MediaPlayer:
                 ['ffprobe', '-v', 'error', '-show_entries',
                  'format=duration', '-of',
                  'default=noprint_wrappers=1:nokey=1', arquivo],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
+                env=_ambiente_sem_appimage()
             )
             if resultado.returncode == 0 and resultado.stdout.strip():
                 duracao = float(resultado.stdout.strip())
@@ -2106,7 +2292,9 @@ class MediaPlayer:
             cmd = self._montar_comando_player(arquivo, mx, my, mw, mh)
 
             print(f"🎬 Executando: {' '.join(cmd)}")
-            proc = subprocess.Popen(cmd, start_new_session=True)
+            proc = subprocess.Popen(
+                cmd, start_new_session=True, env=_ambiente_sem_appimage()
+            )
 
             with self._process_lock:
                 self._process = proc
@@ -2195,7 +2383,7 @@ class MediaPlayer:
                      f'--dest={dest}',
                      '/org/mpris/MediaPlayer2',
                      'org.mpris.MediaPlayer2.Player.PlayPause'],
-                    timeout=1, capture_output=True
+                    timeout=1, capture_output=True, env=_ambiente_sem_appimage()
                 )
                 return True
             except Exception:
@@ -2209,7 +2397,7 @@ class MediaPlayer:
                  f'--dest={other_dest}',
                  '/org/mpris/MediaPlayer2',
                  'org.mpris.MediaPlayer2.Player.PlayPause'],
-                timeout=1, capture_output=True
+                timeout=1, capture_output=True, env=_ambiente_sem_appimage()
             )
             return True
         except Exception:
@@ -2252,7 +2440,8 @@ class MediaPlayer:
                  '/org/mpris/MediaPlayer2',
                  'org.freedesktop.DBus.Properties.GetAll',
                  'string:org.mpris.MediaPlayer2.Player'],
-                capture_output=True, text=True, timeout=2
+                capture_output=True, text=True, timeout=2,
+                env=_ambiente_sem_appimage()
             )
 
             stdout = result.stdout
@@ -2371,6 +2560,90 @@ def _numero_do_titulo(titulo: str) -> Optional[int]:
     """Extrai o número inicial do título de um hino ("11 - Nome")."""
     m = re.match(r"^\s*(\d+)", titulo or "")
     return int(m.group(1)) if m else None
+
+
+# ────────────────────────────────────────────────────────────────────
+# ANÚNCIOS — ARMAZENAMENTO EM ARQUIVO JSON (FORA DO BANCO DE DADOS)
+# ────────────────────────────────────────────────────────────────────
+
+
+def _carregar_anuncios_json() -> List[Dict]:
+    """Lê ~/.navepro/anuncios.json e devolve a lista de anúncios.
+
+    O arquivo fica permanentemente FORA do banco de dados: cada anúncio é
+    um dict {id, titulo, categoria, texto, criado_em}.
+    """
+    try:
+        with open(ANUNCIOS_FILE, "r", encoding="utf-8") as f:
+            dados = json.load(f)
+        if isinstance(dados, list):
+            return [d for d in dados if isinstance(d, dict)]
+    except (OSError, ValueError):
+        pass
+    return []
+
+
+def _salvar_anuncios_json(anuncios: List[Dict]) -> bool:
+    """Persiste a lista de anúncios em ~/.navepro/anuncios.json.
+
+    Retorna True em caso de sucesso (ou False se o disco recusar a gravação).
+    """
+    try:
+        with open(ANUNCIOS_FILE, "w", encoding="utf-8") as f:
+            json.dump(anuncios, f, ensure_ascii=False, indent=2)
+        return True
+    except OSError as e:
+        print(f"⚠️ Erro ao salvar anúncios: {e}")
+        return False
+
+
+def _extrair_texto_pdf(caminho: str) -> Optional[str]:
+    """Extrai o texto de um PDF usando pypdf (com fallback para pdftotext).
+
+    Retorna string de texto (páginas separadas por linha em branco) ou None
+    se o PDF não tiver texto extraível (ex.: só imagens).
+    """
+    try:
+        from pypdf import PdfReader
+        leitor = PdfReader(caminho)
+        paginas: List[str] = []
+        for pagina in leitor.pages:
+            texto = (pagina.extract_text() or "").strip()
+            if texto:
+                paginas.append(texto)
+        if paginas:
+            return "\n\n".join(paginas)
+    except Exception as e:
+        print(f"⚠️ pypdf falhou ao ler {caminho}: {e}")
+
+    try:
+        resultado = subprocess.run(
+            ["pdftotext", "-layout", caminho, "-"],
+            capture_output=True, text=True, timeout=30)
+        if resultado.returncode == 0 and resultado.stdout.strip():
+            return resultado.stdout.strip()
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"⚠️ pdftotext falhou ao ler {caminho}: {e}")
+    return None
+
+
+def _carregar_icone(nome: str):
+    """Carrega um PNG de icones/ como PhotoImage do Tk para usar em botões.
+
+    Retorna None se o arquivo não existir ou o Tk falhar (fallback: o botão
+    usa o caractere emoji/texto). Ícones PNG não dependem de fontes emoji do
+    sistema — em qualquer Linux aparecem iguais (em vez de "sombra"/tofu).
+    """
+    try:
+        from PIL import Image, ImageTk
+        caminho = _caminho_recurso(os.path.join("icones", f"{nome}.png"))
+        if not os.path.exists(caminho):
+            return None
+        with Image.open(caminho) as img:
+            return ImageTk.PhotoImage(img)
+    except Exception as e:
+        print(f"⚠️ Ícone '{nome}' indisponível: {e}")
+        return None
 
 
 def _listar_pastas_arquivos_usuario(
@@ -2575,12 +2848,6 @@ class AppInterface:
         self.estado_salvo: str = self.config_data.get("estado", "")
         self.temperatura_atual: str = ""
 
-        # Cache e worker
-        self.db = DatabaseManager()
-        self.search_worker = SearchWorker()
-        self._versao_busca: int = 0
-        self._ultima_lista: List[str] = []  # para evitar redesenho desnecessário
-
         self._focus_timer: Optional[str] = None
         self._debounce_timer: Optional[str] = None
 
@@ -2592,6 +2859,12 @@ class AppInterface:
         garantir_pasta_uploads()
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+        # Cache e worker (DatabaseManager carrega o cache na construção)
+        self.db = DatabaseManager()
+        self.search_worker = SearchWorker()
+        self._versao_busca: int = 0
+        self._ultima_lista: List[str] = []  # para evitar redesenho desnecessário
+
         # Cria o player e o telão (rápido - só cria as janelas Tk)
         self.player = MediaPlayer(self.monitor_index, self.player_cmd)
         self.player.on_state_change = self.quando_midia_terminar
@@ -2602,6 +2875,17 @@ class AppInterface:
         self.player.telao.configurar_projecao(self.config_data.get("projecao", {}))
 
         self._criar_menu()
+
+        # Corrige corrida do Tk 8.6 + XWayland (GNOME Wayland): força o flush
+        # síncrono dos pedidos X pendentes (telão com alpha/fullscreen) antes de
+        # criar os widgets da barra de controles. Sem isso, algumas distros
+        # travam em _XReply/XSync ao medir fontes ("Falha de segmentação") e a
+        # janela mal abre e fecha sozinha.
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
         self.criar_widgets()
         self.atualizar_relogio()
 
@@ -3116,6 +3400,9 @@ class AppInterface:
         menu_ajuda = tk.Menu(menubar, tearoff=0, bg='#21262d', fg='#c9d1d9',
                              activebackground='#6e40c9', activeforeground='#f0c040',
                              font=("Arial", 10))
+        menu_ajuda.add_command(label="Verificar atualizações…",
+                               command=lambda: self.verificar_atualizacao(manual=True))
+        menu_ajuda.add_separator()
         menu_ajuda.add_command(label="Sobre", command=self._mostrar_sobre)
         menubar.add_cascade(label="Ajuda", menu=menu_ajuda)
 
@@ -3130,7 +3417,7 @@ class AppInterface:
         tkinter.messagebox.showinfo(
             "Sobre o NavePro",
             "NavePro - Sistema de Projeção para Igrejas\n"
-            "Versão: 1.0.0\n"
+            f"Versão: {APP_VERSION}\n"
             "Licença: GPLv3\n"
             "Autor: José Edes Neves - Julho 2026\n"
             "edes.neves7@gmail.com\n\n"
@@ -3139,6 +3426,152 @@ class AppInterface:
             "informações climáticas.",
             parent=self.root
         )
+
+    # ── Atualização automática (GitHub Releases) ──
+
+    def verificar_atualizacao(self, manual: bool = False) -> None:
+        """Verifica (em thread) se há versão nova no GitHub e notifica."""
+        def _worker() -> None:
+            release = _buscar_release_latest()
+            if release is None:
+                if manual:
+                    self.root.after(0, lambda: tkinter.messagebox.showinfo(
+                        "Atualizações",
+                        "Não foi possível consultar o GitHub agora.\n"
+                        "Verifique sua conexão e tente novamente.",
+                        parent=self.root))
+                return
+            versao = str(release.get('tag_name', '')).lstrip('vV')
+            if not _versao_nova(versao):
+                if manual:
+                    self.root.after(0, lambda: tkinter.messagebox.showinfo(
+                        "Atualizações",
+                        f"Você já está na versão mais recente "
+                        f"({APP_VERSION}).",
+                        parent=self.root))
+                return
+            self.root.after(0, lambda: self._oferecer_atualizacao(release))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _oferecer_atualizacao(self, release: dict) -> None:
+        """Pergunta se o usuário quer baixar a versão nova e baixa."""
+        versao = str(release.get('tag_name', '')).lstrip('vV')
+        corpo = str(release.get('body') or '').strip()
+        if len(corpo) > 400:
+            corpo = corpo[:400].rstrip() + '…'
+        mensagem = (
+            f"NavePro {APP_VERSION} → {versao}\n\n"
+            "Uma nova versão está disponível no GitHub.\n"
+        )
+        if corpo:
+            mensagem += f"\nNovidades:\n{corpo}\n"
+        mensagem += "\nDeseja baixar o novo AppImage agora?"
+        if not tkinter.messagebox.askyesno(
+                "🔄 Atualização disponível", mensagem, parent=self.root):
+            return
+        asset = _procurar_asset_appimage(release)
+        if asset is None:
+            tkinter.messagebox.showwarning(
+                "Atualização",
+                "O release não contém um arquivo .AppImage.",
+                parent=self.root)
+            return
+        self._baixar_atualizacao(
+            versao,
+            str(asset.get('browser_download_url', '')),
+            str(asset.get('name', f'NavePro-{versao}.AppImage')),
+        )
+
+    def _baixar_atualizacao(self, versao: str, url: str,
+                            nome_arquivo: str) -> None:
+        """Baixa o novo AppImage para ~/Downloads com barra de progresso."""
+        destino = os.path.join(_pasta_downloads(), nome_arquivo)
+
+        janela = tk.Toplevel(self.root)
+        janela.title("⬇️ Baixando atualização")
+        janela.geometry("440x150")
+        janela.configure(bg='#0d1117')
+        janela.transient(self.root)
+        janela.grab_set()
+
+        def _atualizar_progresso(pct: int, baixado: int, total: int) -> None:
+            try:
+                progresso['value'] = pct
+                lbl.config(
+                    text=f"{pct}%  ({baixado // 1024 // 1024} de "
+                         f"{total // 1024 // 1024} MB)"
+                )
+            except tk.TclError:
+                pass
+
+        tk.Label(janela, text=f"Baixando {nome_arquivo}…",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117'
+                 ).pack(pady=(18, 6))
+        progresso = ttk.Progressbar(janela, mode='determinate', length=380)
+        progresso.pack(pady=6)
+        lbl = tk.Label(janela, text="0%", font=("Arial", 9), fg='#c9d1d9',
+                       bg='#0d1117')
+        lbl.pack(pady=2)
+
+        def _worker() -> None:
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": f"NavePro/{APP_VERSION}"})
+                with urllib.request.urlopen(req, timeout=120,
+                                            context=_ssl_context()) as resp:
+                    total = int(resp.headers.get('Content-Length', 0) or 0)
+                    temporario = destino + '.part'
+                    baixado = 0
+                    with open(temporario, 'wb') as f:
+                        while True:
+                            bloco = resp.read(8192)
+                            if not bloco:
+                                break
+                            f.write(bloco)
+                            baixado += len(bloco)
+                            if total > 0:
+                                pct = int(baixado * 100 / total)
+                                self.root.after(
+                                    0, lambda p=pct, b=baixado, t=total:
+                                    _atualizar_progresso(p, b, t))
+                    os.replace(temporario, destino)
+                    os.chmod(destino, 0o744)
+                    self.root.after(0, lambda: self._instrucoes_troca_appimage(
+                        destino))
+            except Exception as e:
+                print(f"⚠️  Erro ao baixar atualização: {e}")
+                self.root.after(0, lambda: (janela.destroy(),
+                             tkinter.messagebox.showerror(
+                                 "Erro",
+                                 f"Não foi possível baixar a atualização:\n{e}",
+                                 parent=self.root)))
+            else:
+                janela.after(300, janela.destroy)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _instrucoes_troca_appimage(self, destino: str) -> None:
+        """Mostra como substituir o AppImage antigo pelo baixado e abre Downloads."""
+        tkinter.messagebox.showinfo(
+            "✅ Download concluído",
+            "O novo AppImage foi salvo em:\n\n"
+            f"  {destino}\n\n"
+            "Para instalar:\n"
+            "1. Feche o NavePro.\n"
+            "2. Substitua o AppImage atual por este novo arquivo "
+            "(mova-o para o mesmo lugar do antigo).\n"
+            "3. Dê permissão de execução se precisar:\n"
+            "     chmod +x \"<novo arquivo>\"\n"
+            "4. Abra o novo arquivo para rodar a versão atualizada.",
+            parent=self.root)
+        try:
+            subprocess.Popen(['xdg-open', _pasta_downloads()],
+                             stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
     def _alternar_maximizar(self) -> None:
         """Alterna entre maximizado (tela cheia) e minimizado (900x800 centralizado)."""
@@ -3184,7 +3617,7 @@ class AppInterface:
         tk.Label(logo_frame, text="NAVEPRO",
                 font=("Arial", 18, "bold"), bg='#0d1117', fg='#f0c040'
                 ).pack(side='left')
-        tk.Label(logo_frame, text="Versão 1.0.0",
+        tk.Label(logo_frame, text=f"Versão {APP_VERSION}",
                 font=("Arial", 9), bg='#0d1117', fg='#8b949e'
                 ).pack(side='left', padx=(8, 0))
 
@@ -3368,16 +3801,26 @@ class AppInterface:
         pill_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
         pill_frame.pack(side='left', padx=5)
 
-        def _criar_botao_pill(parent, icone, tooltip, comando):
-            btn = tk.Button(
-                parent, text=icone,
-                font=("Arial", 18),
+        def _criar_botao_pill(parent, icone, tooltip, comando, icone_png=None):
+            """Botão-pílula: usa o PNG `icone_png` (ícone fixo) quando existe;
+            senão cai para o caractere `icone` (emoji/texto do sistema)."""
+            args = dict(
                 bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
                 activeforeground='#f0c040',
                 command=comando, cursor='hand2',
                 bd=0, highlightthickness=0,
                 padx=14, pady=6
             )
+            imagem = _carregar_icone(icone_png) if icone_png else None
+            if imagem is not None:
+                # Botão com ícone PNG (não depende de fontes do sistema)
+                args.update(text="", image=imagem, width=40, height=40,
+                            compound="center")
+                btn = tk.Button(parent, **args)
+                btn._navepro_imagem = imagem  # mantém ref para não sumir
+            else:
+                args.update(text=icone, font=("Arial", 18))
+                btn = tk.Button(parent, **args)
             btn.pack(side='left', padx=0)
             # Cria tooltip
             _criar_tooltip(btn, tooltip)
@@ -3418,19 +3861,31 @@ class AppInterface:
         # Botões dos novos módulos (frame separado à direita)
         modulos_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
         modulos_frame.pack(side='right', padx=5)
-        _criar_botao_pill(modulos_frame, "📖", "Hinos / Letras", self.janela_hinos)
-        _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia)
-        _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico)
+        _criar_botao_pill(modulos_frame, "📖", "Hinos / Letras", self.janela_hinos,
+                          icone_png="hinos")
+        _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia,
+                          icone_png="biblia")
+        _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico,
+                          icone_png="ordem")
+        _criar_botao_pill(modulos_frame, "📢", "Anúncios", self.janela_anuncios,
+                          icone_png="anuncios")
 
         # Botão Gerenciar Banco (também em estilo pill)
-        btn_gerenciar = tk.Button(
-            controls_frame, text="📦",
-            font=("Arial", 16),
+        img_banco = _carregar_icone("banco")
+        args_gerenciar = dict(
             bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
             command=self.abrir_gerenciador, cursor='hand2',
             bd=0, highlightthickness=0,
             padx=14, pady=6
         )
+        if img_banco is not None:
+            args_gerenciar.update(text="", image=img_banco, width=40, height=40,
+                                  compound="center")
+            btn_gerenciar = tk.Button(controls_frame, **args_gerenciar)
+            btn_gerenciar._navepro_imagem = img_banco
+        else:
+            args_gerenciar.update(text="📦", font=("Arial", 16))
+            btn_gerenciar = tk.Button(controls_frame, **args_gerenciar)
         btn_gerenciar.pack(side='right', padx=5)
         _criar_tooltip(btn_gerenciar, "Gerenciar Banco")
 
@@ -3814,7 +4269,7 @@ class AppInterface:
                 tipo_filtro = filtro_var.get()
                 filtro = "" if tipo_filtro == "todos" else f"?tipo={tipo_filtro}"
                 req = urllib.request.Request(f"{BACKEND_URL}/api/midia{filtro}")
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with _baixar(req, timeout=5) as resp:
                     midias: list[dict] = json.loads(resp.read().decode())
             except Exception:
                 midias = []
@@ -3861,7 +4316,8 @@ class AppInterface:
             btn_frame, text="📂 Adicionar Mídias",
             font=("Arial", 11, "bold"),
             bg='#238636', fg='white', activebackground='#2ea043',
-            command=lambda: self._adicionar_midias_ao_banco(janela),
+            command=lambda: self._adicionar_midias_ao_banco(
+                janela, _atualizar_lista),
             cursor='hand2', padx=15, pady=5
         ).pack(side='left', padx=5)
 
@@ -4262,7 +4718,10 @@ class AppInterface:
 
         return selecionados
 
-    def _adicionar_midias_ao_banco(self, janela_pai: tk.Toplevel) -> None:
+    def _adicionar_midias_ao_banco(
+        self, janela_pai: tk.Toplevel,
+        apos_adicionar: Optional[Callable[[], None]] = None,
+    ) -> None:
         """Abre seletor de arquivos e adiciona ao banco."""
         arquivos = self._selecionar_arquivos_personalizado(janela_pai)
         if not arquivos:
@@ -4313,7 +4772,8 @@ class AppInterface:
                 f"{adicionados} mídia(s) adicionada(s) ao banco!",
                 parent=janela_pai,
             )
-            self._atualizar_lista_gerenciador(janela_pai)
+            if apos_adicionar is not None:
+                apos_adicionar()
         else:
             tkinter.messagebox.showwarning(
                 "⚠️", "Nenhuma mídia válida foi adicionada.",
@@ -4426,7 +4886,29 @@ class AppInterface:
                 termo = termo[len(placeholder):].strip()
             _carregar_hinos(termo)
 
-        entry_busca.bind("<Return>", _buscar)
+        def _buscar_e_projetar(event=None):
+            """Enter na busca: filtra e já projeta o primeiro resultado.
+
+            Mesmo efeito de buscar, selecionar a 1ª linha com o mouse e
+            clicar em "📺 Projetar". Com o campo vazio não projeta nada.
+            """
+            termo = entry_busca.get().strip()
+            if termo == placeholder or termo.startswith(placeholder):
+                termo = termo[len(placeholder):].strip()
+            _carregar_hinos(termo)
+            if not termo:
+                return "break"
+            primeiro = tree.get_children()
+            if not primeiro:
+                tkinter.messagebox.showwarning(
+                    "Busca", "Nenhum hino encontrado para projetar.", parent=janela)
+                return "break"
+            tree.selection_set(primeiro[0])
+            tree.focus(primeiro[0])
+            _projetar_hino_selecionado()
+            return "break"
+
+        entry_busca.bind("<Return>", _buscar_e_projetar)
         # Busca em tempo real com debounce
         _debounce_id = [None]
         def _on_key(event=None):
@@ -4843,6 +5325,545 @@ class AppInterface:
         _carregar_hinos()
 
     # ────────────────────────────────────────────────────────────────────
+    # JANELA DE ANÚNCIOS (armazenados em JSON, FORA do banco de dados)
+    # ────────────────────────────────────────────────────────────────────
+
+    def janela_anuncios(self) -> None:
+        """Abre a janela de gerenciamento de anúncios.
+
+        Mesma cara da janela "Hinos / Letras", mas:
+          - o botão "Novo Anúncio" cria anúncio;
+          - o botão "Importar" aceita TXT e PDF;
+          - NADA é gravado no banco de dados: tudo fica em
+            ~/.navepro/anuncios.json e é removido de lá ao excluir.
+        """
+        janela = tk.Toplevel(self.root)
+        janela.title("📢 Anúncios")
+        janela.geometry("900x700")
+        janela.configure(bg='#0d1117')
+        janela.transient(self.root)
+        janela.after(50, janela.grab_set)
+
+        main = tk.Frame(janela, bg='#0d1117')
+        main.pack(fill='both', expand=True, padx=15, pady=15)
+
+        titulo_label = tk.Label(main, text="📢 Anúncios",
+                                font=("Arial", 16, "bold"), fg='#f0c040', bg='#0d1117')
+        titulo_label.pack(pady=(0, 2))
+        tk.Label(main, text="Não vão para o banco de dados — ficam em anuncios.json",
+                 font=("Arial", 9), fg='#8b949e', bg='#0d1117').pack(pady=(0, 8))
+
+        # ── Barra de busca ──
+        busca_frame = tk.Frame(main, bg='#161b22')
+        busca_frame.pack(fill='x', pady=5, ipady=5)
+
+        tk.Label(busca_frame, text="🔍", fg='#f0c040', bg='#161b22',
+                 font=("Arial", 14)).pack(side='left', padx=(8, 5))
+
+        placeholder = "Buscar por título ou texto..."
+        entry_busca = tk.Entry(busca_frame, font=("Arial", 13),
+                               bg='#21262d', fg='#8b949e', insertbackground='#f0c040',
+                               bd=0, highlightthickness=0)
+        entry_busca.pack(side='left', fill='x', expand=True, padx=5, ipady=4)
+        entry_busca.insert(0, placeholder)
+
+        def _on_focus_entry():
+            if entry_busca.get().strip() == placeholder:
+                entry_busca.delete(0, tk.END)
+                entry_busca.config(fg='#f0c040')
+
+        def _on_focus_out_entry():
+            if not entry_busca.get().strip():
+                entry_busca.delete(0, tk.END)
+                entry_busca.insert(0, placeholder)
+                entry_busca.config(fg='#8b949e')
+
+        entry_busca.bind("<FocusIn>", lambda e: _on_focus_entry())
+        entry_busca.bind("<FocusOut>", lambda e: _on_focus_out_entry())
+
+        # ── TreeView ──
+        tree_frame = tk.Frame(main, bg='#161b22')
+        tree_frame.pack(fill='both', expand=True, pady=5)
+
+        colunas = ("ID", "Título", "Categoria")
+        tree = ttk.Treeview(tree_frame, columns=colunas, show='headings', height=18)
+        for col in colunas:
+            tree.heading(col, text=col)
+        tree.column("ID", width=60)
+        tree.column("Título", width=440)
+        tree.column("Categoria", width=200)
+
+        scroll_y = tk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scroll_y.set)
+        tree.pack(side='left', fill='both', expand=True)
+        scroll_y.pack(side='right', fill='y')
+
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure("Treeview", background="#21262d", foreground="#c9d1d9",
+                        fieldbackground="#21262d", font=("Arial", 10))
+        style.configure("Treeview.Heading", background="#161b22", foreground="#f0c040",
+                        font=("Arial", 10, "bold"))
+        style.map('Treeview', background=[('selected', '#6e40c9')],
+                  foreground=[('selected', '#ffffff')])
+
+        def _carregar_anuncios(busca: str = ""):
+            for item in tree.get_children():
+                tree.delete(item)
+            termo = (busca or "").strip().lower()
+            for a in _carregar_anuncios_json():
+                if termo and termo != placeholder:
+                    alvo = " ".join([
+                        a.get('titulo', ''),
+                        a.get('categoria', ''),
+                        a.get('texto', ''),
+                    ]).lower()
+                    if termo not in alvo:
+                        continue
+                tree.insert("", tk.END, iid=str(a.get('id')),
+                            values=(a.get('id'), a.get('titulo', ''),
+                                    a.get('categoria', '')))
+
+        def _buscar(event=None):
+            termo = entry_busca.get().strip()
+            if termo == placeholder or termo.startswith(placeholder):
+                termo = termo[len(placeholder):].strip()
+            _carregar_anuncios(termo)
+
+        def _buscar_e_projetar(event=None):
+            """Enter na busca: filtra e já projeta o primeiro anúncio.
+
+            Mesmo efeito de buscar, selecionar a 1ª linha com o mouse e
+            clicar em "📺 Projetar". Com o campo vazio não projeta nada.
+            """
+            termo = entry_busca.get().strip()
+            if termo == placeholder or termo.startswith(placeholder):
+                termo = termo[len(placeholder):].strip()
+            _carregar_anuncios(termo)
+            if not termo:
+                return "break"
+            primeiro = tree.get_children()
+            if not primeiro:
+                tkinter.messagebox.showwarning(
+                    "Busca", "Nenhum anúncio encontrado para projetar.", parent=janela)
+                return "break"
+            tree.selection_set(primeiro[0])
+            tree.focus(primeiro[0])
+            _projetar_anuncio_selecionado()
+            return "break"
+
+        entry_busca.bind("<Return>", _buscar_e_projetar)
+        _debounce_id = [None]
+
+        def _on_key(event=None):
+            if _debounce_id[0]:
+                janela.after_cancel(_debounce_id[0])
+            _debounce_id[0] = janela.after(400, _buscar)
+
+        entry_busca.bind("<KeyRelease>", _on_key)
+
+        # ── Importação TXT / PDF ──
+        def _parsear_txt_anuncio(caminho: str) -> Optional[Dict]:
+            """Extrai {titulo, categoria, texto} de um TXT (1ª linha = título)."""
+            try:
+                conteudo = None
+                for enc in ("utf-8", "latin-1"):
+                    try:
+                        with open(caminho, "r", encoding=enc) as f:
+                            conteudo = f.read()
+                        break
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+                if conteudo is None:
+                    with open(caminho, "r", encoding="utf-8", errors="replace") as f:
+                        conteudo = f.read()
+
+                linhas = [l.strip() for l in conteudo.splitlines() if l.strip()]
+                if not linhas:
+                    return None
+                return {
+                    "titulo": linhas[0],
+                    "categoria": "",
+                    "texto": "\n".join(linhas[1:]),
+                }
+            except Exception as e:
+                print(f"⚠️ Erro ao ler TXT de anúncio {caminho}: {e}")
+                return None
+
+        def _parsear_pdf_anuncio(caminho: str) -> Optional[Dict]:
+            """Extrai {titulo, categoria, texto} de um PDF (título = nome do arquivo)."""
+            try:
+                texto = _extrair_texto_pdf(caminho)
+                if not texto:
+                    return None
+                texto_limpo = re.sub(r"[ \t]+", " ", texto)
+                texto_limpo = re.sub(r"\n{3,}", "\n\n", texto_limpo).strip("\n")
+                return {
+                    "titulo": os.path.splitext(os.path.basename(caminho))[0],
+                    "categoria": "",
+                    "texto": texto_limpo,
+                }
+            except Exception as e:
+                print(f"⚠️ Erro ao ler PDF de anúncio {caminho}: {e}")
+                return None
+
+        def _adicionar_anuncio(dados: Dict) -> bool:
+            """Adiciona um anúncio na lista e persiste no JSON. True se salvou."""
+            anuncios = _carregar_anuncios_json()
+            novo_id = max([int(a.get('id', 0)) for a in anuncios], default=0) + 1
+            novo = {
+                "id": novo_id,
+                "titulo": (dados.get('titulo') or "").strip(),
+                "categoria": (dados.get('categoria') or "").strip(),
+                "texto": (dados.get('texto') or "").strip(),
+                "criado_em": datetime.now().isoformat(timespec="seconds"),
+            }
+            anuncios.append(novo)
+            return _salvar_anuncios_json(anuncios)
+
+        def _importar_anuncios(caminhos: tuple) -> None:
+            if not caminhos:
+                return
+            importados, ja_existem, erros = 0, 0, 0
+            anuncios = _carregar_anuncios_json()
+            titulos_existentes = {a.get('titulo', '').lower() for a in anuncios}
+            novo_id = max([int(a.get('id', 0)) for a in anuncios], default=0) + 1
+            for caminho in caminhos:
+                ext = os.path.splitext(caminho)[1].lower()
+                if ext == ".txt":
+                    dados = _parsear_txt_anuncio(caminho)
+                elif ext == ".pdf":
+                    dados = _parsear_pdf_anuncio(caminho)
+                else:
+                    erros += 1
+                    continue
+
+                if not dados or not dados.get("titulo"):
+                    erros += 1
+                    continue
+
+                titulo = dados["titulo"].strip()
+                if titulo.lower() in titulos_existentes:
+                    ja_existem += 1
+                    continue
+
+                anuncios.append({
+                    "id": novo_id,
+                    "titulo": titulo,
+                    "categoria": (dados.get('categoria') or '').strip(),
+                    "texto": (dados.get('texto') or '').strip(),
+                    "criado_em": datetime.now().isoformat(timespec="seconds"),
+                })
+                titulos_existentes.add(titulo.lower())
+                novo_id += 1
+                importados += 1
+
+            if importados:
+                ok = _salvar_anuncios_json(anuncios)
+                if not ok:
+                    tkinter.messagebox.showwarning(
+                        "⚠️", "Não foi possível gravar os anúncios em anuncios.json.",
+                        parent=janela)
+                    return
+            _carregar_anuncios()
+            msg = f"✅ {importados} anúncio(s) importado(s), {ja_existem} já existentes (pulados)."
+            if erros:
+                msg += f"\n⚠️ {erros} arquivo(s) com erro."
+            tkinter.messagebox.showinfo("Importação", msg, parent=janela)
+
+        def _importar_arquivos() -> None:
+            selecionados = _escolher_arquivos_usuario(
+                parent=janela,
+                titulo="Importar anúncios (TXT / PDF)",
+                sufixos=(".txt", ".pdf"))
+            if selecionados:
+                _importar_anuncios(tuple(selecionados))
+
+        # ── Ajustes da projeção no telão ──
+        def _configurar_projecao():
+            self.abrir_config_projecao_dialogo(janela)
+
+        # ── Botões ──
+        btn_frame = tk.Frame(main, bg='#0d1117')
+        btn_frame.pack(fill='x', pady=8)
+
+        def _novo_anuncio():
+            _abrir_editor_anuncio(None)
+
+        def _editar_anuncio():
+            sel = tree.selection()
+            if not sel:
+                tkinter.messagebox.showwarning("Seleção", "Selecione um anúncio.", parent=janela)
+                return
+            _abrir_editor_anuncio(int(sel[0]))
+
+        def _excluir_anuncio():
+            sel = tree.selection()
+            if not sel:
+                tkinter.messagebox.showwarning("Seleção", "Selecione um anúncio.", parent=janela)
+                return
+            if not tkinter.messagebox.askyesno("Confirmar",
+                    f"Excluir {len(sel)} anúncio(s)?", parent=janela):
+                return
+            ids_excluir = {int(i) for i in sel}
+            anuncios = [a for a in _carregar_anuncios_json()
+                        if int(a.get('id', 0)) not in ids_excluir]
+            if not _salvar_anuncios_json(anuncios):
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível gravar a exclusão em anuncios.json.",
+                    parent=janela)
+                return
+            _carregar_anuncios(entry_busca.get().strip())
+
+        tk.Button(btn_frame, text="➕ Novo Anúncio", font=("Arial", 11, "bold"),
+                  bg='#238636', fg='white', activebackground='#2ea043',
+                  command=_novo_anuncio, cursor='hand2', padx=12, pady=4
+                  ).pack(side='left', padx=3)
+        tk.Button(btn_frame, text="✏️ Editar", font=("Arial", 11, "bold"),
+                  bg='#1f6feb', fg='white', activebackground='#388bfd',
+                  command=_editar_anuncio, cursor='hand2', padx=12, pady=4
+                  ).pack(side='left', padx=3)
+        tk.Button(btn_frame, text="🗑️ Excluir", font=("Arial", 11, "bold"),
+                  bg='#da3633', fg='white', activebackground='#f85149',
+                  command=_excluir_anuncio, cursor='hand2', padx=12, pady=4
+                  ).pack(side='left', padx=3)
+        tk.Button(btn_frame, text="📥 Importar (TXT/PDF)", font=("Arial", 11, "bold"),
+                  bg='#8b5cf6', fg='white', activebackground='#a78bfa',
+                  command=_importar_arquivos, cursor='hand2', padx=12, pady=4
+                  ).pack(side='left', padx=3)
+        tk.Button(btn_frame, text="🎨 Projeção", font=("Arial", 11, "bold"),
+                  bg='#1f6feb', fg='white', activebackground='#388bfd',
+                  command=_configurar_projecao, cursor='hand2', padx=12, pady=4
+                  ).pack(side='left', padx=3)
+        tk.Button(btn_frame, text="📺 Projetar", font=("Arial", 11, "bold"),
+                  bg='#6e40c9', fg='#f0c040', activebackground='#8b5cf6',
+                  command=lambda: _projetar_anuncio_selecionado(), cursor='hand2',
+                  padx=12, pady=4).pack(side='right', padx=3)
+
+        # ── Painel de controle da projeção (slides) ──
+        nav_frame = tk.Frame(main, bg='#161b22')
+        nav_frame.pack(fill='x', pady=(4, 2), ipady=4)
+
+        tk.Label(nav_frame, text="🎬 Controle da Projeção:",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#161b22'
+                 ).pack(side='left', padx=(10, 8))
+
+        tk.Button(nav_frame, text="◀ Anterior", font=("Arial", 11, "bold"),
+                  bg='#1f6feb', fg='white', activebackground='#388bfd',
+                  command=lambda: _slide_anterior(), cursor='hand2', padx=12, pady=2
+                  ).pack(side='left', padx=3)
+        tk.Button(nav_frame, text="Próximo ▶", font=("Arial", 11, "bold"),
+                  bg='#1f6feb', fg='white', activebackground='#388bfd',
+                  command=lambda: _slide_proximo(), cursor='hand2', padx=12, pady=2
+                  ).pack(side='left', padx=3)
+        tk.Button(nav_frame, text="⏹ Parar (Esc)", font=("Arial", 11, "bold"),
+                  bg='#da3633', fg='white', activebackground='#f85149',
+                  command=lambda: _parar_projecao(), cursor='hand2', padx=12, pady=2
+                  ).pack(side='left', padx=3)
+
+        tk.Label(nav_frame, text="🔠 Tamanho:",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#161b22'
+                 ).pack(side='left', padx=(14, 2))
+        tk.Button(nav_frame, text="A−", font=("Arial", 11, "bold"),
+                  bg='#8957e5', fg='white', activebackground='#a371f7',
+                  command=lambda: _ajustar_fonte(-0.8), cursor='hand2', padx=10, pady=2
+                  ).pack(side='left', padx=2)
+        tk.Button(nav_frame, text="A+", font=("Arial", 11, "bold"),
+                  bg='#8957e5', fg='white', activebackground='#a371f7',
+                  command=lambda: _ajustar_fonte(0.8), cursor='hand2', padx=10, pady=2
+                  ).pack(side='left', padx=2)
+
+        label_slide = tk.Label(nav_frame, text="Sem projeção",
+                               font=("Arial", 11, "bold"), fg='#8b949e', bg='#161b22')
+        label_slide.pack(side='right', padx=10)
+
+        def _atualizar_indicador_slide():
+            try:
+                if not label_slide.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            telao = self.player.telao
+            em_slides = getattr(telao, "_em_slides", False)
+            if em_slides and telao._slides:
+                label_slide.config(
+                    text=f"Slide {telao._slide_index + 1} de {len(telao._slides)}",
+                    fg='#3fb950', bg='#161b22')
+            elif getattr(telao, "mostrando_letra", False):
+                label_slide.config(text="Projeção ativa", fg='#f0c040', bg='#161b22')
+            else:
+                label_slide.config(text="Sem projeção", fg='#8b949e', bg='#161b22')
+
+        def _slide_anterior(event: object = None):
+            telao = self.player.telao
+            if not getattr(telao, "_em_slides", False):
+                return None
+            if telao.slide_anterior():
+                _atualizar_indicador_slide()
+            return "break"
+
+        def _slide_proximo(event: object = None):
+            telao = self.player.telao
+            if not getattr(telao, "_em_slides", False):
+                return None
+            if telao.slide_proximo():
+                _atualizar_indicador_slide()
+            return "break"
+
+        def _parar_projecao(event: object = None):
+            if not getattr(self.player.telao, "mostrando_letra", False):
+                return None
+            self.player.telao.parar_projecao()
+            _atualizar_indicador_slide()
+            return "break"
+
+        def _ajustar_fonte(delta: float):
+            telao = self.player.telao
+            cfg = getattr(telao, "_proj_cfg", None)
+            if cfg is None:
+                telao.configurar_projecao()
+                cfg = telao._proj_cfg
+            novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
+            cfg["tamanho_pct"] = novo
+            telao._proj_cfg = cfg
+            if getattr(telao, "_em_slides", False) and telao._slides:
+                telao._mostrar_slide(telao._slide_index)
+            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
+                telao._desenhar_texto_no_canvas(telao._current_text)
+            self.salvar_config_projecao(dict(cfg))
+            _atualizar_indicador_slide()
+
+        # Setas do teclado e Esc (janela de anúncios), mesmo esquema da de hinos.
+        janela.bind("<Left>", _slide_anterior)
+        janela.bind("<Up>", _slide_anterior)
+        janela.bind("<Right>", _slide_proximo)
+        janela.bind("<Down>", _slide_proximo)
+        janela.bind("<Escape>", _parar_projecao)
+        self.root.bind("<Left>", _slide_anterior)
+        self.root.bind("<Up>", _slide_anterior)
+        self.root.bind("<Right>", _slide_proximo)
+        self.root.bind("<Down>", _slide_proximo)
+        self.root.bind("<Escape>", _parar_projecao)
+
+        def _montar_slides_anuncio(anuncio: dict) -> list:
+            """Monta os slides de um anúncio em MAIÚSCULAS: slide 0 é o título,
+            os demais são uma linha de texto por slide (mesmo padrão dos hinos)."""
+            titulo = (anuncio.get('titulo') or '').strip().upper()
+            texto = (anuncio.get('texto') or '').strip()
+            paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto) if seg.strip()]
+            slides = [titulo] if titulo else []
+            for paragrafo in paragrafos:
+                for linha in paragrafo.split('\n'):
+                    linha = linha.strip().upper()
+                    if linha:
+                        slides.append(linha)
+            if not slides:
+                slides = [titulo or "ANÚNCIO"]
+            return slides
+
+        def _projetar_anuncio_selecionado():
+            sel = tree.selection()
+            if not sel:
+                tkinter.messagebox.showwarning("Seleção", "Selecione um anúncio.", parent=janela)
+                return
+            anuncio_id = int(sel[0])
+            anuncio = None
+            for a in _carregar_anuncios_json():
+                if int(a.get('id', 0)) == anuncio_id:
+                    anuncio = a
+                    break
+            if not anuncio:
+                return
+            slides = _montar_slides_anuncio(dict(anuncio))
+            self.player.telao.projetar_slides(slides)
+            _atualizar_indicador_slide()
+
+        # ── Editor de anúncio ──
+        def _abrir_editor_anuncio(anuncio_id: Optional[int] = None):
+            editar_win = tk.Toplevel(janela)
+            editar_win.title("Editar Anúncio" if anuncio_id else "Novo Anúncio")
+            editar_win.geometry("560x420")
+            editar_win.configure(bg='#0d1117')
+            editar_win.transient(janela)
+            editar_win.after(50, editar_win.grab_set)
+
+            e_main = tk.Frame(editar_win, bg='#0d1117')
+            e_main.pack(fill='both', expand=True, padx=15, pady=15)
+
+            # Campos
+            campos = {}
+            for label_text, campo, default in [
+                ("Título:", "titulo", ""),
+                ("Categoria:", "categoria", ""),
+            ]:
+                row = tk.Frame(e_main, bg='#0d1117')
+                row.pack(fill='x', pady=2)
+                tk.Label(row, text=label_text, font=("Arial", 11, "bold"),
+                         fg='#f0c040', bg='#0d1117', width=12, anchor='e').pack(side='left')
+                entry = tk.Entry(row, font=("Arial", 11), bg='#21262d', fg='#c9d1d9',
+                                 insertbackground='#f0c040', bd=0, highlightthickness=0)
+                entry.pack(side='left', fill='x', expand=True, padx=5, ipady=3)
+                campos[campo] = entry
+
+            tk.Label(e_main, text="Texto do anúncio:", font=("Arial", 11, "bold"),
+                     fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x', pady=(8, 2))
+            texto_text = tk.Text(e_main, font=("Arial", 11), bg='#21262d', fg='#c9d1d9',
+                                 insertbackground='#f0c040', wrap='word', height=10)
+            texto_text.pack(fill='both', expand=True, pady=2)
+
+            # Carrega dados se editando
+            dados_anuncio = {}
+            if anuncio_id:
+                for a in _carregar_anuncios_json():
+                    if int(a.get('id', 0)) == anuncio_id:
+                        dados_anuncio = a
+                        break
+                if dados_anuncio:
+                    campos['titulo'].insert(0, dados_anuncio.get('titulo', ''))
+                    campos['categoria'].insert(0, dados_anuncio.get('categoria', ''))
+                    texto_text.insert('1.0', dados_anuncio.get('texto', ''))
+
+            def _salvar():
+                titulo = campos['titulo'].get().strip()
+                if not titulo:
+                    tkinter.messagebox.showwarning("Erro", "Título é obrigatório.",
+                                                   parent=editar_win)
+                    return
+                categoria = campos['categoria'].get().strip()
+                texto = texto_text.get('1.0', tk.END).strip()
+
+                anuncios = _carregar_anuncios_json()
+                if anuncio_id:
+                    for a in anuncios:
+                        if int(a.get('id', 0)) == anuncio_id:
+                            a['titulo'] = titulo
+                            a['categoria'] = categoria
+                            a['texto'] = texto
+                            break
+                else:
+                    novo_id = max([int(a.get('id', 0)) for a in anuncios], default=0) + 1
+                    anuncios.append({
+                        "id": novo_id,
+                        "titulo": titulo,
+                        "categoria": categoria,
+                        "texto": texto,
+                        "criado_em": datetime.now().isoformat(timespec="seconds"),
+                    })
+                if not _salvar_anuncios_json(anuncios):
+                    tkinter.messagebox.showwarning(
+                        "⚠️", "Não foi possível gravar em anuncios.json.", parent=editar_win)
+                    return
+                _carregar_anuncios()
+                editar_win.destroy()
+
+            tk.Button(e_main, text="💾 Salvar", font=("Arial", 12, "bold"),
+                      bg='#238636', fg='white', activebackground='#2ea043',
+                      command=_salvar, cursor='hand2', padx=20, pady=5
+                      ).pack(pady=10)
+
+        _carregar_anuncios()
+
+    # ────────────────────────────────────────────────────────────────────
     # JANELA DE BÍBLIA
     # ────────────────────────────────────────────────────────────────────
 
@@ -4961,9 +5982,13 @@ class AppInterface:
         entry_busca_texto.bind("<FocusOut>", lambda e: _busca_texto_focus_out())
 
         def _buscar_versiculos_texto():
+            """Busca versículos por texto e mostra na área da Bíblia.
+
+            Retorna as linhas encontradas (None se busca vazia ou sem dados).
+            """
             termo = entry_busca_texto.get().strip()
             if not termo or termo == "Buscar versículo por texto...":
-                return
+                return None
             versao = versao_var.get()
             rows = db_query(
                 "SELECT * FROM versiculos WHERE versao = ? AND texto LIKE ? "
@@ -4980,8 +6005,25 @@ class AppInterface:
                                     "Dica: use o botão '📥 Importar Bíblia (XML/TXT/JSON)'\n"
                                     "para importar uma Bíblia.")
             biblia_text.config(state='disabled')
+            return rows
 
-        entry_busca_texto.bind("<Return>", lambda e: _buscar_versiculos_texto())
+        def _buscar_e_projetar_biblia(event=None):
+            """Enter na busca de versículos: busca e já projeta os resultados.
+
+            Mesmo efeito de buscar e clicar em "📺 Projetar", mas projetando
+            exatamente o que a busca retornou ("Livro cap:vers. — texto").
+            """
+            rows = _buscar_versiculos_texto()
+            if rows:
+                _cap_numeros[:] = []
+                slides = [
+                    f"{r['livro']} {r['capitulo']}:{r['versiculo']} — {r['texto']}"
+                    for r in rows]
+                self.player.telao.projetar_slides(slides)
+                _atualizar_indicador_slide()
+            return "break"
+
+        entry_busca_texto.bind("<Return>", lambda e: _buscar_e_projetar_biblia())
 
         def _carregar_capitulo(foco: Optional[int] = None):
             """Carrega o capítulo atual na área de texto.
@@ -5992,6 +7034,10 @@ class AppInterface:
             self.root.after_cancel(self._temp_timer)
         self._temp_timer = self.root.after(1_800_000, self.atualizar_temperatura)
 
+        # Verifica (em thread, silencioso) se há versão nova no GitHub
+        self.root.after(SEGUNDOS_PARA_VERIFICAR_ATUALIZACAO * 1000,
+                        lambda: self.verificar_atualizacao(manual=False))
+
     # ── Loop principal ────────────────────────────────────────────
 
     def run(self) -> None:
@@ -6051,6 +7097,6 @@ class AppInterface:
 # ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("🎵 Hinário Deep - Iniciando...")
+    print("🎵 NavePro - Iniciando...")
     app = AppInterface()
     app.run()

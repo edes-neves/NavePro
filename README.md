@@ -1,4 +1,4 @@
-# NavPro — Sistema de Projeção para Igreja
+# NavePro — Sistema de Projeção para Igreja
 
 Aplicativo desktop (Python/Tkinter) para **projeção multimídia em dois monitores**: o monitor principal (1) controla tudo e o segundo monitor (2) exibe o **telão** (letras de hinos, Bíblia, mídias) em tela cheia para a congregação.
 
@@ -12,10 +12,52 @@ Desenvolvido para Ubuntu (Python 3 + Tkinter), empacotado como AppImage.
 |---|---|
 | **Projeção** | Exibe letras, versículos e mídias no monitor 2 (telão), com configuração de fonte, cor e tamanho. |
 | **📖 Hinos / Letras** | CRUD de hinos (artista, CCLI, categoria, letra completa), importação XML/TXT, busca, projeção com navegação por slides. |
+| **📢 Anúncios** | Mesma cara da janela de Hinos, mas **fora do banco de dados**: salva em `~/.navepro/anuncios.json`, importa **TXT/PDF**, cria/edita/exclui e projeta do mesmo jeito. O Excluir remove o anúncio do arquivo JSON. |
 | **✝️ Bíblia** | Importação de bíblias em XML/TXT/JSON, seleção de versão/livro/capítulo/versículo, busca por texto e projeção sincronizada com o telão. |
 | **📋 Ordem de Serviço** | Montagem de roteiros de culto com itens (hinos, mídias), com letras em snapshot e tempo estimado. |
 | **📦 Gerenciar Banco de Mídia** | Organização das mídias utilizadas nas apresentações. |
 | **🎨 Projeção (config)** | Mesmo diálogo de ajustes de aparência usado por Hinos e Bíblia. |
+| **🔄 Atualização automática** | Verifica versões novas no GitHub (Releases) e baixa o novo AppImage para `~/Downloads` com instruções de instalação. |
+
+---
+
+## Atualizações (GitHub Releases)
+
+O NavePro consulta o repositório **`edes-neves/NavePro`** no GitHub:
+
+1. Ao iniciar, ~20s depois (e também pelo menu **Ajuda ▸ Verificar atualizações…**), o app consulta `https://api.github.com/repos/edes-neves/NavePro/releases/latest` em segundo plano (sem travar a interface).
+2. Se a versão do release for **maior** que a instalada, mostra o aviso com as novidades e pergunta se deseja baixar.
+3. Ao confirmar, baixa o `.AppImage` do release para **`~/Downloads`** com barra de progresso.
+4. Ao terminar, mostra as instruções de instalação e abre a pasta Downloads:
+
+   ```
+   1. Feche o NavePro.
+   2. Substitua o AppImage atual pelo baixado (mova-o para o mesmo lugar do antigo).
+   3. Dê permissão de execução se precisar: chmod +x "<novo arquivo>"
+   4. Abra o novo arquivo para rodar a versão atualizada.
+   ```
+
+> A opção **Verificar atualizações…** (menu Ajuda) mostra uma mensagem mesmo quando já está atualizado ou quando o GitHub está inacessível.
+
+### Como publicar uma versão nova
+
+1. Gere o AppImage novo **passando a versão** — o `build.sh` atualiza o `APP_VERSION` no `NavePro.py` e nomeia o arquivo com a versão:
+
+   ```bash
+   ./build.sh 1.9.1                 # gera NavePro-1.9.1.AppImage com versão 1.9.1 gravada
+   ./NavePro-1.9.1.AppImage         # teste
+   ```
+
+   > ⚠️ **Não pule a versão**: se criar um release `v1.9.1` com um AppImage ainda em `1.9.0`, o binário se achará desatualizado e oferecerá "atualizar" baixando a si mesmo. O `./build.sh <versão>` previne isso (grava e confere o `APP_VERSION`).
+
+2. Faça commit das mudanças e crie um **tag** na versão (ex.: `v1.9.0`).
+3. Crie o release no GitHub anexando o AppImage. Exemplo com a CLI `gh`:
+
+   ```bash
+   gh release create v1.9.1 NavePro-1.9.1-AMD.AppImage --title "NavePro 1.9.1" --notes "O que mudou nesta versão..."
+   ```
+
+O app considera o `tag_name` do release mais recente como a versão a oferecer; o primeiro asset `*.AppImage` é o que será baixado.
 
 ---
 
@@ -125,6 +167,7 @@ destino; em qualquer Linux desktop (que tenha fontes liberation/dejavu/noto)
 o "Arial" resolve para uma sans-serif equivalente.
 
 ```bash
+python -m pip install -r requirements.txt
 python NavePro.py
 ```
 
@@ -134,15 +177,21 @@ python NavePro.py
 ### Gerar AppImage
 O AppImage é **autocontido** (PyInstaller embute Python + **Tk 8.6**), então
 não precisa de python3/tkinter na máquina de destino e as fontes ficam
-idênticas em qualquer lugar. Faça pela ordem do `Gerar.AppImage` (resumo),
-usando um python com Tk 8.6:
+idênticas em qualquer lugar. Use `build.sh` (reproduz o passo a passo do
+`Gerar.AppImage`) com um python de Tk 8.6:
+
+```bash
+./build.sh 1.9.1       # usa o python com Tk 8.6; PYTHON_BIN=.venv/bin/python ./build.sh
+```
+
+Ou, manualmente:
 ```bash
 /usr/sbin/python -m PyInstaller --noconfirm --clean --onefile \
     --name NavePro --hidden-import "PIL._tkinter_finder" \
     --add-data "Icon.xbm:." --add-data "Icon.png:." NavePro.py   # gera dist/NavePro
 cp dist/NavePro AppDir/usr/bin/NavePro && chmod +x AppDir/usr/bin/NavePro
-ARCH=x86_64 appimagetool AppDir NavePro.AppImage
-./NavePro.AppImage
+ARCH=x86_64 appimagetool AppDir NavePro-1.9.1-AMD.AppImage
+./NavePro-1.9.1-AMD.AppImage
 ```
 
 > **Por que PyInstaller?** O AppRun antigo usava o `python3` do sistema
@@ -150,7 +199,7 @@ ARCH=x86_64 appimagetool AppDir NavePro.AppImage
 > (conda) quebrava as fontes: o Tk 9.0 não resolve "Arial" → Liberation Sans
 > e caía para a fonte bitmap `fixed` (minúscula + quadradinhos). O binário
 > PyInstaller garante o **Tk 8.6** dentro do AppImage.
-> **Edite sempre `NavePro.py` na raiz** e repita os 2 comandos de build;
+> **Edite sempre `NavePro.py` na raiz** e repita o build;
 > `AppDir/usr/bin/NavePro.py` não é mais usado (virou o binário).
 
 ---
@@ -158,15 +207,19 @@ ARCH=x86_64 appimagetool AppDir NavePro.AppImage
 ## Estrutura do projeto
 
 ```
-NavPro.py            # Aplicativo principal (interface + projeção + importadores)
-AS21.xml             # Bíblia Almeida Século 21 (XML Zefania)
-biblia-em-txt.txt    # Bíblia Almeida Revista e Corrigida (TXT)
-NHA/                 # Hinário (OpenLyrics XML) — Novo Hinário Adventista
-HASD/                # Hinário (OpenLyrics XML)
-backend/             # Upload remoto (servidor + template)
+NavePro.py            # Aplicativo principal (interface + projeção + importadores)
+README.md             # Este documento
+LICENSE               # GPLv3
+requirements.txt      # Dependências (runtime + pyinstaller)
+build.sh              # Gera o AppImage (PyInstaller + appimagetool)
+Gerar.AppImage        # Passo a passo (resumo) para empacotar o AppImage
+AS21.xml              # Bíblia Almeida Século 21 (XML Zefania)
+biblia-em-txt.txt     # Bíblia Almeida Revista e Corrigida (TXT)
+NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista
+HASD/                 # Hinário (OpenLyrics XML)
+AppDir/               # Estrutura do AppImage (AppRun, .desktop, ícones)
 img/, Icon*.ico/png/xbm  # Ícones do app
-Gerar.AppImage       # Passo a passo para empacotar o AppImage
-.gitignore
+.gitignore            # Arquivos locais/artefatos de build ignorados
 ```
 
 ---
@@ -174,12 +227,13 @@ Gerar.AppImage       # Passo a passo para empacotar o AppImage
 ## Ajustes comuns
 
 - **Tamanho das janelas**: `janela.geometry("LARGURAxALTURA")` em `janela_hinos` (Hinos) e `janela_biblia` (Bíblia).
-- **Configuração local** (`config.json`, ignorado do git): cidade/estado, monitor do telão e player.
+- **Configuração local** (`~/.navepro/config.json`, ignorado do git): cidade/estado, monitor do telão e player.
 
 ---
 
 ## Histórico recente
 
+- **Atualização automática** via GitHub Releases com download para `~/Downloads` e instruções de instalação.
 - Importação de Bíblia em **XML/TXT** com normalização de livros (acentos/apelidos).
 - Importação de Bíblia em **JSON** (4 formatos, suporte a BOM UTF-8).
 - Janela Bíblia com os mesmos recursos de projeção da janela Hinos (painel 🎬, atalhos de teclado, 🎨 Projeção).
