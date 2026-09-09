@@ -131,10 +131,13 @@ modules:
         path: ../midia.db
       - type: dir
         path: ../NHA
+        dest: NHA
       - type: dir
         path: ../HASD
+        dest: HASD
       - type: dir
         path: ../icones
+        dest: icones
       - type: file
         path: io.github.edesneves.NavePro.desktop
       - type: file
