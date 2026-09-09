@@ -1,0 +1,99 @@
+app-id: io.github.edesneves.NavePro
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: navepro
+separate-locales: false
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=all
+  - --filesystem=home:rw
+  - --filesystem=xdg-download
+  - --filesystem=host-os
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.FileManager1
+
+modules:
+  # Tcl/Tk 8.6 (mantém fontes do AppImage)
+  - name: tcl
+    buildsystem: autotools
+    subdir: unix
+    post-install:
+      - chmod +w ${FLATPAK_DEST}/lib/libtcl*.so
+    build-options:
+      cflags: -DTCL_UTF_MAX=4
+    cleanup:
+      - /bin
+      - /lib/pkgconfig
+      - /man
+    sources:
+      - type: archive
+        url: https://prdownloads.sourceforge.net/tcl/tcl8.6.15-src.tar.gz
+        sha256: 861e159753f2e2fbd6ec1484103715b0be56be3357522b858d3cbb5f893ffef1
+
+  - name: tk
+    buildsystem: autotools
+    subdir: unix
+    post-install:
+      - chmod +w ${FLATPAK_DEST}/lib/libtk*.so
+    build-options:
+      cflags: -DTCL_UTF_MAX=4
+    cleanup:
+      - /bin
+      - /lib/pkgconfig
+      - /man
+    sources:
+      - type: archive
+        url: https://prdownloads.sourceforge.net/tcl/tk8.6.15-src.tar.gz
+        sha256: 550969f35379f952b3020f3ab7b9dd5bfd11c1ef7c9b7c6a75f5c49aca793fec
+
+  # _tkinter para o Python da runtime
+  - name: python3-tkinter
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=${FLATPAK_DEST} --no-build-isolation --no-deps .
+    sources:
+      - type: git
+        url: https://github.com/iwalton3/tkinter-standalone
+        commit: 4f5cfe3cdd1f58cd4e136fd66d4e5e27d21d820b
+
+  # Dependências Python
+  - name: python-deps
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - pip3 install --prefix=${FLATPAK_DEST} --no-cache-dir -r requirements-flatpak.txt
+    sources:
+      - type: file
+        path: requirements-flatpak.txt
+
+  # NavePro (busca do repo no GitHub)
+  - name: navepro
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 navepro.sh /app/bin/navepro
+      - install -Dm644 NavePro.py config.json AS21.xml biblia-em-txt.txt -t /app/lib/navepro/
+      - install -Dm644 Icon.png Icon.xbm midia.db -t /app/lib/navepro/
+      - cp -r NHA HASD icones /app/lib/navepro/
+      - install -Dm644 io.github.edesneves.NavePro.desktop -t /app/share/applications/
+      - install -Dm644 io.github.edesneves.NavePro.metainfo.xml -t /app/share/metainfo/
+      - install -Dm644 Icon.png /app/share/icons/hicolor/256x256/apps/io.github.edesneves.NavePro.png
+    sources:
+      - type: file
+        path: navepro.sh
+      - type: git
+        url: https://github.com/edes-neves/NavePro.git
+        # Atualize tag e commit ao lançar nova versão:
+        tag: v1.9.1
+        commit: 3178447
+      - type: file
+        path: io.github.edesneves.NavePro.desktop
+      - type: file
+        path: io.github.edesneves.NavePro.metainfo.xml

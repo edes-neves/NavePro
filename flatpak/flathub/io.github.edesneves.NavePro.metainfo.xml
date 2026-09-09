@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.edesneves.NavePro</id>
+  <name>NavePro</name>
+  <summary>Sistema de projeção multimídia para igreja</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.edesneves">
+    <name>Jose Edes Neves</name>
+  </developer>
+  <description>
+    <p>
+      NavePro é um aplicativo desktop (Python/Tkinter) para projeção multimídia
+      em dois monitores: o monitor principal controla tudo e o segundo monitor
+      exibe o telão (letras de hinos, versículos bíblicos e mídias) em tela
+      cheia para a congregação.
+    </p>
+    <ul>
+      <li>Hinos com CRUD, importação XML/TXT (OpenLyrics) e projeção por slides</li>
+      <li>Bíblia com importação XML (Zefania), TXT e JSON (4 formatos)</li>
+      <li>Anúncios com importação TXT/PDF</li>
+      <li>Ordem de Serviço e Gerenciador de Mídia</li>
+      <li>Atualização automática via GitHub Releases</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.edesneves.NavePro.desktop</launchable>
+  <url type="homepage">https://github.com/edes-neves/NavePro</url>
+  <url type="bugtracker">https://github.com/edes-neves/NavePro/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Tela principal do NavePro</caption>
+      <image type="source">https://raw.githubusercontent.com/edes-neves/NavePro/main/img/Icone.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="1.9.1" date="2026-09-09">
+      <description>
+        <ul>
+          <li>Atualização automática via GitHub Releases</li>
+          <li>Importação de Bíblia em XML (Zefania), TXT e JSON (4 formatos, com BOM UTF-8)</li>
+          <li>Anúncios com importação TXT/PDF</li>
+          <li>Projeção sincronizada na Janela Bíblia</li>
+          <li>Gerenciador de mídia corrigido (lista vazia)</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
