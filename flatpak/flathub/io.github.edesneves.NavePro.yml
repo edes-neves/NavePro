@@ -90,9 +90,8 @@ modules:
         path: navepro.sh
       - type: git
         url: https://github.com/edes-neves/NavePro.git
-        # Atualize tag e commit ao lançar nova versão:
+        # Atualize a tag ao lançar nova versão:
         tag: v1.9.1
-        commit: 3178447
       - type: file
         path: io.github.edesneves.NavePro.desktop
       - type: file
