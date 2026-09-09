@@ -13,7 +13,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="NavePro"
-PYTHON_BIN="${PYTHON_BIN:-/usr/sbin/python}"
+VERSION="${1:-1.0.0}"
+#PYTHON_BIN="${PYTHON_BIN:-/usr/sbin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"
 APPIMAGE_TOOL="${APPIMAGE_TOOL:-appimagetool}"
 ARCH="${ARCH:-$(uname -m)}"
 
@@ -22,8 +24,8 @@ ARCH="${ARCH:-$(uname -m)}"
 # ────────────────────────────────────────────────────────────────────
 if ! command -v "$APPIMAGE_TOOL" >/dev/null 2>&1; then
     echo "❌ appimagetool não encontrado (procurei: $APPIMAGE_TOOL)."
-    echo "   Instale ou ajuste APPIMAGE_TOOL=...</caminho>"
-    exit 1
+    echo "   Instale ou ajuste APPIMAGE_TOOL=...<./appimagetool>"
+    exit 1 
 fi
 
 if [ ! -x "$PYTHON_BIN" ]; then
@@ -81,13 +83,21 @@ chmod 755 "AppDir/usr/bin/$APP_NAME"
 # 3. Gerar o AppImage (perm. de execução só para o dono)
 # ────────────────────────────────────────────────────────────────────
 echo "📀 Gerando ${APP_NAME}.AppImage..."
-rm -f "${APP_NAME}.AppImage"
-"$APPIMAGE_TOOL" AppDir "${APP_NAME}.AppImage"
+#rm -f "${APP_NAME}.AppImage"
+OUTPUT_APPIMAGE="${APP_NAME}-${VERSION}.AppImage"
+rm -f "$OUTPUT_APPIMAGE"
+
+chmod +x AppDir/AppRun
+#"$APPIMAGE_TOOL" AppDir "${APP_NAME}.AppImage"
+"$APPIMAGE_TOOL" AppDir "$OUTPUT_APPIMAGE"
 
 # Permissão de execução somente para o usuário (700)
-chmod 700 "${APP_NAME}.AppImage"
-echo "✅ AppImage gerenciado: $(pwd)/${APP_NAME}.AppImage"
-ls -l "${APP_NAME}.AppImage"
+#chmod 700 "${APP_NAME}.AppImage"
+#echo "✅ AppImage gerenciado: $(pwd)/${APP_NAME}.AppImage"
+#ls -l "${APP_NAME}.AppImage"
+chmod 700 "$OUTPUT_APPIMAGE"
+echo "✅ AppImage gerenciado: $(pwd)/$OUTPUT_APPIMAGE"
+ls -l "$OUTPUT_APPIMAGE"
 
 echo ""
 echo "🎉 Pronto! Para executar:  ./${APP_NAME}.AppImage"

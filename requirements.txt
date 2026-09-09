@@ -8,6 +8,7 @@
 # ── Runtime ──
 screeninfo>=0.7          # Detecção real de monitores (com fallback para xrandr/tkinter)
 Pillow>=10.0.0           # Logo/ícone na interface (ImageTk)
+pypdf>=4.0.0             # Importação de anúncios em PDF (extração de texto)
 
 # ── Build (gerar o AppImage) ──
 # https://github.com/pyinstaller/pyinstaller
