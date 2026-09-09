@@ -1,0 +1,69 @@
+name: Flatpak
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Flatpak ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Registra binfmt para rodar binários aarch64 no runner x86_64
+      - name: Set up QEMU (${{ matrix.arch }})
+        if: matrix.arch != 'x86_64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Install Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-install@v6
+        with:
+          arch: ${{ matrix.arch }}
+          flatpak: flatpak
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          arch: ${{ matrix.arch }}
+          manifest: flatpak/io.github.edesneves.NavePro.yaml
+          cache: true
+          cache-key: flatpak-${{ matrix.arch }}
+          build-bundle: true
+          bundle: NavePro-${{ matrix.arch }}.flatpak
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: NavePro-flatpak-${{ matrix.arch }}
+          path: NavePro-${{ matrix.arch }}.flatpak
+          if-no-files-found: error
+
+  release:
+    name: Anexar bundles à release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: bundles
+
+      - name: Anexar à release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bundles/NavePro-flatpak-x86_64/NavePro-x86_64.flatpak
+            bundles/NavePro-flatpak-aarch64/NavePro-aarch64.flatpak

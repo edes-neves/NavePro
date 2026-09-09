@@ -202,6 +202,35 @@ ARCH=x86_64 appimagetool AppDir NavePro-1.9.1-AMD.AppImage
 > **Edite sempre `NavePro.py` na raiz** e repita o build;
 > `AppDir/usr/bin/NavePro.py` não é mais usado (virou o binário).
 
+### Gerar Flatpak
+
+O Flatpak empacotado **não precisa do PyInstaller/imagetool** — o `python3` da
+runtime do Flatpak roda o `NavePro.py` direto. O módulo `_tkinter` (ausente
+na runtime) é compilado a partir do [tkinter-standalone](https://github.com/iwalton3/tkinter-standalone)
+com **Tcl/Tk 8.6.15** (mantém as mesmas fontes do AppImage).
+
+**Build local** (requer `flatpak-builder`):
+```bash
+sudo apt install flatpak-builder
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+./build-flatpak.sh              # gera io.github.edesneves.NavePro.<arch>.flatpak
+./build-flatpak.sh --install    # instala no usuário atual
+```
+
+**Build multi-arquitetura (GitHub Actions):**
+A workflow `.github/workflows/flatpak.yml` gera bundles para `x86_64` e
+`aarch64` em cada release (`git push origin v<versão>`). O `flatpak-builder`
+usa QEMU para cross-compile em aarch64.
+
+**Publicar no Flathub:**
+O manifesto `flatpak/io.github.edesneves.NavePro.yaml` está pronto para
+submissão. O Flathub compila automaticamente para **x86_64**, **aarch64** e
+**riscv64** — sem infraestrutura extra. Para submeter, crie um pull request
+em [flathub/flathub](https://github.com/flathub/flathub) apontando para este
+repositório.
+
 ---
 
 ## Estrutura do projeto
@@ -218,6 +247,8 @@ biblia-em-txt.txt     # Bíblia Almeida Revista e Corrigida (TXT)
 NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista
 HASD/                 # Hinário (OpenLyrics XML)
 AppDir/               # Estrutura do AppImage (AppRun, .desktop, ícones)
+flatpak/              # Manifesto Flatpak + .desktop + metainfo + wrapper
+.github/workflows/    # CI/CD: build Flatpak multi-arquitetura (x86_64 + aarch64)
 img/, Icon*.ico/png/xbm  # Ícones do app
 .gitignore            # Arquivos locais/artefatos de build ignorados
 ```

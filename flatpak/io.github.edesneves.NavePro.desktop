@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=NavePro
+GenericName=Projeção para Igreja
+Comment=Sistema de projeção multimídia para igreja (hinos, Bíblia, mídias)
+Exec=navepro
+Icon=io.github.edesneves.NavePro
+Terminal=false
+Categories=AudioVideo;Education;Utility;
+Keywords=hino;biblia;projecao;igreja;telao;church;hymn;projection;
+StartupWMClass=Navepro
+X-Flatpak-RenamedFrom=navepro.desktop;

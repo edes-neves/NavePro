@@ -27,5 +27,10 @@
 /config.json
 /tempCodeRunnerFile.py
 
+# Flatpak (build local)
+/flatpak/build/
+/flatpak/repo/
+*.flatpak
+
 # Banco de dados local (não versionar)
 *.db

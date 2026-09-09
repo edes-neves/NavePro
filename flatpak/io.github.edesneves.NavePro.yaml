@@ -1,0 +1,138 @@
+# NavePro — manifest Flatpak
+#
+# Build local:
+#   flatpak-builder --user --install --force-clean build-dir \
+#     flatpak/io.github.edesneves.NavePro.yaml
+#
+# Submissão Flathub: o buildbot constrói automaticamente para
+# x86_64, aarch64 e riscv64.
+#
+# Referências:
+#   - Runtime íns fundo Python: a runtime 24.08 inclui /usr/bin/python3
+#     mas NÃO inclui o módulo _tkinter.
+#   - Módulo _tkinter: https://github.com/iwalton3/tkinter-standalone
+#     (combinação comprovada no Flathub — Thonny — commit 4f5cfe3)
+#   - Tcl/Tk 8.6.15 e não 9.0: o NavePro documenta que o Tk 9.0 quebra
+#     os aliases de fonte (fontconfig) — mesmo motivo do AppImage usar 8.6.
+
+app-id: io.github.edesneves.NavePro
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: navepro
+separate-locales: false
+
+finish-args:
+  # Rede: atualização automática, clima (Open-Meteo) e servidor REST (porta 5897)
+  - --share=network
+  # Janelas/teclado: Tk usam X11 (XWayland cobre Wayland)
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  # Áudio/vídeo do telão
+  - --socket=pulseaudio
+  - --device=all
+  # Dados do usuário em ~/.navepro e downloads das atualizações
+  - --filesystem=home:rw
+  - --filesystem=xdg-download
+  # Players de mídia do sistema (smplayer/mpv/vlc) via /run/host/usr/bin
+  - --filesystem=host-os
+  # Notificações e "abrir pasta Downloads"
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.FileManager1
+
+modules:
+
+  # ── Tcl/Tk 8.6.15 ─────────────────────────────────────────────────
+  - name: tcl
+    buildsystem: autotools
+    subdir: unix
+    post-install:
+      - chmod +w ${FLATPAK_DEST}/lib/libtcl*.so
+    build-options:
+      cflags: -DTCL_UTF_MAX=4
+    cleanup:
+      - /bin
+      - /lib/pkgconfig
+      - /man
+    sources:
+      - type: archive
+        url: https://prdownloads.sourceforge.net/tcl/tcl8.6.15-src.tar.gz
+        sha256: 861e159753f2e2fbd6ec1484103715b0be56be3357522b858d3cbb5f893ffef1
+
+  - name: tk
+    buildsystem: autotools
+    subdir: unix
+    post-install:
+      - chmod +w ${FLATPAK_DEST}/lib/libtk*.so
+    build-options:
+      cflags: -DTCL_UTF_MAX=4
+    cleanup:
+      - /bin
+      - /lib/pkgconfig
+      - /man
+    sources:
+      - type: archive
+        url: https://prdownloads.sourceforge.net/tcl/tk8.6.15-src.tar.gz
+        sha256: 550969f35379f952b3020f3ab7b9dd5bfd11c1ef7c9b7c6a75f5c49aca793fec
+
+  # ── _tkinter para o Python da runtime ─────────────────────────────
+  - name: python3-tkinter
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=${FLATPAK_DEST} --no-build-isolation --no-deps .
+    sources:
+      - type: git
+        url: https://github.com/iwalton3/tkinter-standalone
+        commit: 4f5cfe3cdd1f58cd4e136fd66d4e5e27d21d820b
+
+  # ── Dependências Python (Pillow, screeninfo, pypdf) ───────────────
+  - name: python-deps
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=${FLATPAK_DEST} --no-cache-dir -r requirements-flatpak.txt
+    sources:
+      - type: file
+        path: requirements-flatpak.txt
+
+  # ── NavePro ───────────────────────────────────────────────────────
+  # Instala o script na pasta /app/lib/navepro/, na MESMA pasta do
+  # NavePro.py (o app resolve NHA/, HASD/, AS21.xml, icones/ e Icon.xbm
+  # via _caminho_recurso(), que usa o diretório do __file__).
+  - name: navepro
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 navepro.sh /app/bin/navepro
+      - install -Dm644 NavePro.py config.json AS21.xml biblia-em-txt.txt -t /app/lib/navepro/
+      - install -Dm644 Icon.png Icon.xbm midia.db -t /app/lib/navepro/
+      - cp -r NHA HASD icones /app/lib/navepro/
+      - install -Dm644 io.github.edesneves.NavePro.desktop -t /app/share/applications/
+      - install -Dm644 io.github.edesneves.NavePro.metainfo.xml -t /app/share/metainfo/
+      - install -Dm644 Icon.png /app/share/icons/hicolor/256x256/apps/io.github.edesneves.NavePro.png
+    sources:
+      - type: file
+        path: navepro.sh
+      - type: file
+        path: ../NavePro.py
+      - type: file
+        path: ../config.json
+      - type: file
+        path: ../AS21.xml
+      - type: file
+        path: ../biblia-em-txt.txt
+      - type: file
+        path: ../Icon.png
+      - type: file
+        path: ../Icon.xbm
+      - type: file
+        path: ../midia.db
+      - type: dir
+        path: ../NHA
+      - type: dir
+        path: ../HASD
+      - type: dir
+        path: ../icones
+      - type: file
+        path: io.github.edesneves.NavePro.desktop
+      - type: file
+        path: io.github.edesneves.NavePro.metainfo.xml
