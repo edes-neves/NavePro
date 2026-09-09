@@ -15,6 +15,9 @@ finish-args:
   - --filesystem=home:rw
   - --filesystem=xdg-download
   - --filesystem=host-os
+  - --talk-name=org.freedesktop.Flatpak
+  - --talk-name=org.mpris.MediaPlayer2.smplayer
+  - --talk-name=org.mpris.MediaPlayer2.vlc
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.freedesktop.FileManager1
 
@@ -79,15 +82,19 @@ modules:
     buildsystem: simple
     build-commands:
       - install -Dm755 navepro.sh /app/bin/navepro
+      - install -Dm755 smplayer-host /app/bin/smplayer
       - install -Dm644 NavePro.py config.json AS21.xml biblia-em-txt.txt -t /app/lib/navepro/
       - install -Dm644 Icon.png Icon.xbm midia.db -t /app/lib/navepro/
-      - cp -r NHA HASD icones /app/lib/navepro/
+      # Sem icones/: os botões usam emojis coloridos (runtime traz NotoColorEmoji).
+      - cp -r NHA HASD /app/lib/navepro/
       - install -Dm644 io.github.edesneves.NavePro.desktop -t /app/share/applications/
       - install -Dm644 io.github.edesneves.NavePro.metainfo.xml -t /app/share/metainfo/
       - install -Dm644 Icon.png /app/share/icons/hicolor/256x256/apps/io.github.edesneves.NavePro.png
     sources:
       - type: file
         path: navepro.sh
+      - type: file
+        path: smplayer-host
       - type: git
         url: https://github.com/edes-neves/NavePro.git
         # Atualize a tag ao lançar nova versão:
