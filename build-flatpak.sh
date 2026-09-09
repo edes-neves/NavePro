@@ -22,7 +22,7 @@ OUT_BUNDLE="${APP_ID}.${ARCH}.flatpak"
 mkdir -p "${BUILD_DIR}" "${REPO_DIR}"
 
 echo "=== Gerando ${OUT_BUNDLE} (arquitetura ${ARCH}) ==="
-flatpak-builder --repo="${REPO_DIR}" --force-clean --disable-rofiles-fuse "${BUILD_DIR}" "${MANIFEST}"
+flatpak-builder --repo="${REPO_DIR}" --force-clean --clean-cache --disable-rofiles-fuse "${BUILD_DIR}" "${MANIFEST}"
 
 echo "=== Criando bundle ${OUT_BUNDLE} ==="
 flatpak build-bundle "${REPO_DIR}" "${OUT_BUNDLE}" "${APP_ID}"
