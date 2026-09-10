@@ -67,3 +67,60 @@ jobs:
           files: |
             bundles/NavePro-flatpak-x86_64/NavePro-x86_64.flatpak
             bundles/NavePro-flatpak-aarch64/NavePro-aarch64.flatpak
+
+  # Publica o repositório Flatpak auto-hospedado (https://edes-neves.github.io/NavePro/)
+  # em cada release: constrói x86_64 e adiciona o commit ao ostree publicado no gh-pages.
+  # Usuários atualizam com: flatpak update --user io.github.edesneves.NavePro
+  publish-repo:
+    name: Publicar repositório Flatpak (gh-pages)
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-install@v6
+        with:
+          arch: x86_64
+          flatpak: flatpak
+
+      # A branch gh-pages É o repositório ostree público (config/objects/refs/summary).
+      # Constrói-se dentro dela para acumular commits do histórico (delta-only).
+      - name: Baixar repositório publicado (gh-pages)
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: pages
+
+      - name: Construir no repositório publicado
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          arch: x86_64
+          manifest: flatpak/io.github.edesneves.NavePro.yaml
+          repo-dir: pages
+          build-bundle: false
+          upload-artifact: false
+          cache: false
+
+      - name: Atualizar metadados do repositório (appstream)
+        run: flatpak build-update-repo "$GITHUB_WORKSPACE/pages"
+
+      - name: Publicar no branch gh-pages
+        run: |
+          cd "$GITHUB_WORKSPACE/pages"
+          git config user.name "NavePro Bot"
+          git config user.email "edes-neves@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Sem alterações no repositório; nada a publicar."
+          else
+            TAG=$(git -C "$GITHUB_WORKSPACE" describe --tags --abbrev=0 2>/dev/null || echo "$GITHUB_REF_NAME")
+            git commit -m "Publicar NavePro $TAG no repositório Flatpak"
+            git push origin gh-pages
+          fi
