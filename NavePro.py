@@ -1,6 +1,6 @@
 """
 NavePro - Sistema de Projeção para Igrejas
-Versão: 1.9.1
+Versão: 1.9.2
 Licença: GPLv3
 Autor: José Edes Neves - Julho 2026 edes.neves7@gmail.com
 Aplicação para reprodução de mídia com projeção em telão,
@@ -146,7 +146,7 @@ def _baixar(url, timeout: int = 8, **kwargs):
 # CONSTANTES
 # ────────────────────────────────────────────────────────────────────
 
-APP_VERSION: str = "1.9.1"
+APP_VERSION: str = "1.9.2"
 CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
 PLAYER_PADRAO: str = "smplayer"
 BACKEND_PORT: int = 5897
@@ -1544,6 +1544,16 @@ class TelaoWindow:
         self.canvas = tk.Canvas(self.main_frame, bg='black', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True)
 
+        # Config do relógio (cores, tamanhos, espaçamento)
+        self._relogio_cfg: dict = {
+            "cor_hora": "#F5BE08",
+            "cor_temp": "#F5BE08",
+            "cor_fundo": "#000000",
+            "fator_hora": 1.0,
+            "fator_temp": 1.0,
+            "espacamento": 1.0,
+        }
+
         # Calcula fontes e posições sem sobreposição (720p–1080p),
         # medindo a altura real (linha) das fontes na tela atual.
         self._font_hora: tuple | None = None
@@ -1557,13 +1567,20 @@ class TelaoWindow:
 
         # Texto da hora
         self.overlay_text = self.canvas.create_text(
-            self._cx, self._cy_hora, text="", fill="#F5BE08", anchor="center",
+            self._cx, self._cy_hora, text="",
+            fill=self._relogio_cfg["cor_hora"], anchor="center",
             font=self._font_hora
         )
         # Texto da temperatura
         self.temp_text = self.canvas.create_text(
-            self._cx, self._cy_temp, text="", fill="#F5BE08", anchor="center",
+            self._cx, self._cy_temp, text="",
+            fill=self._relogio_cfg["cor_temp"], anchor="center",
             font=self._font_temp
+        )
+        # Referência bíblica (livro cap:vers.) — canto inferior direito
+        self.ref_text = self.canvas.create_text(
+            0, 0, text="", fill="#A0A0A0", anchor="se", state="hidden",
+            font=("DejaVu Sans", 16, "bold")
         )
 
         # Redimensionamento mantido (caso janela seja movida)
@@ -1583,6 +1600,7 @@ class TelaoWindow:
             "tamanho_pct": 5.0,
             "cor": "#FFFFFF",
             "duracao_seg": 30,
+            "cor_ref": "#A0A0A0",
         }
         self._proj_timer = None
         self._temp_salvo = ""
@@ -1607,10 +1625,14 @@ class TelaoWindow:
         criada antes), fontes nomeadas (tkfont.Font) são renderizadas
         minúsculas pelo Tk. A tupla renderiza corretamente.
         """
+        r_cfg = self._relogio_cfg
         margem_lateral = max(16, int(largura * 0.05))
-        gap = max(10, int(altura * 0.015))
-        hora_px = int(altura * 0.48)
-        temp_px = max(24, int(altura * 0.28))
+        espacamento = r_cfg.get("espacamento", 1.0)
+        gap = max(10, int(altura * 0.015 * espacamento))
+        fator_hora = r_cfg.get("fator_hora", 1.0)
+        fator_temp = r_cfg.get("fator_temp", 1.0)
+        hora_px = int(altura * 0.48 * fator_hora)
+        temp_px = max(24, int(altura * 0.28 * fator_temp))
         self._largura_temp_max = max(200, largura - 2 * margem_lateral)
 
         def _tam_para_altura(altura_px: int) -> int:
@@ -1809,6 +1831,7 @@ class TelaoWindow:
             "tamanho_pct": 5.0,
             "cor": "#FFFFFF",
             "duracao_seg": 30,
+            "cor_ref": "#A0A0A0",
         }
         merged = dict(defaults)
         if isinstance(cfg, dict):
@@ -1816,6 +1839,48 @@ class TelaoWindow:
                 if k in defaults and v not in (None, ""):
                     merged[k] = v
         self._proj_cfg = merged
+
+    def configurar_relogio(self, cfg: Optional[dict] = None) -> None:
+        """Define a configuração de aparência do relógio/temperatura no telão."""
+        defaults = {
+            "cor_hora": "#F5BE08",
+            "cor_temp": "#F5BE08",
+            "cor_fundo": "#000000",
+            "fator_hora": 1.0,
+            "fator_temp": 1.0,
+            "espacamento": 1.0,
+        }
+        merged = dict(defaults)
+        if isinstance(cfg, dict):
+            for k, v in cfg.items():
+                if k in defaults and v not in (None, ""):
+                    merged[k] = v
+        self._relogio_cfg = merged
+        # Aplica cores ao canvas
+        self._aplicar_cores_relogio()
+        # Recalcula layout com novos tamanhos/espacamento
+        w = self.canvas.winfo_width() or self._monitor.width
+        h = self.canvas.winfo_height() or self._monitor.height
+        if w > 100 and h > 100:
+            self._calcular_layout(w, h)
+            if self.mostrando_relogio:
+                self.canvas.coords(self.overlay_text, self._cx, self._cy_hora)
+                self.canvas.coords(self.temp_text, self._cx, self._cy_temp)
+                self.canvas.itemconfig(self.overlay_text, font=self._font_hora)
+                self.canvas.itemconfig(self.temp_text, font=self._font_temp)
+                self.root.update_idletasks()
+
+    def _aplicar_cores_relogio(self) -> None:
+        """Aplica as cores configuradas do relógio e temperatura ao canvas."""
+        cfg = self._relogio_cfg
+        cor_hora = cfg.get("cor_hora", "#F5BE08")
+        cor_temp = cfg.get("cor_temp", "#F5BE08")
+        cor_fundo = cfg.get("cor_fundo", "#000000")
+        self.canvas.itemconfig(self.overlay_text, fill=cor_hora)
+        self.canvas.itemconfig(self.temp_text, fill=cor_temp)
+        self.root.configure(bg=cor_fundo)
+        self.main_frame.configure(bg=cor_fundo)
+        self.canvas.configure(bg=cor_fundo)
 
     def projetar_texto(self, texto: str, titulo: str = "") -> None:
         """Projeta texto (letra/versículo) no telão com a fonte configurada.
@@ -1865,11 +1930,12 @@ class TelaoWindow:
         seg = max(1, int(float(cfg.get("duracao_seg", 30))))
         self._proj_timer = self.root.after(seg * 1000, self._retornar_ao_relogio)
 
-    def _desenhar_texto_no_canvas(self, texto: str) -> tuple:
+    def _desenhar_texto_no_canvas(self, texto: str, referencia: str = "") -> tuple:
         """Desenha texto centralizado no canvas com auto-ajuste de fonte.
 
         Usado tanto na projeção simples (projetar_texto) quanto nos slides.
         Retorna a tupla de fonte aplicada.
+        Se referencia for fornecida (ex.: "João 3:16"), exibe no canto inferior direito.
         """
         cfg = getattr(self, "_proj_cfg", None)
         if cfg is None:
@@ -1923,6 +1989,23 @@ class TelaoWindow:
             state="normal",
         )
         self.canvas.coords(self.overlay_text, w // 2, h // 2)
+
+        # Referência bíblica (livro cap:vers.) — canto inferior direito
+        if referencia:
+            cor_ref = cfg.get("cor_ref", "#A0A0A0")
+            tam_ref = max(12, int(tamanho * 0.45))
+            fonte_ref = (familia, tam_ref, "bold")
+            self.canvas.itemconfig(
+                self.ref_text,
+                text=referencia,
+                fill=cor_ref,
+                font=fonte_ref,
+                state="normal",
+            )
+            self.canvas.coords(self.ref_text, w - 30, h - 30)
+        else:
+            self.canvas.itemconfig(self.ref_text, text="", state="hidden")
+
         self.root.update_idletasks()
         return fonte
 
@@ -1978,7 +2061,12 @@ class TelaoWindow:
         if indice < 0 or indice >= len(self._slides):
             return False
         self._slide_index = indice
-        self._desenhar_texto_no_canvas(self._slides[indice])
+        slide = self._slides[indice]
+        if isinstance(slide, tuple):
+            texto, ref = slide
+        else:
+            texto, ref = slide, ""
+        self._desenhar_texto_no_canvas(texto, referencia=ref)
         return True
 
     def slide_proximo(self) -> bool:
@@ -2024,10 +2112,12 @@ class TelaoWindow:
         # Restaura a aparência padrão do relógio no canvas: fonte Digital-7,
         # cor, e posições originais de hora e temperatura (a projeção troca a
         # fonte e move o texto para o centro da tela).
-        self.canvas.itemconfig(self.overlay_text, fill="#F5BE08", width=0,
+        self._aplicar_cores_relogio()
+        self.canvas.itemconfig(self.overlay_text, width=0,
                                font=self._font_hora)
-        self.canvas.itemconfig(self.temp_text, fill="#F5BE08", width=0,
+        self.canvas.itemconfig(self.temp_text, width=0,
                                font=self._font_temp)
+        self.canvas.itemconfig(self.ref_text, text="", state="hidden")
         self.canvas.coords(self.overlay_text, self._cx, self._cy_hora)
         self.canvas.coords(self.temp_text, self._cx, self._cy_temp)
         self._font_temp_exib = None
@@ -2874,6 +2964,9 @@ class AppInterface:
         # Aplica configuração de aparência da projeção (letra/versículo)
         self.player.telao.configurar_projecao(self.config_data.get("projecao", {}))
 
+        # Aplica configuração de aparência do relógio/temperatura
+        self.player.telao.configurar_relogio(self.config_data.get("relogio", {}))
+
         self._criar_menu()
 
         # Corrige corrida do Tk 8.6 + XWayland (GNOME Wayland): força o flush
@@ -3093,10 +3186,11 @@ class AppInterface:
         cfg_atual.setdefault("tamanho_pct", 5.0)
         cfg_atual.setdefault("cor", "#FFFFFF")
         cfg_atual.setdefault("duracao_seg", 30)
+        cfg_atual.setdefault("cor_ref", "#A0A0A0")
 
         cfg_win = tk.Toplevel(janela)
         cfg_win.title("🎨 Aparência da Projeção (Telão)")
-        cfg_win.geometry("520x420")
+        cfg_win.geometry("520x520")
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(janela)
         cfg_win.after(50, cfg_win.grab_set)
@@ -3147,6 +3241,21 @@ class AppInterface:
                 font=("Arial", 10))
             rb.pack(side='left', padx=2)
 
+        # ── Cor da referência bíblica (livro cap:vers. — canto inferior direito) ──
+        tk.Label(c_main, text="Cor da referência bíblica (livro cap:vers.):",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117', anchor='w'
+                 ).pack(fill='x')
+        var_cor_ref = tk.StringVar(value=str(cfg_atual["cor_ref"]))
+        cor_ref_frame = tk.Frame(c_main, bg='#0d1117')
+        cor_ref_frame.pack(fill='x', pady=(0, 10))
+        for nome, codigo in lista_cores:
+            rb = tk.Radiobutton(
+                cor_ref_frame, text=nome, value=codigo, variable=var_cor_ref,
+                bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                activebackground='#0d1117', activeforeground='#f0c040',
+                font=("Arial", 10))
+            rb.pack(side='left', padx=2)
+
         # ── Duração antes de voltar ao relógio ──
         tk.Label(c_main, text="Duração antes de voltar ao relógio (segundos):",
                  font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117', anchor='w'
@@ -3167,6 +3276,7 @@ class AppInterface:
                 "tamanho_pct": float(var_tamanho.get()),
                 "cor": var_cor.get(),
                 "duracao_seg": duracao,
+                "cor_ref": var_cor_ref.get(),
             }
             self.salvar_config_projecao(novo)
             cfg_win.destroy()
@@ -3175,6 +3285,135 @@ class AppInterface:
                   bg='#238636', fg='white', activebackground='#2ea043',
                   command=_salvar_cfg, cursor='hand2', padx=20, pady=5
                   ).pack(pady=6)
+
+    def salvar_config_relogio(self, cfg: dict) -> None:
+        """Persiste a configuração de aparência do relógio e aplica ao telão."""
+        self.config_data["relogio"] = cfg
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(self.config_data, f, indent=2)
+        except Exception as e:
+            print(f"Erro ao salvar config do relógio: {e}")
+        if self.player and self.player.telao:
+            self.player.telao.configurar_relogio(cfg)
+
+    def abrir_config_relogio_dialogo(self) -> None:
+        """Abre a janela de configuração do relógio/temperatura no telão."""
+        cfg_atual = dict(getattr(self.player.telao, "_relogio_cfg", {}))
+        cfg_atual.setdefault("cor_hora", "#F5BE08")
+        cfg_atual.setdefault("cor_temp", "#F5BE08")
+        cfg_atual.setdefault("cor_fundo", "#000000")
+        cfg_atual.setdefault("fator_hora", 1.0)
+        cfg_atual.setdefault("fator_temp", 1.0)
+        cfg_atual.setdefault("espacamento", 1.0)
+
+        cfg_win = tk.Toplevel(self.root)
+        cfg_win.title("⚙️ Configura Relógio")
+        cfg_win.geometry("500x580")
+        cfg_win.configure(bg='#0d1117')
+        cfg_win.transient(self.root)
+        cfg_win.after(50, cfg_win.grab_set)
+
+        c_main = tk.Frame(cfg_win, bg='#0d1117')
+        c_main.pack(fill='both', expand=True, padx=15, pady=15)
+
+        tk.Label(c_main, text="⚙️ Configura Relógio",
+                 font=("Arial", 15, "bold"), fg='#f0c040', bg='#0d1117'
+                 ).pack(pady=(0, 12))
+
+        lista_cores = [
+            ("Amarelo", "#F5BE08"), ("Branco", "#FFFFFF"),
+            ("Vermelho", "#FF5555"), ("Azul", "#58A6FF"),
+            ("Verde", "#3FB950"), ("Roxo", "#D2A8FF"),
+            ("Ciano", "#00E5FF"), ("Laranja", "#FF9800")]
+
+        # ── Cor do relógio ──
+        tk.Label(c_main, text="Cor do relógio:", font=("Arial", 11, "bold"),
+                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+        var_cor_hora = tk.StringVar(value=str(cfg_atual["cor_hora"]))
+        cor_hora_frame = tk.Frame(c_main, bg='#0d1117')
+        cor_hora_frame.pack(fill='x', pady=(0, 8))
+        for nome, codigo in lista_cores:
+            tk.Radiobutton(
+                cor_hora_frame, text=nome, value=codigo, variable=var_cor_hora,
+                bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                activebackground='#0d1117', activeforeground='#f0c040',
+                font=("Arial", 10)).pack(side='left', padx=2)
+
+        # ── Cor da temperatura ──
+        tk.Label(c_main, text="Cor da temperatura:", font=("Arial", 11, "bold"),
+                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+        var_cor_temp = tk.StringVar(value=str(cfg_atual["cor_temp"]))
+        cor_temp_frame = tk.Frame(c_main, bg='#0d1117')
+        cor_temp_frame.pack(fill='x', pady=(0, 8))
+        for nome, codigo in lista_cores:
+            tk.Radiobutton(
+                cor_temp_frame, text=nome, value=codigo, variable=var_cor_temp,
+                bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                activebackground='#0d1117', activeforeground='#f0c040',
+                font=("Arial", 10)).pack(side='left', padx=2)
+
+        # ── Cor de fundo ──
+        tk.Label(c_main, text="Cor de fundo:", font=("Arial", 11, "bold"),
+                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+        var_cor_fundo = tk.StringVar(value=str(cfg_atual["cor_fundo"]))
+        cor_fundo_frame = tk.Frame(c_main, bg='#0d1117')
+        cor_fundo_frame.pack(fill='x', pady=(0, 8))
+        cores_fundo = [
+            ("Preto", "#000000"), ("Cinza escuro", "#1a1a2e"),
+            ("Azul escuro", "#0d1b2a"), ("Verde escuro", "#0a1f0a"),
+            ("Vinho", "#2d0a0a")]
+        for nome, codigo in cores_fundo:
+            tk.Radiobutton(
+                cor_fundo_frame, text=nome, value=codigo, variable=var_cor_fundo,
+                bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                activebackground='#0d1117', activeforeground='#f0c040',
+                font=("Arial", 10)).pack(side='left', padx=2)
+
+        # ── Tamanho do relógio ──
+        tk.Label(c_main, text="Tamanho do relógio:", font=("Arial", 11, "bold"),
+                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+        var_fator_hora = tk.DoubleVar(value=float(cfg_atual["fator_hora"]))
+        tk.Scale(c_main, from_=0.3, to=2.0, resolution=0.1, orient="horizontal",
+                 variable=var_fator_hora, bg='#0d1117', fg='#c9d1d9',
+                 troughcolor='#21262d', highlightthickness=0,
+                 font=("Arial", 10)).pack(fill='x', pady=(0, 8))
+
+        # ── Tamanho da temperatura ──
+        tk.Label(c_main, text="Tamanho da temperatura:", font=("Arial", 11, "bold"),
+                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+        var_fator_temp = tk.DoubleVar(value=float(cfg_atual["fator_temp"]))
+        tk.Scale(c_main, from_=0.3, to=2.0, resolution=0.1, orient="horizontal",
+                 variable=var_fator_temp, bg='#0d1117', fg='#c9d1d9',
+                 troughcolor='#21262d', highlightthickness=0,
+                 font=("Arial", 10)).pack(fill='x', pady=(0, 8))
+
+        # ── Espaçamento ──
+        tk.Label(c_main, text="Espaçamento (hora ↔ temperatura):",
+                 font=("Arial", 11, "bold"),
+                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+        var_espacamento = tk.DoubleVar(value=float(cfg_atual["espacamento"]))
+        tk.Scale(c_main, from_=0.3, to=3.0, resolution=0.1, orient="horizontal",
+                 variable=var_espacamento, bg='#0d1117', fg='#c9d1d9',
+                 troughcolor='#21262d', highlightthickness=0,
+                 font=("Arial", 10)).pack(fill='x', pady=(0, 12))
+
+        def _salvar_cfg_relogio():
+            novo = {
+                "cor_hora": var_cor_hora.get(),
+                "cor_temp": var_cor_temp.get(),
+                "cor_fundo": var_cor_fundo.get(),
+                "fator_hora": float(var_fator_hora.get()),
+                "fator_temp": float(var_fator_temp.get()),
+                "espacamento": float(var_espacamento.get()),
+            }
+            self.salvar_config_relogio(novo)
+            cfg_win.destroy()
+
+        tk.Button(c_main, text="💾 Salvar", font=("Arial", 12, "bold"),
+                  bg='#238636', fg='white', activebackground='#2ea043',
+                  command=_salvar_cfg_relogio, cursor='hand2', padx=20, pady=5
+                  ).pack(pady=4)
 
     def _temperatura_valida(self, temp: Optional[str] = None) -> bool:
         """Verifica se a string de temperatura é válida para exibição."""
@@ -3861,33 +4100,32 @@ class AppInterface:
         # Botões dos novos módulos (frame separado à direita)
         modulos_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
         modulos_frame.pack(side='right', padx=5)
-        _criar_botao_pill(modulos_frame, "📖", "Hinos / Letras", self.janela_hinos,
-                          icone_png="hinos")
-        _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia,
-                          icone_png="biblia")
-        _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico,
-                          icone_png="ordem")
-        _criar_botao_pill(modulos_frame, "📢", "Anúncios", self.janela_anuncios,
-                          icone_png="anuncios")
+        _criar_botao_pill(modulos_frame, "📖", "Hinos / Letras", self.janela_hinos)
+        _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia)
+        _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico)
+        _criar_botao_pill(modulos_frame, "📢", "Anúncios", self.janela_anuncios)
 
         # Botão Gerenciar Banco (também em estilo pill)
-        img_banco = _carregar_icone("banco")
         args_gerenciar = dict(
             bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
             command=self.abrir_gerenciador, cursor='hand2',
             bd=0, highlightthickness=0,
             padx=14, pady=6
         )
-        if img_banco is not None:
-            args_gerenciar.update(text="", image=img_banco, width=40, height=40,
-                                  compound="center")
-            btn_gerenciar = tk.Button(controls_frame, **args_gerenciar)
-            btn_gerenciar._navepro_imagem = img_banco
-        else:
-            args_gerenciar.update(text="📦", font=("Arial", 16))
-            btn_gerenciar = tk.Button(controls_frame, **args_gerenciar)
+        args_gerenciar.update(text="📦", font=("Arial", 16))
+        btn_gerenciar = tk.Button(controls_frame, **args_gerenciar)
         btn_gerenciar.pack(side='right', padx=5)
         _criar_tooltip(btn_gerenciar, "Gerenciar Banco")
+
+        # Botão Configura Relógio (barra de controles)
+        btn_config_relogio = tk.Button(
+            controls_frame, text="🕐", font=("Arial", 16),
+            bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
+            command=self.abrir_config_relogio_dialogo, cursor='hand2',
+            bd=0, highlightthickness=0, padx=14, pady=6
+        )
+        btn_config_relogio.pack(side='right', padx=5)
+        _criar_tooltip(btn_config_relogio, "Configura Relógio")
 
     # ── Lista de resultados (com cache para evitar redesenho e centralização) ────
 
@@ -6017,7 +6255,7 @@ class AppInterface:
             if rows:
                 _cap_numeros[:] = []
                 slides = [
-                    f"{r['livro']} {r['capitulo']}:{r['versiculo']} — {r['texto']}"
+                    (r['texto'], f"{r['livro']} {r['capitulo']}:{r['versiculo']}")
                     for r in rows]
                 self.player.telao.projetar_slides(slides)
                 _atualizar_indicador_slide()
@@ -6511,7 +6749,7 @@ class AppInterface:
             vers_ini = int(vers_t) if vers_t.isdigit() else 1
             numeros = [r['versiculo'] for r in rows]
             _cap_numeros[:] = numeros
-            slides = [r['texto'] for r in rows]
+            slides = [(r['texto'], f"{livro} {cap}:{r['versiculo']}") for r in rows]
             inicio = numeros.index(vers_ini) if vers_ini in numeros else 0
             self.player.telao.projetar_slides(slides, indice_inicial=inicio)
             _carregar_capitulo(foco=vers_ini)

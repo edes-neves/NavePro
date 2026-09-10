@@ -33,6 +33,15 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.9.2" date="2026-09-10">
+      <description>
+        <ul>
+          <li>Relógio no telão com cores, tamanhos e espaçamento configuráveis</li>
+          <li>Referência bíblica (livro capítulo:versículo) no canto do telão</li>
+          <li>Atualização automática via GitHub Releases</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.9.1" date="2026-09-09">
       <description>
         <ul>
