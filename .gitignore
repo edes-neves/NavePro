@@ -21,11 +21,18 @@
 /tmp
 /NavePro.zip
 /NavePro.AppImage
+/NavePro-*.AppImage
+/appimage-builder-*.AppImage
 /appimagetool-*.AppImage
+/.flatpak-builder/
+/flatpak/build-ghpages/
 
 # Configuração local e utilitários
 /config.json
 /tempCodeRunnerFile.py
+
+# Script auxiliar com token GitHub embutido (não versionar)
+/check-flathub.sh
 
 # Flatpak (build local)
 /flatpak/build/

@@ -1,6 +1,6 @@
 """
 NavePro - Sistema de Projeção para Igrejas
-Versão: 1.9.2
+Versão: 1.9.3
 Licença: GPLv3
 Autor: José Edes Neves - Julho 2026 edes.neves7@gmail.com
 Aplicação para reprodução de mídia com projeção em telão,
@@ -19,6 +19,7 @@ import sqlite3
 import subprocess
 import ssl
 import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -33,7 +34,7 @@ import asyncio
 from queue import Queue, Empty
 from tkinter import ttk
 from tkinter import font as tkfont
-from typing import Any, Callable, Optional, List, Dict, Tuple
+from typing import Any, Callable, Iterator, Optional, List, Dict, Tuple
 import xml.etree.ElementTree as ET
 try:
     from screeninfo import get_monitors as _get_monitors
@@ -146,7 +147,7 @@ def _baixar(url, timeout: int = 8, **kwargs):
 # CONSTANTES
 # ────────────────────────────────────────────────────────────────────
 
-APP_VERSION: str = "1.9.2"
+APP_VERSION: str = "1.9.3"
 CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
 PLAYER_PADRAO: str = "smplayer"
 BACKEND_PORT: int = 5897
@@ -172,6 +173,101 @@ EXTENSOES_TODAS: frozenset = EXTENSOES_VIDEO | EXTENSOES_AUDIO | EXTENSOES_TEXTO
 SQLITE_TIMEOUT: int = 10
 CACHE_TTL_SEGUNDOS: int = 60
 CACHE_LRU_MAXSIZE: int = 256
+
+
+# ────────────────────────────────────────────────────────────────────
+# TEMAS DA INTERFACE (painel do administrador / monitor 1)
+# ────────────────────────────────────────────────────────────────────
+# O tema ESCURO atual permanece intacto e é o padrão. O tema CLARO é
+# uma opção extra: as cores escuras hardcoded na interface são convertidas
+# em tempo de execução pela tabela abaixo, sem alterar nenhuma cor do
+# código existente. As cores de projeção/relógio do TELÃO NÃO são tocadas.
+#
+# Mapa: cor ESCURA atual -> cor equivalente no tema CLARO.
+MAPA_COR_CLARA: dict[str, str] = {
+    # Fundos
+    '#0d1117': '#f6f8fa',   # fundo principal da janela
+    '#161b22': '#ffffff',   # cards/containers
+    '#21262d': '#ffffff',   # entradas/botões neutros/lista
+    '#1c2128': '#f6f8fa',   # linha alternada (par) da lista
+    '#30363d': '#d0d7de',   # bordas/separadores/hover neutro
+    # Roxos (accent)
+    '#6e40c9': '#8250df',
+    '#8b5cf6': '#8250df',
+    '#8957e5': '#8250df',
+    '#a371f7': '#8250df',
+    '#a78bfa': '#8250df',
+    # Verdes (sucesso)
+    '#238636': '#1a7f37',
+    '#2ea043': '#2ea043',
+    '#3fb950': '#2ea043',
+    # Azuis (info)
+    '#1f6feb': '#0969da',
+    '#388bfd': '#388bfd',
+    '#58a6ff': '#0969da',
+    # Vermelhos (perigo)
+    '#da3633': '#cf222e',
+    '#f85149': '#f85149',
+    # Textos fixos
+    '#c9d1d9': '#1f2328',   # texto normal
+    '#8b949e': '#656d76',   # texto secundário/muted
+}
+
+_MAPA_COR_CLARA_UP: dict[str, str] = {
+    chave.upper(): valor for chave, valor in MAPA_COR_CLARA.items()
+}
+
+# Cores fortes do tema claro (mantêm texto branco por cima)
+_CORES_FORTES_CLARO: frozenset = frozenset({
+    '#8250df', '#6e40c9',                                              # roxos
+    '#1a7f37', '#2ea043', '#238636', '#2ea043',                        # verdes
+    '#0969da', '#388bfd', '#1f6feb', '#58a6ff',                        # azuis
+    '#cf222e', '#da3633', '#f85149',                                   # vermelhos
+})
+
+# Fundos claros (texto branco fica ilegível em cima)
+_FUNDOS_CLAROS: frozenset = frozenset({
+    '#ffffff', '#f6f8fa', '#eaeef2',
+})
+
+# Opções de cor do Tk que o tema pode recolorir por widget
+_OPCOES_COR_TK: tuple[str, ...] = (
+    'background', 'foreground',
+    'activebackground', 'activeforeground',
+    'highlightbackground', 'highlightcolor',
+    'selectcolor', 'insertbackground',
+    'selectbackground', 'selectforeground',
+    'troughcolor', 'arrowcolor',
+)
+
+# Opções que representam TEXTO (precisam decidir a cor com base no fundo)
+_OPCOES_TEXTO: frozenset = frozenset({
+    'foreground', 'activeforeground', 'arrowcolor',
+    'insertbackground', 'selectforeground',
+})
+
+
+def _cor_clara(cor: Optional[str], bg_final: Optional[str] = None) -> str:
+    """Devolve a equivalente CLARA da cor ESCURA `cor` (ou ela mesma).
+
+    Amarelos e brancos dependem do contexto: sobre um fundo forte
+    (roxo/verde/azul/vermelho) mantêm branco; sobre fundo claro viram
+    um tom escuro legível.
+    """
+    if not cor:
+        return '#000000'
+    mapa = _MAPA_COR_CLARA_UP
+    if cor.upper() in mapa:
+        return mapa[cor.upper()]
+    if cor in ('#f0c040', '#F5BE08'):
+        if bg_final in _CORES_FORTES_CLARO:
+            return '#ffffff'
+        return '#24292f'
+    if cor in ('#ffffff', '#FFFFFF'):
+        if bg_final in _FUNDOS_CLAROS:
+            return '#1f2328'
+        return '#ffffff'
+    return cor
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -208,6 +304,10 @@ DIR_BASE: str = _caminho_base()
 DB_EMBUTIDO: str = _caminho_recurso("midia.db")
 UPLOADS_EMBUTIDO: str = _caminho_recurso("uploads")
 ANUNCIOS_FILE: str = os.path.join(DATA_USER_DIR, "anuncios.json")
+SERVICOS_FILE: str = os.path.join(DATA_USER_DIR, "servicos.json")
+
+# Extensões de imagem aceitas como "slide" nos anúncios
+SUFIXOS_IMAGEM: frozenset = frozenset({'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'})
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -528,6 +628,88 @@ def db_execute(query: str, params: tuple = ()) -> Optional[int]:
     return DatabaseManager().execute(query, params)
 
 # ────────────────────────────────────────────────────────────────────
+# REUSO DE IDs (ID INTEGER PRIMARY KEY AUTOINCREMENT)
+# ────────────────────────────────────────────────────────────────────
+#
+# Ao excluir registros (ex.: hinos com DELETE real), o AUTOINCREMENT não
+# reutiliza os IDs: os próximos inserts continuam do max+1, deixando
+# "lacunas". Estas funções reutilizam o menor ID livre em novas importações.
+
+# Só reutilizamos IDs de tabelas de conteúdo do usuário.
+_TABELAS_REUSO_ID: frozenset = frozenset({"letras", "versiculos", "midia"})
+# Colunas precisam ser seguras para montar o INSERT (nomes internos literais)
+_PADRAO_COL_INSERCAO: re.Pattern = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _ids_referenciados_itens_servico() -> set:
+    """IDs ainda apontados por itens_servico.referencia_id (Ordens de Serviço).
+
+    Uma ordem de serviço pode referenciar letras.id, versiculos.id ou
+    midia.id. Se reutilizarmos uma dessas IDs após exclusão, o item antigo
+    da ordem passaria a apontar para o registro NOVO — por isso esses IDs
+    são preservados (nunca reutilizados).
+    """
+    try:
+        return {
+            r["referencia_id"] for r in db_query(
+                "SELECT DISTINCT referencia_id FROM itens_servico "
+                "WHERE referencia_id IS NOT NULL")
+        }
+    except Exception:
+        return set()
+
+
+def _gerador_id_livre(tabela: str, limitar: int = 0) -> Iterator[int]:
+    """Gera os menores IDs livres (lacunas) da tabela, em ordem crescente.
+
+    Pula IDs ainda referenciados em itens_servico.referencia_id. Se não
+    houver lacuna reutilizável, não gera nada (AUTOINCREMENT segue normal).
+    """
+    if tabela not in _TABELAS_REUSO_ID:
+        return
+    linhas = sorted(r["id"] for r in db_query(f"SELECT id FROM {tabela}"))
+    referenciados = _ids_referenciados_itens_servico()
+    esperado = 1
+    gerados = 0
+    for id_atual in linhas:
+        while esperado < id_atual:
+            if esperado not in referenciados:
+                yield esperado
+                gerados += 1
+                if limitar and gerados >= limitar:
+                    return
+            esperado += 1
+        esperado = max(esperado, id_atual) + 1
+
+
+def _proximo_id_livre(tabela: str) -> Optional[int]:
+    """Menor ID livre reutilizável da tabela (None se não houver)."""
+    return next(_gerador_id_livre(tabela, 1), None)
+
+
+def _inserir_com_id_reuso(tabela: str, colunas: tuple, valores: tuple) -> int:
+    """Insere registro reutilizando o menor ID livre, quando houver.
+
+    Sem lacuna disponível, o AUTOINCREMENT segue o comportamento padrão.
+    Retorna o id do registro inserido.
+    """
+    assert tabela in _TABELAS_REUSO_ID, f"Tabela inválida: {tabela}"
+    assert all(
+        isinstance(c, str) and _PADRAO_COL_INSERCAO.match(c) for c in colunas
+    ), "Colunas inválidas para INSERT"
+    cols = ", ".join(colunas)
+    marks = ", ".join(["?"] * len(colunas))
+    valores = tuple(valores)
+    id_livre = _proximo_id_livre(tabela)
+    if id_livre is not None:
+        db_execute(
+            f"INSERT INTO {tabela} (id, {cols}) VALUES (?, {marks})",
+            (id_livre,) + valores)
+        return id_livre
+    return db_execute(
+        f"INSERT INTO {tabela} ({cols}) VALUES ({marks})", valores) or 0
+
+# ────────────────────────────────────────────────────────────────────
 # INICIALIZAÇÃO DO BANCO
 # ────────────────────────────────────────────────────────────────────
 
@@ -621,6 +803,78 @@ def init_db() -> None:
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_itens_servico_sid ON itens_servico(servico_id, ordem)")
+
+    # ── Tabela de Anúncios (persistência no banco a partir desta versão) ──
+    # tipo_midia: 'slide' (texto), 'video', 'audio', 'imagem' (slide de imagem).
+    # Para vídeo/áudio/imagem, o arquivo é copiado para UPLOAD_FOLDER e o
+    # caminho guardado em arquivo_midia.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS anuncios (
+            id INTEGER PRIMARY KEY,
+            titulo TEXT NOT NULL,
+            categoria TEXT DEFAULT '',
+            texto TEXT DEFAULT '',
+            tipo_midia TEXT NOT NULL DEFAULT 'slide',
+            arquivo_midia TEXT DEFAULT '',
+            nome_arquivo_midia TEXT DEFAULT '',
+            config_midia TEXT DEFAULT '',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ativo INTEGER DEFAULT 1
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_anuncios_titulo ON anuncios(titulo)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_anuncios_ativo ON anuncios(ativo)")
+
+    # ── Migração: remover AUTOINCREMENT de bancos existentes ──
+    # Sem AUTOINCREMENT, o SQLite reaproveita o menor ID livre ao inserir.
+    try:
+        info = cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='anuncios'"
+        ).fetchone()
+        if info and info[0] and "AUTOINCREMENT" in info[0]:
+            dados_existentes = cursor.execute(
+                "SELECT * FROM anuncios"
+            ).fetchall()
+            colunas = [desc[0] for desc in cursor.description]
+            cursor.execute("DROP TABLE anuncios")
+            cursor.execute("""
+                CREATE TABLE anuncios (
+                    id INTEGER PRIMARY KEY,
+                    titulo TEXT NOT NULL,
+                    categoria TEXT DEFAULT '',
+                    texto TEXT DEFAULT '',
+                    tipo_midia TEXT NOT NULL DEFAULT 'slide',
+                    arquivo_midia TEXT DEFAULT '',
+                    nome_arquivo_midia TEXT DEFAULT '',
+                    config_midia TEXT DEFAULT '',
+                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ativo INTEGER DEFAULT 1
+                )
+            """)
+            for row in dados_existentes:
+                vals = dict(zip(colunas, row))
+                placeholders = ", ".join("?" for _ in vals)
+                cols = ", ".join(vals.keys())
+                cursor.execute(
+                    f"INSERT INTO anuncios ({cols}) VALUES ({placeholders})",
+                    tuple(vals.values()),
+                )
+            cursor.execute("DROP TABLE IF EXISTS _anuncios_backup_old_ai")
+            print("✅ Migração anuncios: AUTOINCREMENT removido (IDs passam a reaproveitar).")
+    except Exception as e:
+        print(f"⚠️ Migração AUTOINCREMENT ignorada (nova tabela ou já migrada): {e}")
+
+    # ── Migração: garantir a coluna config_midia em bancos já existentes ──
+    # Aditiva e idempotente: se a coluna já existe (banco novo ou já migrado),
+    # não faz nada.
+    try:
+        colunas_existentes = {desc[1] for desc in cursor.execute(
+            "PRAGMA table_info(anuncios)").fetchall()}
+        if colunas_existentes and 'config_midia' not in colunas_existentes:
+            cursor.execute("ALTER TABLE anuncios ADD COLUMN config_midia TEXT DEFAULT ''")
+            print("✅ Migração anuncios: coluna 'config_midia' adicionada.")
+    except Exception as e:
+        print(f"⚠️ Migração config_midia ignorada: {e}")
 
     conn.commit()
     conn.close()
@@ -1521,9 +1775,20 @@ class TelaoWindow:
         # Inicia em TELA CHEIA (sem bordas) cobrindo o monitor secundário.
         # A tecla F11 alterna para o modo janela (min/max/redimensionar) e
         # volta à tela cheia.
+        # Config do relógio (cores, tamanhos, espaçamento, fundo opaco)
+        self._relogio_cfg: dict = {
+            "cor_hora": "#F5BE08",
+            "cor_temp": "#F5BE08",
+            "cor_fundo": "#000000",
+            "fator_hora": 1.0,
+            "fator_temp": 1.0,
+            "espacamento": 1.0,
+            "fundo_opaco": False,
+        }
+
         self.root.geometry(geometry)
         self.root.configure(bg='black')
-        self.root.attributes('-alpha', 0.55)
+        self.root.attributes('-alpha', self._alpha_relogio())
         self.root.attributes('-topmost', False)
         self._fullscreen: bool = True
         self.root.attributes('-fullscreen', True)
@@ -1533,7 +1798,7 @@ class TelaoWindow:
         self.root.bind("<Configure>", self._reafirmar_geometria)
 
         # Cache de estado: evita chamadas repetidas à Tk
-        self._current_alpha: float = 0.55
+        self._current_alpha: float = self._alpha_relogio()
         self._current_text: str = ""
         self._current_temp: str = ""
         self._is_visible: bool = True
@@ -1543,16 +1808,6 @@ class TelaoWindow:
 
         self.canvas = tk.Canvas(self.main_frame, bg='black', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True)
-
-        # Config do relógio (cores, tamanhos, espaçamento)
-        self._relogio_cfg: dict = {
-            "cor_hora": "#F5BE08",
-            "cor_temp": "#F5BE08",
-            "cor_fundo": "#000000",
-            "fator_hora": 1.0,
-            "fator_temp": 1.0,
-            "espacamento": 1.0,
-        }
 
         # Calcula fontes e posições sem sobreposição (720p–1080p),
         # medindo a altura real (linha) das fontes na tela atual.
@@ -1593,6 +1848,11 @@ class TelaoWindow:
         self.mostrando_relogio = True
         self.mostrando_letra = False
         self._em_slides = False
+        self._mostrando_imagem = False
+        self._imagem_item = None
+        self._imagem_pil = None
+        self._imagem_orig_pil = None
+        self._imagem_escala = 1.0
         self._slides: list = []
         self._slide_index = 0
         self._proj_cfg: dict = {
@@ -1606,9 +1866,16 @@ class TelaoWindow:
         self._temp_salvo = ""
         self.root.protocol("WM_DELETE_WINDOW", self.fechar)
         # Aplica alpha imediatamente
-        self.root.attributes('-alpha', 0.55)
+        self.root.attributes('-alpha', self._alpha_relogio())
+        self._current_alpha = self._alpha_relogio()
         # Exibe hora inicial
         self._exibir_hora_inicial()
+
+    def _alpha_relogio(self) -> float:
+        """Retorna o alpha do telão no modo relógio (opaco se configurado)."""
+        if getattr(self, "_relogio_cfg", {}).get("fundo_opaco"):
+            return 1.0
+        return 0.55
 
     def _calcular_layout(self, largura: int, altura: int) -> bool:
         """Calcula fontes e posições sem sobreposição (720p–1080p).
@@ -1628,7 +1895,7 @@ class TelaoWindow:
         r_cfg = self._relogio_cfg
         margem_lateral = max(16, int(largura * 0.05))
         espacamento = r_cfg.get("espacamento", 1.0)
-        gap = max(10, int(altura * 0.015 * espacamento))
+        gap = max(0, int(altura * 0.015 * espacamento))
         fator_hora = r_cfg.get("fator_hora", 1.0)
         fator_temp = r_cfg.get("fator_temp", 1.0)
         hora_px = int(altura * 0.48 * fator_hora)
@@ -1772,9 +2039,10 @@ class TelaoWindow:
             self._is_visible = True
 
         # Só mexe no alpha se necessário
-        if self._current_alpha != 0.55:
-            self.root.attributes('-alpha', 0.55)
-            self._current_alpha = 0.55
+        alpha_base = self._alpha_relogio()
+        if self._current_alpha != alpha_base:
+            self.root.attributes('-alpha', alpha_base)
+            self._current_alpha = alpha_base
 
         # Atualiza apenas o que mudou
         if texto_mudou:
@@ -1811,7 +2079,7 @@ class TelaoWindow:
         if self._is_visible and self.mostrando_relogio:
             return  # Já está visível
 
-        self._current_alpha = 0.55
+        self._current_alpha = self._alpha_relogio()
         self._is_visible = True
         self.mostrando_relogio = True
         # Reseta cache de hora para forçar redesenho do relógio
@@ -1819,7 +2087,7 @@ class TelaoWindow:
         self._current_temp = ""
 
         self.root.deiconify()
-        self.root.attributes('-alpha', 0.55)
+        self.root.attributes('-alpha', self._alpha_relogio())
         self.root.lower()
 
     # ── Projeção de texto (letra / versículo) ─────────────────────
@@ -1849,6 +2117,7 @@ class TelaoWindow:
             "fator_hora": 1.0,
             "fator_temp": 1.0,
             "espacamento": 1.0,
+            "fundo_opaco": False,
         }
         merged = dict(defaults)
         if isinstance(cfg, dict):
@@ -1869,6 +2138,12 @@ class TelaoWindow:
                 self.canvas.itemconfig(self.overlay_text, font=self._font_hora)
                 self.canvas.itemconfig(self.temp_text, font=self._font_temp)
                 self.root.update_idletasks()
+        # Aplica a opacidade configurada ao telão (apenas no modo relógio)
+        if self.mostrando_relogio:
+            alpha_base = self._alpha_relogio()
+            if self._current_alpha != alpha_base:
+                self.root.attributes('-alpha', alpha_base)
+                self._current_alpha = alpha_base
 
     def _aplicar_cores_relogio(self) -> None:
         """Aplica as cores configuradas do relógio e temperatura ao canvas."""
@@ -2054,6 +2329,123 @@ class TelaoWindow:
 
         self._mostrar_slide(max(0, min(indice_inicial, len(self._slides) - 1)))
 
+    def projetar_imagem(self, caminho: str) -> bool:
+        """Projeta uma imagem estática centralizada no telão (slide de imagem).
+
+        A imagem é redimensionada para caber na tela preservando a proporção.
+        A parada (Esc, parar_projecao, _retornar_ao_relogio) volta o relógio +
+        temperatura. Retorna False se o arquivo for inválido/inexistente.
+        """
+        if not self.rodando or not caminho or not os.path.exists(caminho):
+            return False
+        try:
+            from PIL import Image, ImageTk
+        except Exception as e:
+            print(f"⚠️ PIL indisponível para projetar imagem: {e}")
+            return False
+
+        # Cancela retorno automático anterior (re-projeção)
+        if getattr(self, "_proj_timer", None) is not None:
+            try:
+                self.root.after_cancel(self._proj_timer)
+            except tk.TclError:
+                pass
+            self._proj_timer = None
+
+        # Guarda a temperatura exibida para restaurar depois
+        self._temp_salvo = self._current_temp
+
+        self.mostrando_letra = True
+        self._em_slides = False
+        self._mostrando_imagem = True
+        self.mostrando_relogio = False
+
+        # Exibe a janela e opaca
+        if not self._is_visible:
+            self.root.deiconify()
+            self._is_visible = True
+        if self._current_alpha != 1.0:
+            self.root.attributes('-alpha', 1.0)
+            self._current_alpha = 1.0
+        self.root.lift()
+
+        # Esconde temperatura, referência e hora para exibir só a imagem
+        self.canvas.itemconfig(self.temp_text, text="", state="hidden")
+        self.canvas.itemconfig(self.ref_text, text="", state="hidden")
+        self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
+
+        try:
+            with Image.open(caminho) as img_src:
+                img_orig = img_src.convert("RGBA")
+        except Exception as e:
+            print(f"⚠️ Não foi possível abrir a imagem {caminho}: {e}")
+            self._retornar_ao_relogio()
+            return False
+
+        # Guarda o original para permitir ajustar o tamanho em tempo real
+        # (botões "🖼️ −/+" na tela do operador) re-renderizando por cima.
+        self._imagem_orig_pil = img_orig
+        self._imagem_escala = 1.0
+        try:
+            ok = self._renderizar_imagem_projetada()
+        except Exception as e:
+            print(f"⚠️ Não foi possível exibir a imagem no telão: {e}")
+            ok = False
+        if not ok:
+            self._retornar_ao_relogio()
+            return False
+        return True
+
+    def _renderizar_imagem_projetada(self) -> bool:
+        """Renderiza a imagem projetada com a escala atual (centralizada)."""
+        orig = getattr(self, "_imagem_orig_pil", None)
+        if orig is None or not getattr(self, "_mostrando_imagem", False):
+            return False
+        try:
+            from PIL import Image, ImageTk
+        except Exception:
+            return False
+        w = self.canvas.winfo_width() or self._monitor.width
+        h = self.canvas.winfo_height() or self._monitor.height
+        lar, alt = orig.size
+        if lar <= 0 or alt <= 0:
+            return False
+        escala = float(getattr(self, "_imagem_escala", 1.0) or 1.0)
+        fator = min(w / lar, h / alt) * escala
+        tamanho = (max(1, int(lar * fator)), max(1, int(alt * fator)))
+        redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
+        img_final = orig.resize(tamanho, redimensao)
+        try:
+            # master=self.root: o telão tem um Tcl/Tk interpreter próprio; sem
+            # isso a PhotoImage fica registrada no root da janela principal e
+            # o canvas do telão não a enxerga (TclError "image doesn't exist").
+            self._imagem_pil = ImageTk.PhotoImage(img_final, master=self.root)
+            if getattr(self, "_imagem_item", None) is not None:
+                try:
+                    self.canvas.delete(self._imagem_item)
+                except tk.TclError:
+                    pass
+                self._imagem_item = None
+            self._imagem_item = self.canvas.create_image(
+                w // 2, h // 2, image=self._imagem_pil, anchor="center")
+        except Exception as e:
+            print(f"⚠️ Não foi possível renderizar a imagem no telão: {e}")
+            return False
+        self.root.update_idletasks()
+        return True
+
+    def imagem_aumentar(self) -> bool:
+        """Aumenta a imagem já projetada (redimensionamento ao vivo no telão)."""
+        escala = float(getattr(self, "_imagem_escala", 1.0) or 1.0)
+        self._imagem_escala = min(2.5, escala + 0.15)
+        return self._renderizar_imagem_projetada()
+
+    def imagem_diminuir(self) -> bool:
+        """Diminui a imagem já projetada (redimensionamento ao vivo no telão)."""
+        escala = float(getattr(self, "_imagem_escala", 1.0) or 1.0)
+        self._imagem_escala = max(0.25, escala - 0.15)
+        return self._renderizar_imagem_projetada()
+
     def _mostrar_slide(self, indice: int) -> bool:
         """Exibe o slide no índice dado (se válido) e retorna True."""
         if not self._slides:
@@ -2109,12 +2501,23 @@ class TelaoWindow:
         self._slides = []
         self._slide_index = 0
         self.mostrando_relogio = True
+        # Limpa a projeção de imagem (se houver)
+        if getattr(self, "_imagem_item", None) is not None:
+            try:
+                self.canvas.delete(self._imagem_item)
+            except tk.TclError:
+                pass
+            self._imagem_item = None
+        self._imagem_pil = None
+        self._imagem_orig_pil = None
+        self._imagem_escala = 1.0
+        self._mostrando_imagem = False
         # Restaura a aparência padrão do relógio no canvas: fonte Digital-7,
         # cor, e posições originais de hora e temperatura (a projeção troca a
         # fonte e move o texto para o centro da tela).
         self._aplicar_cores_relogio()
         self.canvas.itemconfig(self.overlay_text, width=0,
-                               font=self._font_hora)
+                               font=self._font_hora, state="normal")
         self.canvas.itemconfig(self.temp_text, width=0,
                                font=self._font_temp)
         self.canvas.itemconfig(self.ref_text, text="", state="hidden")
@@ -2687,6 +3090,488 @@ def _salvar_anuncios_json(anuncios: List[Dict]) -> bool:
         return False
 
 
+# ────────────────────────────────────────────────────────────────────
+# ANÚNCIOS — PERSISTÊNCIA NO BANCO SQLite (a partir desta versão)
+# ────────────────────────────────────────────────────────────────────
+#
+# O arquivo anuncios.json legado continua existindo e é migrado UMA vez
+# para a tabela "anuncios" (não é mais usado para leitura/escrita).
+
+
+def _tipo_midia_para_arquivo(caminho: str) -> str:
+    """Classifica um arquivo para anúncio: 'video' | 'audio' | 'imagem' | ''."""
+    ext = os.path.splitext(caminho)[1].lower()
+    if ext in EXTENSOES_VIDEO:
+        return "video"
+    if ext in EXTENSOES_AUDIO:
+        return "audio"
+    if ext in SUFIXOS_IMAGEM:
+        return "imagem"
+    return ""
+
+
+def _copiar_arquivo_uploads(caminho: str) -> Optional[str]:
+    """Copia o arquivo para UPLOAD_FOLDER evitando colisões de nome.
+
+    Retorna o caminho de destino (ou o próprio caminho se já estiver na
+    pasta de uploads); None se a cópia falhar.
+    """
+    try:
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        nome = os.path.basename(caminho)
+        destino = os.path.join(UPLOAD_FOLDER, nome)
+        if os.path.normcase(os.path.abspath(caminho)) == os.path.normcase(os.path.abspath(destino)):
+            return destino
+        base, ext = os.path.splitext(nome)
+        contador = 1
+        while os.path.exists(destino):
+            destino = os.path.join(UPLOAD_FOLDER, f"{base}_{contador}{ext}")
+            contador += 1
+        shutil.copy2(caminho, destino)
+        return destino
+    except OSError as e:
+        print(f"⚠️ Erro ao copiar para uploads: {e}")
+        return None
+
+
+def _listar_anuncios_db(busca: str = "") -> List[Dict]:
+    """Lista os anúncios ativos da tabela 'anuncios' (SQLite)."""
+    termo = (busca or "").strip().lower()
+    try:
+        if termo:
+            como = f"%{termo}%"
+            rows = db_query(
+                "SELECT * FROM anuncios WHERE ativo = 1 AND "
+                "(LOWER(titulo) LIKE ? OR LOWER(categoria) LIKE ? OR LOWER(texto) LIKE ?) "
+                "ORDER BY id DESC", (como, como, como))
+        else:
+            rows = db_query("SELECT * FROM anuncios WHERE ativo = 1 ORDER BY id DESC")
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"⚠️ Erro ao listar anúncios: {e}")
+        return []
+
+
+def _proximo_id_anuncio_livre() -> int:
+    """Menor id positivo ainda não usado na tabela 'anuncios'.
+
+    Permite reaproveitar o menor número vazio após uma exclusão.
+    """
+    try:
+        rows = db_query("SELECT id FROM anuncios ORDER BY id")
+    except Exception:
+        return None
+    usados = {r["id"] for r in rows}
+    cand = 1
+    while cand in usados:
+        cand += 1
+    return cand
+
+
+def _inserir_anuncio_db(dados: Dict) -> Optional[int]:
+    """Insere um anúncio na tabela 'anuncios'. Retorna o id (None se falhar).
+
+    Informa explicitamente o id = menor número livre, de forma que um
+    anúncio deletado tenha seu número reaproveitado pelo próximo criado.
+    """
+    novo_id = _proximo_id_anuncio_livre()
+    if not novo_id:
+        print("⚠️ Não foi possível calcular um id livre para o anúncio.")
+        return None
+    try:
+        db_execute(
+            "INSERT INTO anuncios (id, titulo, categoria, texto, tipo_midia, "
+            "arquivo_midia, nome_arquivo_midia, config_midia) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                novo_id,
+                (dados.get("titulo") or "").strip(),
+                (dados.get("categoria") or "").strip(),
+                (dados.get("texto") or "").strip(),
+                dados.get("tipo_midia") or "slide",
+                dados.get("arquivo_midia") or "",
+                dados.get("nome_arquivo_midia") or "",
+                dados.get("config_midia") or "",
+            ))
+        return novo_id
+    except Exception as e:
+        print(f"⚠️ Erro ao inserir anúncio: {e}")
+        return None
+
+
+def _atualizar_anuncio_db(anuncio_id: int, dados: Dict) -> bool:
+    """Atualiza um anúncio existente na tabela 'anuncios'."""
+    try:
+        db_execute(
+            "UPDATE anuncios SET titulo = ?, categoria = ?, texto = ?, "
+            "tipo_midia = ?, arquivo_midia = ?, nome_arquivo_midia = ?, "
+            "config_midia = ? WHERE id = ?",
+            (
+                (dados.get("titulo") or "").strip(),
+                (dados.get("categoria") or "").strip(),
+                (dados.get("texto") or "").strip(),
+                dados.get("tipo_midia") or "slide",
+                dados.get("arquivo_midia") or "",
+                dados.get("nome_arquivo_midia") or "",
+                dados.get("config_midia") or "",
+                anuncio_id,
+            ))
+        return True
+    except Exception as e:
+        print(f"⚠️ Erro ao atualizar anúncio: {e}")
+        return False
+
+
+def _excluir_anuncios_db(ids) -> bool:
+    """Remove definitivamente os anúncios com os ids informados.
+
+    Usa DELETE (e não soft delete) justamente para o SQLite liberar os IDs,
+    permitindo que novos anúncios reaproveitem os números vazios.
+    """
+    if not ids:
+        return True
+    try:
+        marks = ", ".join("?" for _ in ids)
+        db_execute(f"DELETE FROM anuncios WHERE id IN ({marks})", tuple(ids))
+        return True
+    except Exception as e:
+        print(f"⚠️ Erro ao excluir anúncios: {e}")
+        return False
+
+
+def _migrar_anuncios_do_json() -> int:
+    """Migra UMA vez os anúncios legados de anuncios.json para o SQLite.
+
+    Roda apenas se a tabela 'anuncios' estiver vazia e o arquivo JSON tiver
+    dados (idempotente). Retorna a quantidade importada.
+    """
+    if not os.path.exists(ANUNCIOS_FILE):
+        return 0
+    try:
+        existentes = db_query("SELECT COUNT(*) AS n FROM anuncios WHERE ativo = 1")
+        if existentes and existentes[0]["n"] > 0:
+            return 0
+    except Exception:
+        return 0
+    importados = 0
+    for a in _carregar_anuncios_json():
+        if _inserir_anuncio_db({
+                "titulo": a.get("titulo", ""),
+                "categoria": a.get("categoria", ""),
+                "texto": a.get("texto", ""),
+                "tipo_midia": "slide"}):
+            importados += 1
+    if importados:
+        print(f"✅ {importados} anúncio(s) migrado(s) de anuncios.json para o banco.")
+    return importados
+
+
+# ────────────────────────────────────────────────────────────────────
+# COMPOSIÇÃO IMAGEM + TEXTO (anúncios de imagem)
+# ────────────────────────────────────────────────────────────────────
+# Gera um único slide (PIL) com o texto à esquerda e a imagem à direita,
+# lado a lado, para projetar no telão via TelaoWindow.projetar_imagem().
+
+
+def _tamanho_telao(telao: Any) -> Tuple[int, int]:
+    """Devolve (largura, altura) do monitor do telão (1440x1080 como padrão)."""
+    try:
+        mon = getattr(getattr(telao, "_monitor", None), "width", None)
+        if mon:
+            alt = getattr(telao._monitor, "height", 0) or 0
+            if alt:
+                return int(mon), int(alt)
+    except Exception:
+        pass
+    return 1440, 1080
+
+
+def _carregar_fonte_pil(tamanho: int):
+    """Carrega uma fonte Truetype (DejaVuSans) com fallback para a padrão."""
+    try:
+        from PIL import ImageFont
+    except Exception:
+        return None
+    candidatos = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for p in candidatos:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, tamanho)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+def _quebrar_linhas_medindo(draw, texto: str, largura_max: int, fonte) -> List[str]:
+    """Quebra o texto em linhas que cabem em 'largura_max' (medição real)."""
+    linhas: List[str] = []
+    for bloco in (texto or "").split("\n"):
+        if not bloco.strip():
+            linhas.append("")
+            continue
+        palavras = bloco.split()
+        atual = ""
+        for p in palavras:
+            tent = f"{atual} {p}".strip()
+            try:
+                cabe = draw.textlength(tent, font=fonte) <= largura_max
+            except Exception:
+                cabe = len(tent) * fonte.size * 0.6 <= largura_max
+            if cabe:
+                atual = tent
+            else:
+                if atual:
+                    linhas.append(atual)
+                atual = p
+        if atual:
+            linhas.append(atual)
+    return linhas
+
+
+def _carregar_fonte_atual(draw, texto: str, largura_max: int, altura_max: int):
+    """Escolhe a maior fonte cujo texto (quebrado) cabe na área."""
+    for tamanho in (120, 96, 72, 64, 48, 40, 36, 32, 28, 24, 22, 20, 18, 16, 14, 12):
+        fonte = _carregar_fonte_pil(tamanho)
+        linhas = _quebrar_linhas_medindo(draw, texto, largura_max, fonte)
+        tam_linha = fonte.size + max(1, fonte.size // 5)
+        if tam_linha * len(linhas) <= altura_max:
+            return fonte, linhas
+    fonte = _carregar_fonte_pil(12)
+    return fonte, _quebrar_linhas_medindo(draw, texto, largura_max, fonte)
+
+
+def _compor_anuncio_imagem_texto(imagem_caminho: str, texto: str,
+                                 config_midia: str = "", largura: int = 1440,
+                                 altura: int = 1080) -> Optional[str]:
+    """Compõe texto + imagem no slide (imagem sobre o texto na posição ajustada).
+
+    Com config_midia novo (w/h/x/y em espaço virtual 1440x1080) a imagem é
+    colocada exatamente onde o usuário ajustou no editor, sobre o texto.
+    Sem x/y (config antiga) mantém o layout texto à esquerda + imagem à direita.
+
+    Retorna o caminho de um PNG temporário com a composição, ou None se
+    não for possível compor (a imagem não abre, sem texto, PIL ausente).
+    O chamador é responsável por remover o arquivo após projetar.
+    """
+    if not imagem_caminho or not os.path.exists(imagem_caminho):
+        return None
+    texto = (texto or "").strip()
+    if not texto:
+        return None
+    try:
+        from PIL import Image, ImageDraw
+    except Exception as e:
+        print(f"⚠️ PIL indisponível para compor imagem+texto: {e}")
+        return None
+    try:
+        with Image.open(imagem_caminho) as im_src:
+            img = im_src.convert("RGBA")
+    except Exception as e:
+        print(f"⚠️ Não foi possível abrir a imagem para composição: {e}")
+        return None
+
+    margem_h = int(largura * 0.04) or 40
+    margem_v = int(altura * 0.06) or 60
+    espaco = int(largura * 0.02) or 20
+    area_w = largura - margem_h * 2
+    area_h = altura - margem_v * 2
+
+    cfg = {}
+    try:
+        c = json.loads(config_midia or "{}")
+        if isinstance(c, dict):
+            cfg = c
+    except (ValueError, TypeError, AttributeError):
+        cfg = {}
+    conf_w = int(cfg.get("w") or 0)
+    conf_h = int(cfg.get("h") or 0)
+    conf_x = int(cfg.get("x") or 0)
+    conf_y = int(cfg.get("y") or 0)
+    # Formato novo (posição absoluta sobre o texto em espaço virtual 1440x1080)
+    absoluto = conf_w > 0 and conf_h > 0 and conf_x > 0 and conf_y > 0
+
+    ow, oh = img.size
+    redim = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
+
+    if absoluto:
+        # O texto ocupa a área inteira; a imagem fica por cima onde o editor colocou.
+        text_w = area_w
+        text_h = area_h
+    else:
+        # Layout antigo: texto à esquerda + imagem à direita (mantém proporção).
+        frac = 0.55
+        if conf_w > 0:
+            largura_texto_ref = 200
+            frac = max(0.20, min(0.75, conf_w / (conf_w + largura_texto_ref)))
+        asp = ow / max(1, oh)
+        img_w = max(120, int(area_w * frac))
+        img_h = int(img_w / asp)
+        if img_h > area_h:
+            img_h = int(area_h)
+            img_w = max(120, int(img_h * asp))
+        text_w = area_w - img_w - espaco
+        if text_w < 120:
+            text_w = 120
+        text_h = area_h
+
+    fundo = Image.new("RGBA", (largura, altura), (13, 17, 23, 255))
+    draw = ImageDraw.Draw(fundo)
+
+    fonte, linhas = _carregar_fonte_atual(draw, texto.upper(), text_w, text_h - margem_v)
+    y = margem_v + 20
+    passo = fonte.size + max(1, fonte.size // 5)
+    cor = (201, 209, 217, 255)
+    for linha in linhas:
+        if linha:
+            draw.text((margem_h, y), linha, font=fonte, fill=cor)
+        y += passo
+
+    if absoluto:
+        # Converte a posição virtual (1440x1080) para a resolução real do telão.
+        escala_x = largura / 1440.0
+        escala_y = altura / 1080.0
+        img_w = max(20, min(int(conf_w * escala_x), largura))
+        img_h = max(20, min(int(conf_h * escala_y), altura))
+        img_x = max(0, min(int(conf_x * escala_x), largura - img_w))
+        img_y = max(0, min(int(conf_y * escala_y), altura - img_h))
+        img_red = img.resize((img_w, img_h), redim)
+        fundo.paste(img_red, (img_x, img_y), img_red)
+    else:
+        # Cola a imagem à direita, centralizada verticalmente
+        img_esq = margem_h + text_w + espaco
+        region_w = largura - margem_h - img_esq
+        fator = min(region_w / max(1, ow), (margem_v + area_h) / max(1, oh))
+        novo = (max(1, int(ow * fator)), max(1, int(oh * fator)))
+        img_red = img.resize(novo, redim)
+        img_x = img_esq + (region_w - novo[0]) // 2
+        img_y = margem_v + (area_h - novo[1]) // 2
+        fundo.paste(img_red, (img_x, img_y), img_red)
+
+    try:
+        tmpdir = tempfile.mkdtemp(prefix="navepro_anuncio_")
+        caminho_tmp = os.path.join(tmpdir, "composicao.png")
+        fundo.convert("RGB").save(caminho_tmp, "PNG")
+        return caminho_tmp
+    except OSError as e:
+        print(f"⚠️ Não foi possível salvar a composição: {e}")
+        return None
+
+
+# ────────────────────────────────────────────────────────────────────
+# ORDENS DE SERVIÇO — ARMAZENAMENTO EM ARQUIVO JSON
+# ────────────────────────────────────────────────────────────────────
+#
+# A partir desta versão as ordens de serviço ficam em ~/.navepro/servicos.json
+# (o banco servicos/itens_servico é migrado UMA vez e mantido como backup).
+
+
+def _carregar_servicos_json() -> Dict:
+    """Lê ~/.navepro/servicos.json e devolve a estrutura de ordens de serviço.
+
+    Estrutura:
+      {"servicos": [{"id", "nome", "data_servico", "criado_em", "itens": [
+          {"id", "tipo", "referencia_id", "titulo_custom", "letra_snapshot",
+           "duracao_estimada_segundos"}...]}],
+       "_proximo_id_servico": int, "_proximo_id_item": int}
+    """
+    try:
+        with open(SERVICOS_FILE, "r", encoding="utf-8") as f:
+            dados = json.load(f)
+        if isinstance(dados, dict) and isinstance(dados.get("servicos"), list):
+            dados.setdefault("_proximo_id_servico", 1)
+            dados.setdefault("_proximo_id_item", 1)
+            return dados
+    except (OSError, ValueError):
+        pass
+    return {"servicos": [], "_proximo_id_servico": 1, "_proximo_id_item": 1}
+
+
+def _salvar_servicos_json(dados: Dict) -> bool:
+    """Persiste as ordens de serviço em ~/.navepro/servicos.json (atômico)."""
+    try:
+        os.makedirs(os.path.dirname(SERVICOS_FILE), exist_ok=True)
+        tmp = SERVICOS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, SERVICOS_FILE)
+        return True
+    except OSError as e:
+        print(f"⚠️ Erro ao salvar ordens de serviço: {e}")
+        return False
+
+
+def _migrar_servicos_do_banco() -> bool:
+    """Migra UMA vez as ordens de serviço do SQLite para servicos.json.
+
+    Se servicos.json ainda não existir e o banco tiver dados, copia tudo
+    (idempotente). As tabelas servicos/itens_servico NÃO são apagadas:
+    ficam como backup invisível (sem quebrar o reuso de IDs existente).
+    """
+    if os.path.exists(SERVICOS_FILE):
+        return False
+    try:
+        rows = db_query(
+            "SELECT id, nome, data_servico, criado_em FROM servicos "
+            "WHERE ativo = 1 ORDER BY id")
+    except Exception:
+        return False
+    if not rows:
+        return False
+    dados = {"servicos": [], "_proximo_id_servico": 1, "_proximo_id_item": 1}
+    for r in rows:
+        sid = r["id"]
+        try:
+            itens = db_query(
+                "SELECT id, tipo, referencia_id, titulo_custom, letra_snapshot, "
+                "duracao_estimada_segundos FROM itens_servico WHERE servico_id = ? "
+                "ORDER BY ordem", (sid,))
+        except Exception:
+            itens = []
+        novos_itens = []
+        for it in itens or []:
+            novos_itens.append({
+                "id": it.get("id"),
+                "tipo": it.get("tipo") or "slide",
+                "referencia_id": it.get("referencia_id"),
+                "titulo_custom": it.get("titulo_custom") or "",
+                "letra_snapshot": it.get("letra_snapshot") or "",
+                "duracao_estimada_segundos": it.get("duracao_estimada_segundos") or 0,
+            })
+            dados["_proximo_id_item"] = max(
+                dados["_proximo_id_item"], (it.get("id") or 0) + 1)
+        dados["servicos"].append({
+            "id": sid,
+            "nome": r["nome"],
+            "data_servico": r.get("data_servico"),
+            "criado_em": r.get("criado_em")
+                         or datetime.now().isoformat(timespec="seconds"),
+            "itens": novos_itens,
+        })
+        dados["_proximo_id_servico"] = max(dados["_proximo_id_servico"], sid + 1)
+    if _salvar_servicos_json(dados):
+        print(f"✅ Ordens de serviço migradas do banco para {SERVICOS_FILE}")
+        return True
+    return False
+
+
+def _reordenar_itens_servico(itens: List[Dict], id_origem: int, id_destino: int) -> List[Dict]:
+    """Move o item id_origem para a posição de id_destino, preservando o resto.
+
+    Retorna a nova lista (mesma list se origem/destino inexistentes ou iguais).
+    """
+    nova = list(itens)
+    idx_orig = next((i for i, it in enumerate(nova) if it.get("id") == id_origem), None)
+    idx_dest = next((i for i, it in enumerate(nova) if it.get("id") == id_destino), None)
+    if idx_orig is None or idx_dest is None or idx_orig == idx_dest:
+        return nova
+    item = nova.pop(idx_orig)
+    nova.insert(idx_dest, item)
+    return nova
+
+
 def _extrair_texto_pdf(caminho: str) -> Optional[str]:
     """Extrai o texto de um PDF usando pypdf (com fallback para pdftotext).
 
@@ -2781,7 +3666,7 @@ def _escolher_arquivos_usuario(
 
     dial = tk.Toplevel(parent)
     dial.title(titulo)
-    dial.geometry("560x430")
+    dial.geometry("560x500")
     dial.configure(bg='#0d1117')
     if parent is not None:
         dial.transient(parent)
@@ -2928,6 +3813,9 @@ class AppInterface:
             self.root.state('zoomed')
 
         self.config_data: dict[str, Any] = self.carregar_config()
+        self.tema: str = self.config_data.get("tema", "escuro")
+        if self.tema not in ("escuro", "claro"):
+            self.tema = "escuro"
         self.monitor_index: int = self.config_data.get("monitor", 2)
         self.player_cmd: str = self.config_data.get("player", PLAYER_PADRAO)
         self.placeholder_busca: str = "Buscar hino... [BD]"
@@ -2982,6 +3870,10 @@ class AppInterface:
         self.criar_widgets()
         self.atualizar_relogio()
 
+        # Aplica o tema (claro/escuro) lido do config logo após criar a UI,
+        # sem alterar nenhuma cor hardcoded da construção padrão (escuro).
+        self._aplicar_tema()
+
         # Mostra hora inicial no telão (sem temperatura ainda)
         self.player.telao._exibir_hora_inicial()
 
@@ -3000,6 +3892,8 @@ class AppInterface:
         self.root.bind("<Configure>", self._on_window_configure)
         # Atalho F11 para alternar entre maximizado e 800x600
         self.root.bind("<F11>", lambda e: self._alternar_maximizar())
+        # Atalho Ctrl+T para alternar o tema (claro/escuro)
+        self.root.bind("<Control-t>", lambda e: self._alternar_tema())
         # Detecta duplo clique na barra de título (maximizar/restaurar)
         self.root.bind("<Double-Button-1>", self._on_title_double_click)
 
@@ -3270,7 +4164,7 @@ class AppInterface:
             try:
                 duracao = max(1, int(var_duracao.get()))
             except (ValueError, TypeError):
-                duracao = 30
+                duracao = 1
             novo = {
                 "fonte": var_fonte.get(),
                 "tamanho_pct": float(var_tamanho.get()),
@@ -3306,10 +4200,11 @@ class AppInterface:
         cfg_atual.setdefault("fator_hora", 1.0)
         cfg_atual.setdefault("fator_temp", 1.0)
         cfg_atual.setdefault("espacamento", 1.0)
+        cfg_atual.setdefault("fundo_opaco", False)
 
         cfg_win = tk.Toplevel(self.root)
         cfg_win.title("⚙️ Configura Relógio")
-        cfg_win.geometry("500x580")
+        cfg_win.geometry("620x620")
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(self.root)
         cfg_win.after(50, cfg_win.grab_set)
@@ -3370,6 +4265,15 @@ class AppInterface:
                 activebackground='#0d1117', activeforeground='#f0c040',
                 font=("Arial", 10)).pack(side='left', padx=2)
 
+        # ── Fundo opaco (sem transparência) ──
+        var_fundo_opaco = tk.BooleanVar(value=bool(cfg_atual["fundo_opaco"]))
+        tk.Checkbutton(
+            c_main, text="Fundo opaco (sem transparência)", variable=var_fundo_opaco,
+            bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+            activebackground='#0d1117', activeforeground='#f0c040',
+            font=("Arial", 11, "bold")).pack(
+                anchor='w', pady=(0, 12))
+
         # ── Tamanho do relógio ──
         tk.Label(c_main, text="Tamanho do relógio:", font=("Arial", 11, "bold"),
                  fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
@@ -3393,7 +4297,7 @@ class AppInterface:
                  font=("Arial", 11, "bold"),
                  fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
         var_espacamento = tk.DoubleVar(value=float(cfg_atual["espacamento"]))
-        tk.Scale(c_main, from_=0.3, to=3.0, resolution=0.1, orient="horizontal",
+        tk.Scale(c_main, from_=0.0, to=3.0, resolution=0.05, orient="horizontal",
                  variable=var_espacamento, bg='#0d1117', fg='#c9d1d9',
                  troughcolor='#21262d', highlightthickness=0,
                  font=("Arial", 10)).pack(fill='x', pady=(0, 12))
@@ -3406,6 +4310,7 @@ class AppInterface:
                 "fator_hora": float(var_fator_hora.get()),
                 "fator_temp": float(var_fator_temp.get()),
                 "espacamento": float(var_espacamento.get()),
+                "fundo_opaco": bool(var_fundo_opaco.get()),
             }
             self.salvar_config_relogio(novo)
             cfg_win.destroy()
@@ -3633,6 +4538,12 @@ class AppInterface:
         menu_visualizar.add_command(label="Alternar Tela Cheia",
                                     command=self._alternar_maximizar,
                                     accelerator="F11")
+        menu_visualizar.add_separator()
+        self._var_tema_claro = tk.BooleanVar(value=(self.tema == 'claro'))
+        menu_visualizar.add_checkbutton(label="Tema Claro",
+                                        variable=self._var_tema_claro,
+                                        command=self._alternar_tema,
+                                        accelerator="Ctrl+T")
         menubar.add_cascade(label="Visualizar", menu=menu_visualizar)
 
         # ── Ajuda > Sobre ──
@@ -3645,11 +4556,254 @@ class AppInterface:
         menu_ajuda.add_command(label="Sobre", command=self._mostrar_sobre)
         menubar.add_cascade(label="Ajuda", menu=menu_ajuda)
 
+        # Guarda referências para recolorir os menus ao trocar o tema
+        self._menus = [menubar, menu_arquivo, menu_editar,
+                       menu_visualizar, menu_ajuda]
+
         self.root.config(menu=menubar)
 
     def _toggle_repetir(self) -> None:
         """Alterna o estado do checkbox Repetir."""
         self.repetir_var.set(not self.repetir_var.get())
+
+    # ── Tema (claro/escuro) ───────────────────────────────────────
+
+    def _alternar_tema(self) -> None:
+        """Alterna entre tema escuro (padrão) e claro, persistindo a escolha."""
+        novo = 'claro' if self.tema != 'claro' else 'escuro'
+        self.tema = novo
+        self.config_data['tema'] = novo
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.config_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Erro ao salvar tema: {e}")
+        if getattr(self, '_var_tema_claro', None) is not None:
+            self._var_tema_claro.set(novo == 'claro')
+        self._aplicar_tema()
+
+    def _aplicar_tema(self) -> None:
+        """Aplica o tema ativo (claro/escuro) a toda a interface."""
+        self._aplicar_tema_ttk()
+        self._aplicar_tema_menu()
+        try:
+            self._recolorir_arvore(self.root)
+        except tk.TclError:
+            pass
+
+    def _aplicar_tema_ttk(self) -> None:
+        """Ajusta os estilos globais ttk (Treeview/Scrollbar) ao tema."""
+        try:
+            style = ttk.Style()
+            if self.tema == 'claro':
+                style.configure(
+                    "Treeview",
+                    background="#ffffff", foreground="#1f2328",
+                    fieldbackground="#ffffff", font=("Arial", 10))
+                style.configure(
+                    "Treeview.Heading",
+                    background="#f6f8fa", foreground="#24292f",
+                    font=("Arial", 10, "bold"))
+                style.map('Treeview',
+                          background=[('selected', '#0969da')],
+                          foreground=[('selected', '#ffffff')])
+                style.configure(
+                    "Vertical.TScrollbar",
+                    background="#ffffff", troughcolor="#eaeef2",
+                    arrowcolor="#57606a")
+            else:
+                style.configure(
+                    "Treeview",
+                    background="#21262d", foreground="#c9d1d9",
+                    fieldbackground="#21262d", font=("Arial", 10))
+                style.configure(
+                    "Treeview.Heading",
+                    background="#161b22", foreground="#f0c040",
+                    font=("Arial", 10, "bold"))
+                style.map('Treeview',
+                          background=[('selected', '#6e40c9')],
+                          foreground=[('selected', '#ffffff')])
+                style.configure(
+                    "Vertical.TScrollbar",
+                    background="#21262d", troughcolor="#161b22",
+                    arrowcolor="#f0c040")
+        except (Exception, tk.TclError):
+            pass
+
+    def _aplicar_tema_menu(self) -> None:
+        """Recolore a barra de menu e os menus suspensos."""
+        menus = getattr(self, '_menus', [])
+        if not menus:
+            return
+        if self.tema == 'claro':
+            menubar_cfg = dict(bg='#f6f8fa', fg='#24292f',
+                               activebackground='#eaeef2',
+                               activeforeground='#24292f')
+            menu_cfg = dict(bg='#ffffff', fg='#1f2328',
+                            activebackground='#eaeef2',
+                            activeforeground='#24292f')
+        else:
+            menubar_cfg = dict(bg='#161b22', fg='#f0c040',
+                               activebackground='#6e40c9',
+                               activeforeground='#f0c040')
+            menu_cfg = dict(bg='#21262d', fg='#c9d1d9',
+                            activebackground='#6e40c9',
+                            activeforeground='#f0c040')
+        for i, menu in enumerate(menus):
+            try:
+                menu.configure(**(menubar_cfg if i == 0 else menu_cfg))
+            except (Exception, tk.TclError):
+                pass
+
+    def _recolorir_arvore(self, base) -> None:
+        """Aplica a recoloração de tema a `base` e a todos os seus filhos."""
+        self._aplicar_tema_widget(base)
+        try:
+            for filho in base.winfo_children():
+                self._recolorir_arvore(filho)
+        except tk.TclError:
+            pass
+
+    def _varrer_toplevels_tema(self) -> None:
+        """Recoloriza janelas auxiliares (Toplevel) criadas após o app.
+
+        Chamado periodicamente (junto do loop do telão). Cada janela
+        recria estilos escuros ao ser aberta; aqui garantimos que o tema
+        ativo seja sempre respeitado sem tocar no código de criação.
+        """
+        try:
+            self._aplicar_tema_ttk()
+            if self.tema != 'claro':
+                return
+            self._recolorir_arvore(self.root)
+            for filho in self.root.winfo_children():
+                try:
+                    if filho.winfo_class() == 'Toplevel':
+                        self._recolorir_arvore(filho)
+                except tk.TclError:
+                    pass
+        except tk.TclError:
+            pass
+
+    def _aplicar_tema_widget(self, widget) -> None:
+        """Ajusta as cores de um único widget conforme o tema ativo.
+
+        No tema ESCURO restaura as cores escura originais (gravadas na
+        primeira visita em claro). No CLARO registra as cores atuais como
+        origem e aplica a equivalência clara. Pergunta valores sobrescritos
+        dinamicamente (ex.: linha tocando na lista) como nova origem, para
+        a troca de tema nunca perder o estado visual.
+        """
+        try:
+            if not widget.winfo_exists():
+                return
+            if isinstance(widget, ttk.Widget):
+                return
+            keys = set(widget.keys())
+        except tk.TclError:
+            return
+
+        ops = [o for o in _OPCOES_COR_TK if o in keys]
+
+        def _ler(op):
+            try:
+                return widget.cget(op)
+            except tk.TclError:
+                return None
+
+        origem = getattr(widget, '_navepro_tema_origem', None)
+        aplicado = getattr(widget, '_navepro_tema_aplicado', None)
+
+        if self.tema == 'escuro':
+            if not origem:
+                return
+            cfg = {}
+            for o in ops:
+                v = origem.get(o)
+                if v:
+                    cfg[o] = v
+            try:
+                widget.configure(**cfg)
+            except Exception:
+                for o, v in cfg.items():
+                    try:
+                        widget.configure(**{o: v})
+                    except Exception:
+                        pass
+            try:
+                widget._navepro_tema_origem = None
+                widget._navepro_tema_aplicado = None
+            except Exception:
+                pass
+            return
+
+        # ── Tema CLARO ──
+        if origem is None:
+            origem = {}
+        if aplicado is None:
+            aplicado = {}
+
+        # Passo 1: mapeia as opções que funcionam como FUNDO e guarda o
+        # resultado para decidir as cores de texto em passo 2.
+        bg_final = None
+        base: dict[str, str] = {}
+        cfg: dict[str, str] = {}
+        for o in ops:
+            atual = _ler(o)
+            if atual is None:
+                continue
+            if o in ('background', 'activebackground', 'selectbackground',
+                     'troughcolor'):
+                clara = _cor_clara(atual)
+                if o == 'background':
+                    bg_final = clara
+                if aplicado.get(o) != atual:
+                    origem[o] = atual
+                base[o] = clara
+                aplicado[o] = clara
+                cfg[o] = clara
+
+        # Passo 2: opções de TEXTO decididas com o fundo correspondente.
+        def _fundo_para(op: str) -> Optional[str]:
+            if op == 'activeforeground':
+                return base.get('activebackground', bg_final)
+            if op == 'selectforeground':
+                return base.get('selectbackground', bg_final)
+            return bg_final
+
+        for o in ops:
+            if o in ('background', 'activebackground', 'selectbackground',
+                     'troughcolor'):
+                continue
+            atual = _ler(o)
+            if atual is None:
+                continue
+            if aplicado.get(o) != atual:
+                origem[o] = atual
+            escura = origem.get(o)
+            if not escura:
+                continue
+            if o in _OPCOES_TEXTO:
+                clara = _cor_clara(escura, _fundo_para(o))
+            else:
+                clara = _cor_clara(escura)
+            aplicado[o] = clara
+            cfg[o] = clara
+
+        try:
+            widget.configure(**cfg)
+        except Exception:
+            for o, v in cfg.items():
+                try:
+                    widget.configure(**{o: v})
+                except Exception:
+                    pass
+
+        try:
+            widget._navepro_tema_origem = origem
+            widget._navepro_tema_aplicado = aplicado
+        except Exception:
+            pass
 
     def _mostrar_sobre(self) -> None:
         """Exibe a janela Sobre com informações do programa."""
@@ -5262,10 +6416,12 @@ class AppInterface:
                     ja_existem += 1
                     continue
 
-                db_execute(
-                    "INSERT INTO letras (titulo, artista, compositor, ccli_numero, "
-                    "categoria, letra_completa) VALUES (?, ?, '', '', '', ?)",
-                    (titulo, dados["artista"], dados["letra_completa"]))
+                _inserir_com_id_reuso(
+                    "letras",
+                    ("titulo", "artista", "compositor", "ccli_numero",
+                     "categoria", "letra_completa"),
+                    (titulo, dados["artista"], "", "", "",
+                     dados["letra_completa"]))
                 importados += 1
 
             _carregar_hinos()
@@ -5387,6 +6543,8 @@ class AppInterface:
                 label_slide.config(
                     text=f"Slide {telao._slide_index + 1} de {len(telao._slides)}",
                     fg='#3fb950', bg='#161b22')
+            elif getattr(telao, "_mostrando_imagem", False):
+                label_slide.config(text="🖼️ Imagem ativa", fg='#3fb950', bg='#161b22')
             elif getattr(telao, "mostrando_letra", False):
                 label_slide.config(text="Projeção ativa", fg='#f0c040', bg='#161b22')
             else:
@@ -5548,9 +6706,10 @@ class AppInterface:
                         "atualizado_em=datetime('now') WHERE id=?",
                         (titulo, artista, compositor, ccli, categoria, letra, hino_id))
                 else:
-                    db_execute(
-                        "INSERT INTO letras (titulo, artista, compositor, ccli_numero, "
-                        "categoria, letra_completa) VALUES (?, ?, ?, ?, ?, ?)",
+                    _inserir_com_id_reuso(
+                        "letras",
+                        ("titulo", "artista", "compositor", "ccli_numero",
+                         "categoria", "letra_completa"),
                         (titulo, artista, compositor, ccli, categoria, letra))
                 _carregar_hinos()
                 editar_win.destroy()
@@ -5571,13 +6730,14 @@ class AppInterface:
 
         Mesma cara da janela "Hinos / Letras", mas:
           - o botão "Novo Anúncio" cria anúncio;
-          - o botão "Importar" aceita TXT e PDF;
-          - NADA é gravado no banco de dados: tudo fica em
-            ~/.navepro/anuncios.json e é removido de lá ao excluir.
+          - o botão "Importar" aceita TXT e PDF (vira slide de texto);
+          - "Importar Mídia" aceita vídeo, áudio e imagem (slide de imagem);
+          - TUDO é salvo no banco de dados SQLite (tabela "anuncios"),
+            inclusive o caminho do arquivo de mídia importado.
         """
         janela = tk.Toplevel(self.root)
         janela.title("📢 Anúncios")
-        janela.geometry("900x700")
+        janela.geometry("950x700")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         janela.after(50, janela.grab_set)
@@ -5586,10 +6746,10 @@ class AppInterface:
         main.pack(fill='both', expand=True, padx=15, pady=15)
 
         titulo_label = tk.Label(main, text="📢 Anúncios",
-                                font=("Arial", 16, "bold"), fg='#f0c040', bg='#0d1117')
+                font=("Arial", 16, "bold"), fg='#f0c040', bg='#0d1117')
         titulo_label.pack(pady=(0, 2))
-        tk.Label(main, text="Não vão para o banco de dados — ficam em anuncios.json",
-                 font=("Arial", 9), fg='#8b949e', bg='#0d1117').pack(pady=(0, 8))
+        tk.Label(main, text="Salvos no banco de dados SQLite — aceitam texto, vídeo, áudio e slide (imagem)",
+                font=("Arial", 9), fg='#8b949e', bg='#0d1117').pack(pady=(0, 8))
 
         # ── Barra de busca ──
         busca_frame = tk.Frame(main, bg='#161b22')
@@ -5623,13 +6783,14 @@ class AppInterface:
         tree_frame = tk.Frame(main, bg='#161b22')
         tree_frame.pack(fill='both', expand=True, pady=5)
 
-        colunas = ("ID", "Título", "Categoria")
+        colunas = ("ID", "Título", "Categoria", "Tipo")
         tree = ttk.Treeview(tree_frame, columns=colunas, show='headings', height=18)
         for col in colunas:
             tree.heading(col, text=col)
-        tree.column("ID", width=60)
-        tree.column("Título", width=440)
-        tree.column("Categoria", width=200)
+        tree.column("ID", width=50)
+        tree.column("Título", width=360)
+        tree.column("Categoria", width=170)
+        tree.column("Tipo", width=150)
 
         scroll_y = tk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=scroll_y.set)
@@ -5648,9 +6809,13 @@ class AppInterface:
         def _carregar_anuncios(busca: str = ""):
             for item in tree.get_children():
                 tree.delete(item)
-            termo = (busca or "").strip().lower()
-            for a in _carregar_anuncios_json():
-                if termo and termo != placeholder:
+            termo = (busca or "").strip()
+            # Ignora o placeholder (ex.: "Buscar por título ou texto...")
+            if placeholder and (termo == placeholder or termo.startswith(placeholder)):
+                termo = termo[len(placeholder):].strip()
+            termo = termo.lower()
+            for a in _listar_anuncios_db():
+                if termo and termo != "":
                     alvo = " ".join([
                         a.get('titulo', ''),
                         a.get('categoria', ''),
@@ -5658,9 +6823,13 @@ class AppInterface:
                     ]).lower()
                     if termo not in alvo:
                         continue
+                tipo = a.get('tipo_midia') or 'slide'
+                rotulo_tipo = {"slide": "📄 Texto", "video": "🎬 Vídeo",
+                               "audio": "🎵 Áudio",
+                               "imagem": "🖼️ Imagem"}.get(tipo, tipo)
                 tree.insert("", tk.END, iid=str(a.get('id')),
                             values=(a.get('id'), a.get('titulo', ''),
-                                    a.get('categoria', '')))
+                                    a.get('categoria', ''), rotulo_tipo))
 
         def _buscar(event=None):
             termo = entry_busca.get().strip()
@@ -5746,26 +6915,19 @@ class AppInterface:
                 return None
 
         def _adicionar_anuncio(dados: Dict) -> bool:
-            """Adiciona um anúncio na lista e persiste no JSON. True se salvou."""
-            anuncios = _carregar_anuncios_json()
-            novo_id = max([int(a.get('id', 0)) for a in anuncios], default=0) + 1
-            novo = {
-                "id": novo_id,
-                "titulo": (dados.get('titulo') or "").strip(),
-                "categoria": (dados.get('categoria') or "").strip(),
-                "texto": (dados.get('texto') or "").strip(),
-                "criado_em": datetime.now().isoformat(timespec="seconds"),
-            }
-            anuncios.append(novo)
-            return _salvar_anuncios_json(anuncios)
+            """Adiciona um anúncio na tabela 'anuncios'. True se salvou."""
+            return _inserir_anuncio_db(dados) is not None
 
-        def _importar_anuncios(caminhos: tuple) -> None:
-            if not caminhos:
-                return
+        def _importar_anuncios(caminhos: tuple) -> tuple:
+            """Importa TXT/PDF como anúncios tipo 'slide'.
+
+            Retorna (importados, ja_existem, erros).
+            """
             importados, ja_existem, erros = 0, 0, 0
-            anuncios = _carregar_anuncios_json()
-            titulos_existentes = {a.get('titulo', '').lower() for a in anuncios}
-            novo_id = max([int(a.get('id', 0)) for a in anuncios], default=0) + 1
+            if not caminhos:
+                return importados, ja_existem, erros
+            titulos_existentes = {str(a.get('titulo', '')).lower()
+                                  for a in _listar_anuncios_db()}
             for caminho in caminhos:
                 ext = os.path.splitext(caminho)[1].lower()
                 if ext == ".txt":
@@ -5785,37 +6947,73 @@ class AppInterface:
                     ja_existem += 1
                     continue
 
-                anuncios.append({
-                    "id": novo_id,
-                    "titulo": titulo,
-                    "categoria": (dados.get('categoria') or '').strip(),
-                    "texto": (dados.get('texto') or '').strip(),
-                    "criado_em": datetime.now().isoformat(timespec="seconds"),
-                })
-                titulos_existentes.add(titulo.lower())
-                novo_id += 1
-                importados += 1
+                if _inserir_anuncio_db({
+                        "titulo": titulo,
+                        "categoria": (dados.get('categoria') or '').strip(),
+                        "texto": (dados.get('texto') or '').strip(),
+                        "tipo_midia": "slide"}):
+                    titulos_existentes.add(titulo.lower())
+                    importados += 1
+                else:
+                    erros += 1
+            return importados, ja_existem, erros
 
-            if importados:
-                ok = _salvar_anuncios_json(anuncios)
-                if not ok:
-                    tkinter.messagebox.showwarning(
-                        "⚠️", "Não foi possível gravar os anúncios em anuncios.json.",
-                        parent=janela)
-                    return
+        def _importar_midias() -> None:
+            """Importa TXT/PDF/vídeo/áudio/imagem: cada arquivo vira um anúncio.
+
+            TXT/PDF viram anúncios tipo 'slide' (texto), as mídias mantêm o
+            tipo detectado pela extensão.
+            """
+            sufixos = tuple(sorted(
+                EXTENSOES_VIDEO | EXTENSOES_AUDIO | SUFIXOS_IMAGEM | {".txt", ".pdf"}))
+            selecionados = _escolher_arquivos_usuario(
+                parent=janela,
+                titulo="Importar arquivos (TXT / PDF / vídeo / áudio / imagem)",
+                sufixos=sufixos)
+            if not selecionados:
+                return
+            importados, ja_existem, erros = 0, 0, 0
+
+            # TXT/PDF primeiro (geram anúncios de texto)
+            docs = [c for c in selecionados
+                    if os.path.splitext(c)[1].lower() in (".txt", ".pdf")]
+            if docs:
+                di, dj, de = _importar_anuncios(tuple(docs))
+                importados += di
+                ja_existem += dj
+                erros += de
+
+            for caminho in selecionados:
+                ext = os.path.splitext(caminho)[1].lower()
+                if not caminho or not os.path.isfile(caminho) or ext in (".txt", ".pdf"):
+                    continue
+                tipo = _tipo_midia_para_arquivo(caminho)
+                if not tipo:
+                    erros += 1
+                    continue
+                destino = _copiar_arquivo_uploads(caminho)
+                if destino is None:
+                    erros += 1
+                    continue
+                titulo = os.path.splitext(os.path.basename(caminho))[0]
+                if _inserir_anuncio_db({
+                        "titulo": titulo,
+                        "categoria": "",
+                        "texto": "",
+                        "tipo_midia": tipo,
+                        "arquivo_midia": destino,
+                        "nome_arquivo_midia": os.path.basename(destino)}):
+                    importados += 1
+                else:
+                    erros += 1
+
             _carregar_anuncios()
-            msg = f"✅ {importados} anúncio(s) importado(s), {ja_existem} já existentes (pulados)."
+            msg = f"✅ {importados} anúncio(s) importado(s)."
+            if ja_existem:
+                msg += f"  ({ja_existem} já existente(s) pulado(s).)"
             if erros:
                 msg += f"\n⚠️ {erros} arquivo(s) com erro."
             tkinter.messagebox.showinfo("Importação", msg, parent=janela)
-
-        def _importar_arquivos() -> None:
-            selecionados = _escolher_arquivos_usuario(
-                parent=janela,
-                titulo="Importar anúncios (TXT / PDF)",
-                sufixos=(".txt", ".pdf"))
-            if selecionados:
-                _importar_anuncios(tuple(selecionados))
 
         # ── Ajustes da projeção no telão ──
         def _configurar_projecao():
@@ -5844,11 +7042,9 @@ class AppInterface:
                     f"Excluir {len(sel)} anúncio(s)?", parent=janela):
                 return
             ids_excluir = {int(i) for i in sel}
-            anuncios = [a for a in _carregar_anuncios_json()
-                        if int(a.get('id', 0)) not in ids_excluir]
-            if not _salvar_anuncios_json(anuncios):
+            if not _excluir_anuncios_db(ids_excluir):
                 tkinter.messagebox.showwarning(
-                    "⚠️", "Não foi possível gravar a exclusão em anuncios.json.",
+                    "⚠️", "Não foi possível gravar a exclusão no banco.",
                     parent=janela)
                 return
             _carregar_anuncios(entry_busca.get().strip())
@@ -5865,9 +7061,9 @@ class AppInterface:
                   bg='#da3633', fg='white', activebackground='#f85149',
                   command=_excluir_anuncio, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="📥 Importar (TXT/PDF)", font=("Arial", 11, "bold"),
+        tk.Button(btn_frame, text="📥 Importar Mídia", font=("Arial", 11, "bold"),
                   bg='#8b5cf6', fg='white', activebackground='#a78bfa',
-                  command=_importar_arquivos, cursor='hand2', padx=12, pady=4
+                  command=_importar_midias, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
         tk.Button(btn_frame, text="🎨 Projeção", font=("Arial", 11, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
@@ -5911,6 +7107,18 @@ class AppInterface:
                   command=lambda: _ajustar_fonte(0.8), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
 
+        tk.Label(nav_frame, text="🖼️ Imagem:",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#161b22'
+                 ).pack(side='left', padx=(14, 2))
+        tk.Button(nav_frame, text="−", font=("Arial", 11, "bold"),
+                  bg='#8957e5', fg='white', activebackground='#a371f7',
+                  command=lambda: _ajustar_imagem(False), cursor='hand2', padx=10, pady=2
+                  ).pack(side='left', padx=2)
+        tk.Button(nav_frame, text="+", font=("Arial", 11, "bold"),
+                  bg='#8957e5', fg='white', activebackground='#a371f7',
+                  command=lambda: _ajustar_imagem(True), cursor='hand2', padx=10, pady=2
+                  ).pack(side='left', padx=2)
+
         label_slide = tk.Label(nav_frame, text="Sem projeção",
                                font=("Arial", 11, "bold"), fg='#8b949e', bg='#161b22')
         label_slide.pack(side='right', padx=10)
@@ -5927,6 +7135,8 @@ class AppInterface:
                 label_slide.config(
                     text=f"Slide {telao._slide_index + 1} de {len(telao._slides)}",
                     fg='#3fb950', bg='#161b22')
+            elif getattr(telao, "_mostrando_imagem", False):
+                label_slide.config(text="🖼️ Imagem ativa", fg='#3fb950', bg='#161b22')
             elif getattr(telao, "mostrando_letra", False):
                 label_slide.config(text="Projeção ativa", fg='#f0c040', bg='#161b22')
             else:
@@ -5971,6 +7181,16 @@ class AppInterface:
             self.salvar_config_projecao(dict(cfg))
             _atualizar_indicador_slide()
 
+        def _ajustar_imagem(aumentar: bool):
+            """Redimensiona a imagem já projetada no telão (ao vivo)."""
+            telao = self.player.telao
+            if not getattr(telao, "_mostrando_imagem", False):
+                return
+            if aumentar:
+                telao.imagem_aumentar()
+            else:
+                telao.imagem_diminuir()
+
         # Setas do teclado e Esc (janela de anúncios), mesmo esquema da de hinos.
         janela.bind("<Left>", _slide_anterior)
         janela.bind("<Up>", _slide_anterior)
@@ -6005,12 +7225,50 @@ class AppInterface:
                 tkinter.messagebox.showwarning("Seleção", "Selecione um anúncio.", parent=janela)
                 return
             anuncio_id = int(sel[0])
-            anuncio = None
-            for a in _carregar_anuncios_json():
-                if int(a.get('id', 0)) == anuncio_id:
-                    anuncio = a
-                    break
+            anuncio = next(
+                (a for a in _listar_anuncios_db()
+                 if int(a.get('id', 0)) == anuncio_id), None)
             if not anuncio:
+                return
+            tipo = anuncio.get('tipo_midia') or 'slide'
+            arquivo = anuncio.get('arquivo_midia') or ''
+            if tipo in ('video', 'audio') and arquivo and os.path.exists(arquivo):
+                self.arquivos_encontrados = [arquivo]
+                self.player.carregar_playlist([arquivo])
+                self.player.tocar_indice(0)
+                self.atualizar_lista()
+                _atualizar_indicador_slide()
+                return
+            if tipo == 'imagem' and arquivo and os.path.exists(arquivo):
+                texto_anuncio = (anuncio.get('texto') or '').strip()
+                composicao = None
+                if texto_anuncio:
+                    l_t, a_t = _tamanho_telao(self.player.telao)
+                    composicao = _compor_anuncio_imagem_texto(
+                        arquivo, texto_anuncio,
+                        anuncio.get('config_midia') or '', l_t, a_t)
+                if composicao:
+                    ok = self.player.telao.projetar_imagem(composicao)
+                    try:
+                        os.remove(composicao)
+                        os.rmdir(os.path.dirname(composicao))
+                    except OSError:
+                        pass
+                    if ok:
+                        _atualizar_indicador_slide()
+                        return
+                    # Falhou a composição projetada: tenta a imagem pura
+                    if self.player.telao.projetar_imagem(arquivo):
+                        _atualizar_indicador_slide()
+                        return
+                    tkinter.messagebox.showwarning(
+                        "Imagem", f"Não foi possível projetar:\n{arquivo}", parent=janela)
+                    return
+                if self.player.telao.projetar_imagem(arquivo):
+                    _atualizar_indicador_slide()
+                else:
+                    tkinter.messagebox.showwarning(
+                        "Imagem", f"Não foi possível projetar:\n{arquivo}", parent=janela)
                 return
             slides = _montar_slides_anuncio(dict(anuncio))
             self.player.telao.projetar_slides(slides)
@@ -6020,7 +7278,7 @@ class AppInterface:
         def _abrir_editor_anuncio(anuncio_id: Optional[int] = None):
             editar_win = tk.Toplevel(janela)
             editar_win.title("Editar Anúncio" if anuncio_id else "Novo Anúncio")
-            editar_win.geometry("560x420")
+            editar_win.geometry("680x860")
             editar_win.configure(bg='#0d1117')
             editar_win.transient(janela)
             editar_win.after(50, editar_win.grab_set)
@@ -6043,23 +7301,478 @@ class AppInterface:
                 entry.pack(side='left', fill='x', expand=True, padx=5, ipady=3)
                 campos[campo] = entry
 
-            tk.Label(e_main, text="Texto do anúncio:", font=("Arial", 11, "bold"),
-                     fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x', pady=(8, 2))
-            texto_text = tk.Text(e_main, font=("Arial", 11), bg='#21262d', fg='#c9d1d9',
-                                 insertbackground='#f0c040', wrap='word', height=10)
-            texto_text.pack(fill='both', expand=True, pady=2)
-
             # Carrega dados se editando
             dados_anuncio = {}
             if anuncio_id:
-                for a in _carregar_anuncios_json():
-                    if int(a.get('id', 0)) == anuncio_id:
-                        dados_anuncio = a
-                        break
-                if dados_anuncio:
-                    campos['titulo'].insert(0, dados_anuncio.get('titulo', ''))
-                    campos['categoria'].insert(0, dados_anuncio.get('categoria', ''))
-                    texto_text.insert('1.0', dados_anuncio.get('texto', ''))
+                para_editar = next(
+                    (a for a in _listar_anuncios_db()
+                     if int(a.get('id', 0)) == anuncio_id), None)
+                if para_editar:
+                    dados_anuncio = dict(para_editar)
+
+            tk.Label(e_main, text="Tipo de conteúdo:", font=("Arial", 11, "bold"),
+                     fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x', pady=(8, 2))
+            rotulos_tipo = {
+                "slide": "📄 Slide (texto)",
+                "video": "🎬 Vídeo",
+                "audio": "🎵 Áudio",
+                "imagem": "🖼️ Imagem (slide)",
+            }
+            tipo_inicial = (dados_anuncio.get('tipo_midia') or 'slide') or 'slide'
+            tipo_var = tk.StringVar(
+                value=rotulos_tipo.get(tipo_inicial, rotulos_tipo["slide"]))
+            tipo_combo = ttk.Combobox(
+                e_main, textvariable=tipo_var, state='readonly',
+                values=[rotulos_tipo[k] for k in ("slide", "video", "audio", "imagem")],
+                font=("Arial", 11))
+            tipo_combo.pack(fill='x', pady=2)
+
+            def _tipo_interno() -> str:
+                atual = tipo_var.get()
+                if atual in rotulos_tipo:
+                    return atual
+                for k, v in rotulos_tipo.items():
+                    if atual == v:
+                        return k
+                return "slide"
+
+            arquivo_var = tk.StringVar(value=dados_anuncio.get('arquivo_midia') or '')
+
+            arquivo_row = tk.Frame(e_main, bg='#0d1117')
+            arquivo_row.pack(fill='x', pady=(6, 0))
+            arquivo_label = tk.Label(arquivo_row, text="Nenhum arquivo selecionado",
+                                     font=("Arial", 10), fg='#8b949e', bg='#0d1117',
+                                     anchor='w')
+            arquivo_label.pack(side='left', fill='x', expand=True, padx=5)
+
+            def _atualizar_arquivo_label():
+                caminho = arquivo_var.get().strip()
+                if caminho:
+                    arquivo_label.config(text=f"📎 {os.path.basename(caminho)}",
+                                         fg='#3fb950')
+                else:
+                    arquivo_label.config(text="Nenhum arquivo selecionado", fg='#8b949e')
+
+            def _escolher_arquivo():
+                sufixos = {
+                    "video": tuple(sorted(EXTENSOES_VIDEO)),
+                    "audio": tuple(sorted(EXTENSOES_AUDIO)),
+                    "imagem": tuple(sorted(SUFIXOS_IMAGEM)),
+                    "slide": (),
+                }[_tipo_interno()]
+                if not sufixos:
+                    tkinter.messagebox.showinfo(
+                        "Dica", "Para tipo 'Slide (texto)' escreva o texto abaixo — "
+                                "não precisa de arquivo. Para vídeo/áudio/imagem, "
+                                "altere o tipo e selecione o arquivo.", parent=editar_win)
+                    return
+                titulo_dialogo = f"Escolher arquivo ({_tipo_interno()})"
+                selecionados = _escolher_arquivos_usuario(
+                    parent=editar_win, titulo=titulo_dialogo, sufixos=sufixos)
+                if selecionados:
+                    arquivo_var.set(selecionados[0])
+                    _atualizar_arquivo_label()
+                    _montar_area_conteudo()
+
+            tk.Button(arquivo_row, text="📂 Selecionar arquivo",
+                      font=("Arial", 10, "bold"),
+                      bg='#1f6feb', fg='white', activebackground='#388bfd',
+                      command=_escolher_arquivo, cursor='hand2', padx=10, pady=2
+                      ).pack(side='right', padx=5)
+
+            tk.Label(e_main, text="Texto do anúncio:", font=("Arial", 11, "bold"),
+                     fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x', pady=(8, 2))
+
+            area_conteudo = tk.Frame(e_main, bg='#0d1117')
+            area_conteudo.pack(fill='both', expand=True, pady=2)
+
+            # Estado compartilhado do modo imagem (posição/tamanho no espaço 1440x1080)
+            _widget_texto = {"w": None}
+            _texto_salvo = {"t": dados_anuncio.get('texto', '') if dados_anuncio else ''}
+            _tam_img = {"w": None, "h": None, "x": None, "y": None, "orig": None}
+            if dados_anuncio:
+                try:
+                    cfg = json.loads(dados_anuncio.get('config_midia') or '{}')
+                    if isinstance(cfg, dict) and cfg.get("w"):
+                        _tam_img["w"] = int(cfg["w"])
+                        _tam_img["h"] = int(cfg["h"] or 0)
+                        _tam_img["x"] = int(cfg.get("x") or 0)
+                        _tam_img["y"] = int(cfg.get("y") or 0)
+                except (ValueError, TypeError):
+                    pass
+
+            def _ler_texto() -> str:
+                """Lê o texto do widget atual de conteúdo (e sincroniza o guardado)."""
+                w = _widget_texto.get("w")
+                if w is not None:
+                    _texto_salvo["t"] = w.get('1.0', tk.END).strip()
+                return _texto_salvo["t"]
+
+            def _montar_painel_imagem(container, texto_widget, caminho) -> None:
+                """Prévia única: o texto + a imagem no MESMO canvas, como será projetado.
+
+                Coordenadas em espaço virtual 1440x1080 (o mesmo da composição no
+                telão); o canvas mostra uma miniatura proporcional. A imagem fica
+                por cima do texto, arrastável e redimensionável pelas alças.
+                """
+                try:
+                    from PIL import Image
+                    with Image.open(caminho) as im:
+                        _tam_img["orig"] = im.size
+                except Exception:
+                    _tam_img["orig"] = None
+
+                VW, VH = 1440, 1080
+                ESCALA = 1 / 3.0
+                CW = int(VW * ESCALA)
+                CH = int(VH * ESCALA)
+                LIN_V = 1
+                MINV_V = 120
+                margem_hv = int(VW * 0.04) or 40
+                margem_vv = int(VH * 0.06) or 60
+                area_wv = VW - margem_hv * 2
+                area_hv = VH - margem_vv * 2
+
+                def _clamp_v(v, lo, hi):
+                    return max(lo, min(hi, v))
+
+                painel = tk.Frame(container, bg='#0d1117')
+                painel.pack(fill='both', expand=True)
+
+                texto_widget.config(height=5)
+                texto_widget.pack(fill='x', side='top', pady=(0, 6))
+                _widget_texto["w"] = texto_widget
+
+                quadro = tk.Frame(painel, bg='#0d1117')
+                quadro.pack(fill='both', expand=True)
+                canvas = tk.Canvas(quadro, bg='#0d1117', width=CW, height=CH,
+                                   highlightthickness=0)
+                canvas.pack(anchor='center')
+
+                origem_img = _tam_img.get("orig")
+                if not origem_img:
+                    canvas.create_text(CW // 2, CH // 2,
+                                       text="Imagem inválida", fill='#8b949e',
+                                       font=("Arial", 11))
+                    return
+                ow, oh = origem_img
+                aspect = ow / max(1, oh)
+
+                prefe_w = _tam_img.get("w")
+                prefe_h = _tam_img.get("h")
+                prefe_x = _tam_img.get("x")
+                prefe_y = _tam_img.get("y")
+                tem_posicao = bool(prefe_w and prefe_h and prefe_x and prefe_y)
+
+                if tem_posicao:
+                    # Formato novo (virtual 1440x1080): usa o que foi salvo.
+                    novo_w = _clamp_v(int(prefe_w), MINV_V, area_wv)
+                    novo_h = _clamp_v(int(prefe_h), MINV_V, area_hv)
+                    novo_x = _clamp_v(int(prefe_x), LIN_V, VW - LIN_V - novo_w)
+                    novo_y = _clamp_v(int(prefe_y), LIN_V, VH - LIN_V - novo_h)
+                elif prefe_w and prefe_h:
+                    # Migra config antiga (canvas 320x250, sem posição): escala
+                    # para o espaço virtual e mantém o layout à direita.
+                    s = min(VW / 320.0, VH / 250.0)
+                    novo_w = _clamp_v(int(prefe_w * s), MINV_V, area_wv)
+                    novo_h = _clamp_v(int(prefe_h * s), MINV_V, area_hv)
+                    novo_x = VW - margem_hv - novo_w
+                    novo_y = (VH - novo_h) // 2
+                else:
+                    novo_w = min(int(area_wv * 0.5), int(area_hv * aspect))
+                    novo_h = max(MINV_V, int(novo_w / aspect))
+                    if novo_h > area_hv:
+                        novo_h = int(area_hv)
+                        novo_w = max(MINV_V, int(novo_h * aspect))
+                    novo_w = max(MINV_V, novo_w)
+                    novo_x = VW - margem_hv - novo_w
+                    novo_y = (VH - novo_h) // 2
+
+                tam = {"w": novo_w, "h": novo_h}
+                pos = {"x": novo_x, "y": novo_y}
+                _tam_img.update({"w": novo_w, "h": novo_h, "x": novo_x, "y": novo_y})
+
+                PREVIEW_OK = [True]
+                _photo_atual = [None]
+                try:
+                    from PIL import Image, ImageTk
+                except Exception:
+                    PREVIEW_OK[0] = False
+
+                def _gerar_foto(w, h):
+                    if not PREVIEW_OK[0]:
+                        return None
+                    try:
+                        from PIL import Image, ImageTk
+                        with Image.open(caminho) as im:
+                            orig = im.convert("RGBA")
+                        redim = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
+                        pw, ph = max(1, int(w * ESCALA)), max(1, int(h * ESCALA))
+                        foto = ImageTk.PhotoImage(orig.resize((pw, ph), redim), master=canvas)
+                        _photo_atual[0] = foto
+                        return foto
+                    except Exception:
+                        return None
+
+                itens = {}
+
+                def _limpar_canvas():
+                    for valor in list(itens.values()):
+                        lista = valor if isinstance(valor, (list, tuple)) else (valor,)
+                        for it in lista:
+                            try:
+                                canvas.delete(it)
+                            except tk.TclError:
+                                pass
+                    itens.clear()
+
+                def _desenhar_marcadores(x, y, w, h):
+                    cor = '#58a6ff'
+                    s = 8
+                    posicoes = {
+                        "nw": (x, y), "n": (x + w // 2, y), "ne": (x + w, y),
+                        "w": (x, y + h // 2), "e": (x + w, y + h // 2),
+                        "sw": (x, y + h), "s": (x + w // 2, y + h),
+                        "se": (x + w, y + h),
+                    }
+                    for nome, (px, py) in posicoes.items():
+                        itens["h_" + nome] = canvas.create_rectangle(
+                            px - s // 2, py - s // 2, px + s // 2, py + s // 2,
+                            fill=cor, outline='white')
+
+                def _renderizar_texto_canvas():
+                    for it in list(itens.get("txt", [])):
+                        try:
+                            canvas.delete(it)
+                        except tk.TclError:
+                            pass
+                    itens["txt"] = []
+                    ww = _widget_texto.get("w")
+                    txt = ww.get('1.0', tk.END).strip() if ww else (
+                        str(_texto_salvo.get("t") or ""))
+                    if not txt:
+                        return
+                    try:
+                        from PIL import Image as _PI
+                        from PIL import ImageDraw as _PD
+                        dummy = _PI.new("RGBA", (8, 8))
+                        dr = _PD.Draw(dummy)
+                        fonte, linhas = _carregar_fonte_atual(
+                            dr, txt.upper(), area_wv, area_hv - margem_vv)
+                        fam = "Helvetica"
+                        try:
+                            fam = fonte.getname()[0]
+                        except Exception:
+                            pass
+                        pt = max(5, int(fonte.size * ESCALA * 0.75))
+                        passo = fonte.size + max(1, fonte.size // 5)
+                        mh = margem_hv * ESCALA
+                        my = (margem_vv + 20) * ESCALA
+                        for i, ln in enumerate(linhas):
+                            if ln:
+                                itens["txt"].append(canvas.create_text(
+                                    mh, my + i * passo * ESCALA, text=ln,
+                                    anchor='nw', fill='#c9d1d9',
+                                    font=(fam, pt, 'bold')))
+                    except Exception:
+                        return
+
+                def _redesenhar(final=False):
+                    _limpar_canvas()
+                    w, h = tam["w"], tam["h"]
+                    x, y = pos["x"], pos["y"]
+                    _tam_img["x"] = int(x)
+                    _tam_img["y"] = int(y)
+                    _tam_img["w"] = int(w)
+                    _tam_img["h"] = int(h)
+                    # 1) texto por baixo (mesma posição/margens da projeção)
+                    _renderizar_texto_canvas()
+                    # 2) imagem por cima, na posição ajustada
+                    px, py = int(x * ESCALA), int(y * ESCALA)
+                    pw, ph = max(1, int(w * ESCALA)), max(1, int(h * ESCALA))
+                    itens["fundo"] = canvas.create_rectangle(
+                        px, py, px + pw, py + ph, fill='#0d1117',
+                        outline=('#f0c040' if not final else '#3fb950'),
+                        width=2 if final else 1)
+                    foto = _gerar_foto(w, h) if final else None
+                    if foto is not None:
+                        itens["foto"] = canvas.create_image(px, py, image=foto, anchor="nw")
+                    else:
+                        itens["placeholder"] = canvas.create_text(
+                            px + pw // 2, py + ph // 2,
+                            text="", fill='#8b949e', font=("Arial", 12))
+                    # 3) alças por cima de tudo
+                    _desenhar_marcadores(px, py, pw, ph)
+
+                def _alca_em(px, py):
+                    chaves = [("nw", "h_nw"), ("n", "h_n"), ("ne", "h_ne"),
+                              ("w", "h_w"), ("e", "h_e"),
+                              ("sw", "h_sw"), ("s", "h_s"), ("se", "h_se")]
+                    for nome, key in chaves:
+                        it_id = itens.get(key)
+                        if it_id is None:
+                            continue
+                        try:
+                            bx1, by1, bx2, by2 = canvas.coords(it_id)
+                        except tk.TclError:
+                            continue
+                        if bx1 <= px <= bx2 and by1 <= py <= by2:
+                            return nome
+                    return None
+
+                _estado = {"modo": None, "alca": None, "press_px": (0, 0),
+                           "ix": 0, "iy": 0, "iw": 0, "ih": 0, "aspect": aspect}
+                _estado_final = [True]
+
+                def _em_retangulo(px, py):
+                    vx = px / ESCALA
+                    vy = py / ESCALA
+                    return (pos["x"] <= vx <= pos["x"] + tam["w"]
+                            and pos["y"] <= vy <= pos["y"] + tam["h"])
+
+                def _on_press(e):
+                    _estado["modo"] = None
+                    alca = _alca_em(e.x, e.y)
+                    if alca:
+                        _estado.update({"modo": "resize", "alca": alca,
+                                        "press_px": (e.x, e.y),
+                                        "ix": pos["x"], "iy": pos["y"],
+                                        "iw": tam["w"], "ih": tam["h"]})
+                        return
+                    if _em_retangulo(e.x, e.y):
+                        _estado.update({"modo": "move", "alca": None,
+                                        "press_px": (e.x, e.y),
+                                        "ix": pos["x"], "iy": pos["y"],
+                                        "iw": tam["w"], "ih": tam["h"]})
+
+                def _on_motion(e):
+                    if not _estado["modo"]:
+                        return
+                    dx = (e.x - _estado["press_px"][0]) / ESCALA
+                    dy = (e.y - _estado["press_px"][1]) / ESCALA
+                    if _estado["modo"] == "move":
+                        pos["x"] = _clamp_v(_estado["ix"] + dx, LIN_V,
+                                            max(LIN_V, VW - LIN_V - tam["w"]))
+                        pos["y"] = _clamp_v(_estado["iy"] + dy, LIN_V,
+                                            max(LIN_V, VH - LIN_V - tam["h"]))
+                        _redesenhar(final=True)
+                        return
+                    alca = _estado["alca"]
+                    asp = _estado["aspect"]
+                    esq = alca in ("nw", "w", "sw")
+                    top = alca in ("nw", "n", "ne")
+                    dir_ = alca in ("ne", "e", "se")
+                    bot = alca in ("sw", "s", "se")
+
+                    w_lim = ((VW - LIN_V) - _estado["ix"]) if dir_ \
+                        else ((_estado["ix"] + _estado["iw"]) - LIN_V)
+                    h_lim = ((VH - LIN_V) - _estado["iy"]) if bot \
+                        else ((_estado["iy"] + _estado["ih"]) - LIN_V)
+
+                    if alca in ("n", "s"):
+                        novo_h = _clamp_v(_estado["ih"] + (dy if bot else -dy),
+                                          MINV_V, h_lim)
+                        if top:
+                            pos["y"] = _estado["iy"] + (_estado["ih"] - novo_h)
+                        tam["h"] = novo_h
+                    elif alca in ("w", "e"):
+                        novo_w = _clamp_v(_estado["iw"] + (dx if dir_ else -dx),
+                                          MINV_V, w_lim)
+                        if esq:
+                            pos["x"] = _estado["ix"] + (_estado["iw"] - novo_w)
+                        tam["w"] = novo_w
+                    else:
+                        delta = dx if abs(dx) >= abs(dy) else dy
+                        novo_w = _clamp_v(_estado["iw"] + (delta if dir_ else -delta),
+                                          MINV_V, w_lim)
+                        novo_h = int(novo_w / asp)
+                        if novo_h > h_lim:
+                            novo_h = int(h_lim)
+                            novo_w = _clamp_v(int(novo_h * asp), MINV_V, w_lim)
+                            novo_h = int(novo_w / asp)
+                        if novo_h < MINV_V:
+                            novo_h = MINV_V
+                            novo_w = _clamp_v(int(novo_h * asp), MINV_V, w_lim)
+                        if esq:
+                            pos["x"] = _estado["ix"] + (_estado["iw"] - novo_w)
+                        if top:
+                            pos["y"] = _estado["iy"] + (_estado["ih"] - novo_h)
+                        tam["w"], tam["h"] = novo_w, novo_h
+                    _redesenhar(final=False)
+
+                def _on_release(e):
+                    if _estado["modo"]:
+                        _estado["modo"] = None
+                        _estado["alca"] = None
+                        _redesenhar(final=True)
+
+                def _ao_digitar(e):
+                    if _estado["modo"] is None:
+                        _redesenhar(final=_estado_final[0])
+
+                canvas.bind("<ButtonPress-1>", _on_press)
+                canvas.bind("<B1-Motion>", _on_motion)
+                canvas.bind("<ButtonRelease-1>", _on_release)
+                texto_widget.bind("<KeyRelease>", _ao_digitar)
+
+                _redesenhar(final=True)
+                tk.Label(painel,
+                         text="A prévia mostra tudo como será projetado (texto + imagem "
+                              "no mesmo quadro).\n"
+                              "Arraste as alças para redimensionar a imagem; "
+                              "clique e arraste sobre ela para movê-la.",
+                         bg='#0d1117', fg='#8b949e', justify='left',
+                         font=("Arial", 9)).pack(fill='x', pady=(6, 0))
+
+            def _montar_area_conteudo() -> None:
+                """Constrói a área de conteúdo conforme o tipo selecionado.
+
+                - 'imagem' com arquivo: prévia única com o texto do anúncio
+                  E a imagem no mesmo canvas (sobre o texto), posicionáveis
+                  de forma idêntica à projeção.
+                - demais: campo de texto em largura total (como antes).
+                """
+                for w in area_conteudo.winfo_children():
+                    w.destroy()
+                _widget_texto["w"] = None
+
+                texto_atual = tk.Text(area_conteudo, font=("Arial", 11),
+                                      bg='#21262d', fg='#c9d1d9',
+                                      insertbackground='#f0c040',
+                                      wrap='word', height=8)
+                if _texto_salvo["t"]:
+                    texto_atual.insert('1.0', _texto_salvo["t"])
+
+                tipo = _tipo_interno()
+                caminho = arquivo_var.get().strip()
+                eh_imagem = (tipo == "imagem" and caminho
+                             and os.path.isfile(caminho)
+                             and os.path.splitext(caminho)[1].lower() in SUFIXOS_IMAGEM)
+
+                if tipo == "imagem":
+                    if eh_imagem:
+                        _montar_painel_imagem(area_conteudo, texto_atual, caminho)
+                    else:
+                        texto_atual.pack(fill='both', expand=True, pady=2)
+                        _widget_texto["w"] = texto_atual
+                        if caminho:
+                            tk.Label(area_conteudo,
+                                     text="Arquivo selecionado não é uma imagem.",
+                                     fg='#f85149', bg='#0d1117',
+                                     font=("Arial", 10)).pack(anchor='w')
+                    return
+
+                texto_atual.pack(fill='both', expand=True, pady=2)
+                _widget_texto["w"] = texto_atual
+
+            tipo_combo.bind("<<ComboboxSelected>>",
+                            lambda e: _montar_area_conteudo())
+            _montar_area_conteudo()
+
+            if dados_anuncio:
+                campos['titulo'].insert(0, dados_anuncio.get('titulo', ''))
+                campos['categoria'].insert(0, dados_anuncio.get('categoria', ''))
+            _atualizar_arquivo_label()
 
             def _salvar():
                 titulo = campos['titulo'].get().strip()
@@ -6068,29 +7781,55 @@ class AppInterface:
                                                    parent=editar_win)
                     return
                 categoria = campos['categoria'].get().strip()
-                texto = texto_text.get('1.0', tk.END).strip()
+                texto = _ler_texto()
+                tipo = _tipo_interno()
+                nome_arquivo = ""
+                arquivo = arquivo_var.get().strip()
 
-                anuncios = _carregar_anuncios_json()
+                if tipo != "slide":
+                    if not arquivo or not os.path.exists(arquivo):
+                        tkinter.messagebox.showwarning(
+                            "Erro", f"Selecione o arquivo de {rotulos_tipo[tipo].lower()}.",
+                            parent=editar_win)
+                        return
+                    if not os.path.normcase(os.path.abspath(arquivo)).startswith(
+                            os.path.normcase(os.path.abspath(UPLOAD_FOLDER))):
+                        copiado = _copiar_arquivo_uploads(arquivo)
+                        if copiado is None:
+                            tkinter.messagebox.showwarning(
+                                "⚠️", "Não foi possível copiar o arquivo para uploads.",
+                                parent=editar_win)
+                            return
+                        arquivo = copiado
+                    nome_arquivo = os.path.basename(arquivo)
+
+                config_midia = ""
+                if tipo == "imagem" and _tam_img.get("w"):
+                    config_midia = json.dumps({
+                        "w": int(_tam_img["w"]),
+                        "h": int(_tam_img.get("h") or 0),
+                        "x": int(_tam_img.get("x") or 0),
+                        "y": int(_tam_img.get("y") or 0)})
+
+                dados_finais = {
+                    "titulo": titulo,
+                    "categoria": categoria,
+                    "texto": texto,
+                    "tipo_midia": tipo,
+                    "arquivo_midia": arquivo,
+                    "nome_arquivo_midia": nome_arquivo,
+                    "config_midia": config_midia,
+                }
                 if anuncio_id:
-                    for a in anuncios:
-                        if int(a.get('id', 0)) == anuncio_id:
-                            a['titulo'] = titulo
-                            a['categoria'] = categoria
-                            a['texto'] = texto
-                            break
+                    if not _atualizar_anuncio_db(anuncio_id, dados_finais):
+                        tkinter.messagebox.showwarning(
+                            "⚠️", "Não foi possível gravar no banco.", parent=editar_win)
+                        return
                 else:
-                    novo_id = max([int(a.get('id', 0)) for a in anuncios], default=0) + 1
-                    anuncios.append({
-                        "id": novo_id,
-                        "titulo": titulo,
-                        "categoria": categoria,
-                        "texto": texto,
-                        "criado_em": datetime.now().isoformat(timespec="seconds"),
-                    })
-                if not _salvar_anuncios_json(anuncios):
-                    tkinter.messagebox.showwarning(
-                        "⚠️", "Não foi possível gravar em anuncios.json.", parent=editar_win)
-                    return
+                    if _inserir_anuncio_db(dados_finais) is None:
+                        tkinter.messagebox.showwarning(
+                            "⚠️", "Não foi possível gravar no banco.", parent=editar_win)
+                        return
                 _carregar_anuncios()
                 editar_win.destroy()
 
@@ -6099,6 +7838,7 @@ class AppInterface:
                       command=_salvar, cursor='hand2', padx=20, pady=5
                       ).pack(pady=10)
 
+        _migrar_anuncios_do_json()
         _carregar_anuncios()
 
     # ────────────────────────────────────────────────────────────────────
@@ -6657,10 +8397,26 @@ class AppInterface:
                 if novos:
                     conn = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT)
                     try:
-                        conn.executemany(
-                            "INSERT INTO versiculos "
-                            "(versao, livro, capitulo, versiculo, texto) "
-                            "VALUES (?, ?, ?, ?, ?)", novos)
+                        ids_livres = list(
+                            _gerador_id_livre("versiculos",
+                                              limitar=len(novos)))
+                        com_id = []
+                        sem_id = []
+                        for idx, ver in enumerate(novos):
+                            if idx < len(ids_livres):
+                                com_id.append((ids_livres[idx],) + tuple(ver))
+                            else:
+                                sem_id.append(tuple(ver))
+                        if com_id:
+                            conn.executemany(
+                                "INSERT INTO versiculos "
+                                "(id, versao, livro, capitulo, versiculo, texto) "
+                                "VALUES (?, ?, ?, ?, ?, ?)", com_id)
+                        if sem_id:
+                            conn.executemany(
+                                "INSERT INTO versiculos "
+                                "(versao, livro, capitulo, versiculo, texto) "
+                                "VALUES (?, ?, ?, ?, ?)", sem_id)
                         conn.commit()
                     finally:
                         conn.close()
@@ -6917,10 +8673,17 @@ class AppInterface:
     # ────────────────────────────────────────────────────────────────────
 
     def janela_ordem_servico(self) -> None:
-        """Abre a janela de planejamento de ordem de serviço."""
+        """Abre a janela de planejamento de ordem de serviço.
+
+        As ordens são salvas em ~/.navepro/servicos.json (nunca importam
+        vídeo/slides). Oferece criar, editar e excluir serviços, além de
+        arrastar e soltar os itens para reordená-los.
+        """
+        _migrar_servicos_do_banco()
+        dados = _carregar_servicos_json()
         janela = tk.Toplevel(self.root)
         janela.title("📋 Ordem de Serviço")
-        janela.geometry("850x750")
+        janela.geometry("980x750")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         janela.after(50, janela.grab_set)
@@ -6945,17 +8708,29 @@ class AppInterface:
         combo_servico.pack(side='left', padx=5)
 
         servico_selecionado_id = [None]
-        itens_servico = []
 
-        def _carregar_servicos():
-            rows = db_query(
-                "SELECT id, nome, data_servico FROM servicos WHERE ativo = 1 "
-                "ORDER BY data_servico DESC, nome")
-            opcoes = [f"{r['id']} - {r['nome']} ({r['data_servico'] or 'sem data'})"
-                      for r in rows]
+        def _rotulo_servico(s: Dict) -> str:
+            data = (s.get('data_servico') or '').strip()
+            return f"{s.get('id')} - {s.get('nome', '')} ({data or 'sem data'})"
+
+        def _servico_atual() -> Optional[Dict]:
+            sid = servico_selecionado_id[0]
+            if not sid:
+                return None
+            return next((s for s in dados["servicos"] if s.get("id") == sid), None)
+
+        def _ordenar_servicos():
+            return sorted(
+                dados["servicos"],
+                key=lambda s: (s.get('data_servico') or '', s.get('nome') or ''),
+                reverse=True)
+
+        def _carregar_servicos(escolher: bool = True):
+            ord_servicos = _ordenar_servicos()
+            opcoes = [_rotulo_servico(s) for s in ord_servicos]
             combo_servico['values'] = opcoes
-            combo_servico._servico_ids = [r['id'] for r in rows]
-            if opcoes:
+            combo_servico._servico_ids = [s['id'] for s in ord_servicos]
+            if opcoes and escolher:
                 combo_servico.current(0)
 
         def _on_servico_select(event=None):
@@ -6998,24 +8773,54 @@ class AppInterface:
         style.map('Treeview', background=[('selected', '#6e40c9')],
                   foreground=[('selected', '#ffffff')])
 
+        # ── Drag & drop para reordenar itens dentro da tree ──
+        _drag_state: Dict[str, Optional[str]] = {"origem": None}
+
+        def _on_tree_button_press(event):
+            if tree.identify_region(event.x, event.y) in ("heading", "separator"):
+                return
+            item = tree.identify_row(event.y)
+            if not item:
+                return
+            _drag_state["origem"] = item
+
+        def _on_tree_button_release(event):
+            origem = _drag_state.get("origem")
+            _drag_state["origem"] = None
+            if not origem:
+                return
+            destino = tree.identify_row(event.y)
+            serv = _servico_atual()
+            if not serv or not destino or destino == origem:
+                return
+            itens = list(serv.get("itens") or [])
+            novo = _reordenar_itens_servico(itens, int(origem), int(destino))
+            if novo != itens:
+                serv["itens"] = novo
+                if _salvar_servicos_json(dados):
+                    _carregar_itens()
+                    tree.selection_set(destino)
+                    tree.focus(destino)
+
+        tree.bind("<ButtonPress-1>", _on_tree_button_press)
+        tree.bind("<ButtonRelease-1>", _on_tree_button_release)
+
         def _carregar_itens():
-            nonlocal itens_servico
             for item in tree.get_children():
                 tree.delete(item)
-            sid = servico_selecionado_id[0]
-            if not sid:
+            serv = _servico_atual()
+            if not serv:
                 return
-            itens_servico = db_query(
-                "SELECT * FROM itens_servico WHERE servico_id = ? ORDER BY ordem",
-                (sid,))
-            for i, it in enumerate(itens_servico):
+            itens = list(serv.get("itens") or [])
+            for i, it in enumerate(itens):
+                tipo = it.get("tipo") or "slide"
                 tipo_emoji = {"hino": "📖", "versiculo": "✝️", "video": "🎬",
                               "audio": "🎵", "slide": "📄", "anuncio": "📢",
-                              "sermao": "🎤"}.get(it['tipo'], "📁")
-                tree.insert("", tk.END, iid=str(it['id']),
-                            values=(i + 1, f"{tipo_emoji} {it['tipo'].title()}",
-                                    it['titulo_custom'] or f"Item {i+1}",
-                                    it['duracao_estimada_segundos']))
+                              "sermao": "🎤"}.get(tipo, "📁")
+                tree.insert("", tk.END, iid=str(it.get("id")),
+                            values=(i + 1, f"{tipo_emoji} {tipo.title()}",
+                                    it.get("titulo_custom") or f"Item {i+1}",
+                                    it.get("duracao_estimada_segundos") or 0))
 
         # ── Botões ──
         btn_frame = tk.Frame(main, bg='#0d1117')
@@ -7048,21 +8853,79 @@ class AppInterface:
                 nome = resultado[0]
             if not nome:
                 return
-            data = datetime.now().strftime("%Y-%m-%d")
-            db_execute(
-                "INSERT INTO servicos (nome, data_servico) VALUES (?, ?)",
-                (nome, data))
+            novo_id = dados["_proximo_id_servico"]
+            dados["servicos"].append({
+                "id": novo_id,
+                "nome": nome,
+                "data_servico": datetime.now().strftime("%Y-%m-%d"),
+                "criado_em": datetime.now().isoformat(timespec="seconds"),
+                "itens": [],
+            })
+            dados["_proximo_id_servico"] = novo_id + 1
+            if not _salvar_servicos_json(dados):
+                dados["servicos"] = [s for s in dados["servicos"]
+                                     if s.get("id") != novo_id]
+                dados["_proximo_id_servico"] = novo_id
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar em servicos.json.", parent=janela)
+                return
             _carregar_servicos()
+            _on_servico_select()
+
+        def _editar_servico():
+            serv = _servico_atual()
+            if not serv:
+                tkinter.messagebox.showwarning("Seleção", "Selecione um serviço.", parent=janela)
+                return
+            nome = (tkinter.simpledialog.askstring(
+                "Editar Serviço", "Nome do serviço:",
+                initialvalue=serv.get("nome", ""), parent=janela)
+                if hasattr(tkinter, 'simpledialog') else None)
+            if not nome:
+                return
+            nome = nome.strip()
+            if not nome:
+                return
+            serv["nome"] = nome
+            if not _salvar_servicos_json(dados):
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar em servicos.json.", parent=janela)
+                return
+            _carregar_servicos()
+            _on_servico_select()
+
+        def _excluir_servico():
+            serv = _servico_atual()
+            if not serv:
+                tkinter.messagebox.showwarning("Seleção", "Selecione um serviço.", parent=janela)
+                return
+            n_itens = len(list(serv.get("itens") or []))
+            if not tkinter.messagebox.askyesno(
+                    "Confirmar",
+                    f"Excluir o serviço '{serv.get('nome', '')}' "
+                    f"com {n_itens} item(ns)?", parent=janela):
+                return
+            sid = serv.get("id")
+            dados["servicos"] = [s for s in dados["servicos"] if s.get("id") != sid]
+            if not _salvar_servicos_json(dados):
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar a exclusão em servicos.json.",
+                    parent=janela)
+                return
+            servico_selecionado_id[0] = None
+            _carregar_servicos()
+            if combo_servico['values']:
+                _on_servico_select()
 
         def _adicionar_item_servico():
             sid = servico_selecionado_id[0]
             if not sid:
                 tkinter.messagebox.showwarning("Seleção", "Selecione ou crie um serviço.", parent=janela)
                 return
-            # Janela para adicionar item
+            # Janela para Ordem de Servm
             add_win = tk.Toplevel(janela)
             add_win.title("Adicionar Item")
-            add_win.geometry("450x300")
+            add_win.geometry("560x300")
             add_win.configure(bg='#0d1117')
             add_win.transient(janela)
             add_win.after(50, add_win.grab_set)
@@ -7101,15 +8964,13 @@ class AppInterface:
             dur_entry.insert(0, "0")
 
             def _salvar_item():
+                serv = _servico_atual()
+                if serv is None:
+                    return
                 tipo = tipo_var.get()
                 titulo = titulo_entry.get().strip() or f"Item ({tipo.title()})"
                 ref_id = int(ref_entry.get().strip()) if ref_entry.get().strip().isdigit() else None
                 duracao = int(dur_entry.get().strip()) if dur_entry.get().strip().isdigit() else 0
-                # Pega a maior ordem atual
-                max_ord = db_query(
-                    "SELECT COALESCE(MAX(ordem), 0) as maxo FROM itens_servico WHERE servico_id = ?",
-                    (sid,))
-                nova_ordem = (max_ord[0]['maxo'] if max_ord else 0) + 1
 
                 # Se hino ou versículo, busca a letra automaticamente
                 letra_snap = ""
@@ -7127,11 +8988,23 @@ class AppInterface:
                         if not titulo or titulo.startswith("Item"):
                             titulo = f"{r['livro']} {r['capitulo']}:{r['versiculo']}"
 
-                db_execute(
-                    "INSERT INTO itens_servico (servico_id, ordem, tipo, referencia_id, "
-                    "titulo_custom, letra_snapshot, duracao_estimada_segundos) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (sid, nova_ordem, tipo, ref_id, titulo, letra_snap, duracao))
+                novo_id = dados["_proximo_id_item"]
+                dados["_proximo_id_item"] = novo_id + 1
+                serv.setdefault("itens", []).append({
+                    "id": novo_id,
+                    "tipo": tipo,
+                    "referencia_id": ref_id,
+                    "titulo_custom": titulo,
+                    "letra_snapshot": letra_snap,
+                    "duracao_estimada_segundos": duracao,
+                })
+                if not _salvar_servicos_json(dados):
+                    serv["itens"] = [it for it in serv.get("itens")
+                                     if it.get("id") != novo_id]
+                    dados["_proximo_id_item"] = novo_id
+                    tkinter.messagebox.showwarning(
+                        "⚠️", "Não foi possível salvar em servicos.json.", parent=janela)
+                    return
                 _carregar_itens()
                 add_win.destroy()
 
@@ -7146,10 +9019,19 @@ class AppInterface:
                 tkinter.messagebox.showwarning("Seleção", "Selecione um item.", parent=janela)
                 return
             if not tkinter.messagebox.askyesno("Confirmar",
-                    f"Remover {len(sel)} item(s)?", parent=janela):
+                    f"Remover {len(sel)} item(ns)?", parent=janela):
                 return
-            for item_id in sel:
-                db_execute("DELETE FROM itens_servico WHERE id = ?", (int(item_id),))
+            serv = _servico_atual()
+            if not serv:
+                return
+            ids_remover = {int(i) for i in sel}
+            serv["itens"] = [it for it in serv.get("itens", [])
+                             if it.get("id") not in ids_remover]
+            if not _salvar_servicos_json(dados):
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar a remoção em servicos.json.",
+                    parent=janela)
+                return
             _carregar_itens()
 
         def _mover_item(direcao: int):
@@ -7157,54 +9039,58 @@ class AppInterface:
             sel = tree.selection()
             if not sel:
                 return
-            item_id = int(sel[0])
-            item_atual = db_query("SELECT * FROM itens_servico WHERE id = ?", (item_id,))
-            if not item_atual:
+            serv = _servico_atual()
+            if not serv:
                 return
-            item = item_atual[0]
-            nova_ordem = item['ordem'] + direcao
-            if nova_ordem < 1:
+            itens = list(serv.get("itens") or [])
+            idx_atual = next((i for i, it in enumerate(itens)
+                              if it.get("id") == int(sel[0])), None)
+            if idx_atual is None:
                 return
-            # Troca com o item que está na nova posição
-            vizinho = db_query(
-                "SELECT * FROM itens_servico WHERE servico_id = ? AND ordem = ?",
-                (item['servico_id'], nova_ordem))
-            if vizinho:
-                db_execute("UPDATE itens_servico SET ordem = ? WHERE id = ?",
-                           (nova_ordem, item_id))
-                db_execute("UPDATE itens_servico SET ordem = ? WHERE id = ?",
-                           (item['ordem'], vizinho[0]['id']))
+            idx_novo = idx_atual + direcao
+            if idx_novo < 0 or idx_novo >= len(itens):
+                return
+            itens[idx_atual], itens[idx_novo] = itens[idx_novo], itens[idx_atual]
+            serv["itens"] = itens
+            if not _salvar_servicos_json(dados):
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar a reordenação.", parent=janela)
+                return
             _carregar_itens()
+            tree.selection_set(str(itens[idx_novo].get("id")))
+            tree.focus(str(itens[idx_novo].get("id")))
 
         def _executar_servico():
             """Carrega os itens do serviço na playlist e toca o primeiro."""
-            sid = servico_selecionado_id[0]
-            if not sid:
+            serv = _servico_atual()
+            if not serv:
                 return
-            itens = db_query(
-                "SELECT * FROM itens_servico WHERE servico_id = ? ORDER BY ordem",
-                (sid,))
+            itens = list(serv.get("itens") or [])
             if not itens:
                 tkinter.messagebox.showinfo("Vazio", "Serviço sem itens.", parent=janela)
                 return
             # Coleta arquivos de mídia referenciados
             arquivos = []
             for it in itens:
-                if it['tipo'] in ('video', 'audio') and it['referencia_id']:
-                    rows_m = db_query(
-                        "SELECT caminho_arquivo FROM midia WHERE id = ? AND ativo = 1",
-                        (it['referencia_id'],))
-                    if rows_m and os.path.exists(rows_m[0]['caminho_arquivo']):
-                        arquivos.append(rows_m[0]['caminho_arquivo'])
+                if it.get('tipo') in ('video', 'audio') and it.get('referencia_id'):
+                    try:
+                        rows_m = db_query(
+                            "SELECT caminho_arquivo FROM midia WHERE id = ? AND ativo = 1",
+                            (it['referencia_id'],))
+                        if rows_m and os.path.exists(rows_m[0]['caminho_arquivo']):
+                            arquivos.append(rows_m[0]['caminho_arquivo'])
+                    except Exception:
+                        pass
             if arquivos:
                 self.arquivos_encontrados = arquivos
                 self.player.carregar_playlist(arquivos)
                 self.player.tocar_indice(0)
                 self.atualizar_lista()
             else:
-                # Se só hinos/versículos, exibe o primeiro item no telão
                 primeiro = itens[0]
-                texto = primeiro.get('letra_snapshot', '') or primeiro.get('titulo_custom', '')
+                texto = (primeiro.get('letra_snapshot') or '').strip()
+                if not texto:
+                    texto = (primeiro.get('titulo_custom') or '').strip()
                 if texto:
                     self.player.telao.projetar_texto(texto)
 
@@ -7212,7 +9098,15 @@ class AppInterface:
                   bg='#238636', fg='white', activebackground='#2ea043',
                   command=_novo_servico, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="➕ Adicionar Item", font=("Arial", 11, "bold"),
+        tk.Button(btn_frame, text="✏️ Editar Serviço", font=("Arial", 11, "bold"),
+                  bg='#1f6feb', fg='white', activebackground='#388bfd',
+                  command=_editar_servico, cursor='hand2', padx=12, pady=4
+                  ).pack(side='left', padx=3)
+        tk.Button(btn_frame, text="🗑️ Excluir Serviço", font=("Arial", 11, "bold"),
+                  bg='#da3633', fg='white', activebackground='#f85149',
+                  command=_excluir_servico, cursor='hand2', padx=12, pady=4
+                  ).pack(side='left', padx=3)
+        tk.Button(btn_frame, text="➕ Ordem de m", font=("Arial", 11, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
                   command=_adicionar_item_servico, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
@@ -7291,6 +9185,8 @@ class AppInterface:
                 # (quando vídeo está tocando, telão está oculto)
                 if self.player.telao.mostrando_relogio:
                     self.player.telao.update()
+            # Mantém o tema (claro/escuro) aplicado a janelas abertas depois
+            self._varrer_toplevels_tema()
             self.root.after(500, _update_telao_lazy)
 
         _update_telao_lazy()
