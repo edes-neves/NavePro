@@ -18,8 +18,10 @@
     <ul>
       <li>Hinos com CRUD, importação XML/TXT (OpenLyrics) e projeção por slides</li>
       <li>Bíblia com importação XML (Zefania), TXT e JSON (4 formatos)</li>
-      <li>Anúncios com importação TXT/PDF</li>
-      <li>Ordem de Serviço e Gerenciador de Mídia</li>
+      <li>Anúncios com importação TXT/PDF e editor de imagem + texto</li>
+      <li>Redimensionamento ao vivo da imagem e da fonte no telão</li>
+      <li>Ordem de Serviço (JSON) e Gerenciador de Mídia</li>
+      <li>Tema claro/escuro no painel do administrador</li>
       <li>Atualização automática via GitHub Releases</li>
     </ul>
   </description>

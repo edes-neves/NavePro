@@ -12,9 +12,10 @@ Desenvolvido para Ubuntu (Python 3 + Tkinter), empacotado como AppImage.
 |---|---|
 | **Projeção** | Exibe letras, versículos e mídias no monitor 2 (telão), com configuração de fonte, cor e tamanho. |
 | **📖 Hinos / Letras** | CRUD de hinos (artista, CCLI, categoria, letra completa), importação XML/TXT, busca, projeção com navegação por slides. |
-| **📢 Anúncios** | Mesma cara da janela de Hinos, mas **fora do banco de dados**: salva em `~/.navepro/anuncios.json`, importa **TXT/PDF**, cria/edita/exclui e projeta do mesmo jeito. O Excluir remove o anúncio do arquivo JSON. |
+| **📢 Anúncios** | CRUD na tabela `anuncios` do SQLite (com migração automática do `anuncios.json` legado), importação de **TXT/PDF/vídeo/áudio/imagem** (mídias copiadas para `~/.navepro/uploads`) e projeção com **editor de imagem + texto**. |
 | **✝️ Bíblia** | Importação de bíblias em XML/TXT/JSON, seleção de versão/livro/capítulo/versículo, busca por texto e projeção sincronizada com o telão. |
-| **📋 Ordem de Serviço** | Montagem de roteiros de culto com itens (hinos, mídias), com letras em snapshot e tempo estimado. |
+| **📋 Ordem de Serviço** | Montagem de roteiros de culto com itens (hinos, mídias), com letras em snapshot e tempo estimado; salva em `~/.navepro/servicos.json` (migração automática do banco legado). |
+| **🎨 Tema claro/escuro** | Painel do administrador (monitor 1) alterna entre tema claro e escuro — menu **Visualizar** ou atalho **Ctrl+T**; o telão não é afetado. |
 | **📦 Gerenciar Banco de Mídia** | Organização das mídias utilizadas nas apresentações. |
 | **🎨 Projeção (config)** | Mesmo diálogo de ajustes de aparência usado por Hinos e Bíblia. |
 | **🔄 Atualização automática** | Verifica versões novas no GitHub (Releases) e baixa o novo AppImage para `~/Downloads` com instruções de instalação. |
@@ -136,6 +137,27 @@ Particularidades tratadas:
 
 ---
 
+## Janela Anúncios
+
+- **Banco de dados**: os anúncios ficam na tabela `anuncios` do `~/.navepro/midia.db`. O `anuncios.json` legado é importado **uma única vez** (migração automática); os IDs são reaproveitados quando o anúncio é excluído.
+- **Tipos de anúncio**: `slide` (texto), `imagem` (pode ter texto por cima), `vídeo`/`áudio` (tocam no player).
+- **📥 Importar Mídia**: TXT/PDF viram anúncios de texto; vídeo/áudio/imagem são copiados para `~/.navepro/uploads` e registrados no banco.
+- **📺 Projetar**:
+  - Anúncio de texto → slides em **MAIÚSCULAS** (slide 0 = título), navegação ◀/▶.
+  - Anúncio com imagem **e** texto → compõe a imagem sobre o texto e projeta como uma única imagem.
+  - Anúncio só com imagem → projeta a imagem pura.
+  - Anúncio de vídeo/áudio → toca no player (com opção de repetir).
+- No painel **🎬 Controle da Projeção**: **A−/A+** ajusta a fonte do texto e **🖼️ Imagem: −/+** redimensiona a imagem ao vivo, sem parar a projeção.
+
+### Editor de anúncio (imagem + texto)
+
+- **Novo Anúncio / Editar Anúncio** abre um editor com **pré-visualização unificada**: o texto digitado é desenhado na base e a imagem é ajustada por cima, no mesmo canvas, com **arrastar para mover** e **alças para redimensionar**.
+- O espaço de edição usa um plano virtual de **1440×1080**, independente da resolução do telão; ao salvar, a posição/tamanho da imagem (`w/h/x/y`) fica em `config_midia`.
+- Configurações antigas (formato 320×250, sem posição) são **migradas automaticamente**: a imagem é redimensionada e reposicionada à direita, centralizada verticalmente.
+- A projeção compõe a imagem + texto na proporção do telão, mantendo exatamente a posição ajustada no editor.
+
+---
+
 ## Banco de dados
 
 Localização: **`~/.navepro/midia.db`** (SQLite).
@@ -146,11 +168,13 @@ Tabelas principais:
 |---|---|
 | `letras` | Hinos: `id`, `titulo`, `artista`, `compositor`, `ccli_numero`, `categoria`, `idioma`, `letra_completa`, `ativo` |
 | `versiculos` | Bíblia: `id`, `versao`, `livro`, `capitulo`, `versiculo`, `texto` |
+| `anuncios` | Anúncios: `id`, `titulo`, `categoria`, `texto`, `tipo_midia`, `arquivo_midia`, `nome_arquivo_midia`, `config_midia`, `ativo` |
 | `midia` | Mídias do acervo (com FTS em `midia_fts` para busca) |
-| `servicos` / `itens_servico` | Ordem de Serviço: itens com `letra_snapshot` (cópia da letra) e `referencia_id` |
 
 Notas:
-- A exclusão de hinos é **física**; não há chave estrangeira para `letras.id` (a Ordem de Serviço guarda cópia da letra).
+- A exclusão de hinos é **física**; não há chave estrangeira para `letras.id`. Por isso os IDs de `letras`/`versiculos` são **reaproveitados** (preenchimento das lacunas) — exceto os IDs ainda referenciados por itens de ordem de serviço, que ficam preservados; a Ordem de Serviço guarda também a cópia da letra (snapshot).
+- A **Ordem de Serviço** migrou do banco para **`~/.navepro/servicos.json`** (migração automática na primeira execução). As tabelas legadas `servicos`/`itens_servico` só existem para migração.
+- O `anuncios.json` legado de anúncios é migrado **uma vez** para a tabela `anuncios` e deixa de ser usado.
 - SQLite não suporta `COUNT(DISTINCT a, b)` — contagens compostas usam concatenação.
 
 ---
@@ -247,13 +271,23 @@ biblia-em-txt.txt     # Bíblia Almeida Revista e Corrigida (TXT)
 NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista
 HASD/                 # Hinário (OpenLyrics XML)
 AppDir/               # Estrutura do AppImage (AppRun, .desktop, ícones)
-flatpak/              # Manifesto Flatpak + .desktop + metainfo + wrapper
+flatpak/              # Manifesto Flatpak + .desktop + metainfo + wrapper + repositório
 .github/workflows/    # CI/CD: build Flatpak multi-arquitetura (x86_64 + aarch64)
 img/, Icon*.ico/png/xbm  # Ícones do app
 .gitignore            # Arquivos locais/artefatos de build ignorados
 ```
 
 ---
+
+## Dados locais (`~/.navepro/`)
+
+| Arquivo/pasta | Conteúdo |
+|---|---|
+| `midia.db` | Banco SQLite: hinos, versículos, anúncios e mídias |
+| `servicos.json` | Ordens de Serviço (após migração) |
+| `anuncios.json` | Legado — migrado uma vez para `midia.db` e não é mais lido |
+| `uploads/` | Cópias das mídias importadas nos anúncios |
+| `config.json` | Configuração local (cidade/estado, monitor do telão, player) — ignorado do git |
 
 ## Ajustes comuns
 
@@ -264,6 +298,12 @@ img/, Icon*.ico/png/xbm  # Ícones do app
 
 ## Histórico recente
 
+- **Anúncios no banco de dados**: tabela `anuncios` no SQLite, com migração automática do `anuncios.json` legado e reaproveitamento de IDs livres.
+- **Ordem de Serviço em `servicos.json`**: migração automática do banco legado; IDs de hinos/versículos referenciados ficam preservados da reutilização.
+- **Editor de anúncio unificado (imagem + texto)**: pré-visualização em espaço virtual 1440×1080, mover/redimensionar a imagem sobre o texto, migração de configurações antigas.
+- **Redimensionamento ao vivo da imagem no telão**: botões **🖼️ Imagem: −/+** no painel da projeção, além do **A−/A+** da fonte — sem interromper o que está projetado.
+- **Tema claro/escuro** no painel do administrador (menu Visualizar ou **Ctrl+T**), sem alterar as cores do telão.
+- **Modo Repetir** para mídias do player (menu Visualizar).
 - **Atualização automática** via GitHub Releases com download para `~/Downloads` e instruções de instalação.
 - Importação de Bíblia em **XML/TXT** com normalização de livros (acentos/apelidos).
 - Importação de Bíblia em **JSON** (4 formatos, suporte a BOM UTF-8).
