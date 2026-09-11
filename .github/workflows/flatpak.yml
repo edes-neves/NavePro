@@ -10,6 +10,9 @@ jobs:
   build:
     name: Flatpak ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
     strategy:
       fail-fast: false
       matrix:
@@ -19,10 +22,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Docker é exigido pelo docker/setup-qemu-action (instala o binfmt para
+      # emular aarch64 dentro do container privilegiado).
+      - name: Instalar Docker (aarch64)
+        if: matrix.arch != 'x86_64'
+        run: |
+          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
+          tar xzvf docker.tgz
+          mv docker/* /usr/bin
+
       # Registra binfmt para rodar binários aarch64 no runner x86_64
       - name: Set up QEMU (${{ matrix.arch }})
         if: matrix.arch != 'x86_64'
+        id: qemu
         uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
@@ -69,6 +84,9 @@ jobs:
     name: Publicar repositório Flatpak (gh-pages)
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
     permissions:
       contents: write
 
