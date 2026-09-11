@@ -28,7 +28,7 @@ jobs:
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           arch: ${{ matrix.arch }}
-          manifest: flatpak/io.github.edesneves.NavePro.yaml
+          manifest-path: flatpak/io.github.edesneves.NavePro.yaml
           cache: true
           cache-key: flatpak-${{ matrix.arch }}
           build-bundle: true
@@ -78,12 +78,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Instalar Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-install@v6
-        with:
-          arch: x86_64
-          flatpak: flatpak
-
       # A branch gh-pages É o repositório ostree público (config/objects/refs/summary).
       # Constrói-se dentro dela para acumular commits do histórico (delta-only).
       - name: Baixar repositório publicado (gh-pages)
@@ -96,7 +90,7 @@ jobs:
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           arch: x86_64
-          manifest: flatpak/io.github.edesneves.NavePro.yaml
+          manifest-path: flatpak/io.github.edesneves.NavePro.yaml
           repo-dir: pages
           build-bundle: false
           upload-artifact: false
