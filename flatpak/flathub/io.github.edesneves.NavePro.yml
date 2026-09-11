@@ -83,8 +83,8 @@ modules:
     build-commands:
       - install -Dm755 navepro.sh /app/bin/navepro
       - install -Dm755 smplayer-host /app/bin/smplayer
-      - install -Dm644 NavePro.py config.json AS21.xml biblia-em-txt.txt -t /app/lib/navepro/
-      - install -Dm644 Icon.png Icon.xbm midia.db -t /app/lib/navepro/
+      - install -Dm644 NavePro.py AS21.xml biblia-em-txt.txt -t /app/lib/navepro/
+      - install -Dm644 Icon.png Icon.xbm -t /app/lib/navepro/
       # Sem icones/: os botões usam emojis coloridos (runtime traz NotoColorEmoji).
       - cp -r NHA HASD /app/lib/navepro/
       - install -Dm644 io.github.edesneves.NavePro.desktop -t /app/share/applications/
@@ -98,7 +98,7 @@ modules:
       - type: git
         url: https://github.com/edes-neves/NavePro.git
         # Atualize a tag ao lançar nova versão:
-        tag: v1.9.1
+        tag: v1.9.3
       - type: file
         path: io.github.edesneves.NavePro.desktop
       - type: file
