@@ -67,6 +67,16 @@ def _ambiente_sem_appimage() -> dict[str, str]:
     return env
 
 
+def _eh_windows() -> bool:
+    """True se estivermos rodando no Windows."""
+    return sys.platform.startswith('win')
+
+
+def _eh_linux() -> bool:
+    """True se estivermos rodando no Linux."""
+    return sys.platform.startswith('linux')
+
+
 # ────────────────────────────────────────────────────────────────────
 # CONTEXTO SSL USANDO OS CERTIFICADOS DO SISTEMA
 # ────────────────────────────────────────────────────────────────────
@@ -149,7 +159,7 @@ def _baixar(url, timeout: int = 8, **kwargs):
 
 APP_VERSION: str = "1.9.4"
 CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
-PLAYER_PADRAO: str = "smplayer"
+PLAYER_PADRAO: str = "mpv" if _eh_windows() else "smplayer"
 BACKEND_PORT: int = 5897
 BACKEND_URL: str = f"http://127.0.0.1:{BACKEND_PORT}"
 
@@ -289,6 +299,21 @@ def _caminho_recurso(nome: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), nome)
 
 
+def _aplicar_icone_janela(janela) -> None:
+    """Define o ícone da janela: XBM no Linux, ICO no Windows."""
+    try:
+        if _eh_windows():
+            ico = _caminho_recurso("Icon.ico")
+            if os.path.exists(ico):
+                janela.wm_iconbitmap(ico)
+        else:
+            xbm = _caminho_recurso("Icon.xbm")
+            if os.path.exists(xbm):
+                janela.wm_iconbitmap("@" + xbm)
+    except Exception:
+        pass
+
+
 def _obter_dados_usuario() -> str:
     """Diretório persistente do usuário (~/.navepro)."""
     data_dir = os.path.join(os.path.expanduser("~"), ".navepro")
@@ -355,11 +380,15 @@ def _buscar_release_latest(timeout: int = 10) -> Optional[dict]:
         return None
 
 
-def _procurar_asset_appimage(release: dict) -> Optional[dict]:
-    """Encontra o primeiro asset .AppImage do release."""
+def _procurar_asset_instalador(release: dict) -> Optional[dict]:
+    """Encontra o instalador da plataforma atual.
+
+    Windows procura o primeiro asset '.exe'; Linux o primeiro '.AppImage'.
+    """
+    sufixo = ".exe" if _eh_windows() else ".appimage"
     for asset in release.get('assets', []) or []:
         nome = str(asset.get('name', '')).lower()
-        if nome.endswith('.appimage'):
+        if nome.endswith(sufixo):
             return asset
     return None
 
@@ -1646,32 +1675,34 @@ def get_monitors_config() -> List[MonitorInfo]:
     # Método 2: xrandr (Linux X11) - geometria REAL dos monitores,
     # evita o palpite de metades iguais quando há telões com resoluções
     # diferentes (ex.: 1920x1080 + 1280x720).
-    try:
-        result = subprocess.run(
-            ['xrandr'], capture_output=True, text=True, timeout=5,
-            env=_ambiente_sem_appimage()
-        )
-        connected: list[MonitorInfo] = []
-        for line in result.stdout.split('\n'):
-            if ' connected' in line and '+' in line:
-                parts = line.split()
-                for p in parts:
-                    if 'x' in p and '+' in p:
-                        size_pos = p.split('+')
-                        if len(size_pos) >= 3:
-                            size = size_pos[0].split('x')
-                            x, y = int(size_pos[1]), int(size_pos[2])
-                            w, h = int(size[0]), int(size[1])
-                            connected.append(
-                                MonitorInfo(x, y, w, h, parts[0])
-                            )
-                        break
-        if connected:
-            _MONITORS_CACHE = (time.time(), connected)
-            print(f"✅ xrandr: {len(connected)} monitor(es) detectado(s)")
-            return connected
-    except Exception as e:
-        print(f"⚠️ xrandr: {e}")
+    # No Windows nenhuma dessas ferramentas existe — o screeninfo/cTk dão conta.
+    if _eh_linux():
+        try:
+            result = subprocess.run(
+                ['xrandr'], capture_output=True, text=True, timeout=5,
+                env=_ambiente_sem_appimage()
+            )
+            connected: list[MonitorInfo] = []
+            for line in result.stdout.split('\n'):
+                if ' connected' in line and '+' in line:
+                    parts = line.split()
+                    for p in parts:
+                        if 'x' in p and '+' in p:
+                            size_pos = p.split('+')
+                            if len(size_pos) >= 3:
+                                size = size_pos[0].split('x')
+                                x, y = int(size_pos[1]), int(size_pos[2])
+                                w, h = int(size[0]), int(size[1])
+                                connected.append(
+                                    MonitorInfo(x, y, w, h, parts[0])
+                                )
+                            break
+            if connected:
+                _MONITORS_CACHE = (time.time(), connected)
+                print(f"✅ xrandr: {len(connected)} monitor(es) detectado(s)")
+                return connected
+        except Exception as e:
+            print(f"⚠️ xrandr: {e}")
 
     # Método 3: tkinter + heurística de largura (apenas último recurso)
     try:
@@ -1749,12 +1780,7 @@ class TelaoWindow:
         self.root = tk.Tk(className="NavePro")
         self.root.title("TELÃO")
         _normalizar_escala_tk(self.root)
-        try:
-            icon_path = _caminho_recurso("Icon.xbm")
-            if os.path.exists(icon_path):
-                self.root.wm_iconbitmap("@" + icon_path)
-        except Exception:
-            pass
+        _aplicar_icone_janela(self.root)
 
         monitors = get_monitors_config()
         print(f"🖥️ Monitores detectados: {len(monitors)}")
@@ -3182,6 +3208,25 @@ class MediaPlayer:
         pid = proc.pid
         print(f"🛑 Encerrando processo {pid} (grupo)...")
 
+        if _eh_windows():
+            # Windows: não existem grupos de processo nem os sinais POSIX.
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+            return
+
         try:
             pgid = os.getpgid(pid)
             # SIGTERM no grupo inteiro (mata smplayer + mplayer filho)
@@ -3256,8 +3301,13 @@ class MediaPlayer:
             cmd = self._montar_comando_player(arquivo, mx, my, mw, mh)
 
             print(f"🎬 Executando: {' '.join(cmd)}")
+            creationflags = 0
+            if _eh_windows():
+                # Não deixa a janela de console "piscar" ao lançar o player.
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             proc = subprocess.Popen(
-                cmd, start_new_session=True, env=_ambiente_sem_appimage()
+                cmd, start_new_session=True, env=_ambiente_sem_appimage(),
+                creationflags=creationflags
             )
 
             with self._process_lock:
@@ -3292,7 +3342,10 @@ class MediaPlayer:
                     player = alt
                     break
             else:
-                print("   \u274c Nenhum player encontrado! Usando xdg-open")
+                print("   \u274c Nenhum player encontrado! "
+                      "Usando o aplicativo padrão")
+                if _eh_windows():
+                    return ['cmd', '/c', 'start', '', arquivo]
                 return ['xdg-open', arquivo]
 
         if player == "smplayer":
@@ -3317,6 +3370,9 @@ class MediaPlayer:
                 arquivo,
             ]
         else:
+            if _eh_windows():
+                # Abre com o aplicativo padrão do Windows (sem console).
+                return ['cmd', '/c', 'start', '', arquivo]
             return ['xdg-open', arquivo]
 
     @staticmethod
@@ -3337,7 +3393,14 @@ class MediaPlayer:
         return False
 
     def _pausar_player(self) -> bool:
-        """Pausa/continua via D-Bus ou SIGSTOP/SIGCONT (fallback)."""
+        """Pausa/continua o player externo.
+
+        No Linux usa D-Bus (MPRIS) ou SIGSTOP/SIGCONT (fallback). No Windows
+        não há esses mecanismos; o app apenas deixa o player seguir e o estado
+        interno acompanha (o tempo decorrido continua correndo).
+        """
+        if not _eh_linux():
+            return False
         # Tenta D-Bus com o player ativo primeiro (evita loop em ambos)
         dest = self._MPRIS_DESTS.get(self.player_cmd)
         if dest:
@@ -3387,7 +3450,8 @@ class MediaPlayer:
 
     def sincronizar_tempo_dbus(self, player: str = "") -> None:
         """Sincroniza o tempo via D-Bus (SMPlayer ou VLC). Uma única chamada unificada."""
-        if not self.is_playing:
+        # Sem D-Bus no Windows: o tempo decorrido é acompanhado localmente.
+        if not _eh_linux() or not self.is_playing:
             return
 
         dest = player or self.player_cmd
@@ -3750,10 +3814,18 @@ def _carregar_fonte_pil(tamanho: int):
         from PIL import ImageFont
     except Exception:
         return None
-    candidatos = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]
+    if _eh_windows():
+        candidatos = [
+            os.path.join(os.environ.get('WINDIR', 'C:/Windows'),
+                         'Fonts', 'arialbd.ttf'),
+            os.path.join(os.environ.get('WINDIR', 'C:/Windows'),
+                         'Fonts', 'arial.ttf'),
+        ]
+    else:
+        candidatos = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
     for p in candidatos:
         if os.path.exists(p):
             try:
@@ -4244,12 +4316,7 @@ class AppInterface:
         self.root.option_add('*TCombobox*Listbox.background', '#21262d')
         self.root.option_add('*TCombobox*Listbox.foreground', '#c9d1d9')
         self.root.title("NAVE PRO - PRO")
-        try:
-            icon_path = _caminho_recurso("Icon.xbm")
-            if os.path.exists(icon_path):
-                self.root.wm_iconbitmap("@" + icon_path)
-        except Exception:
-            pass
+        _aplicar_icone_janela(self.root)
         self.root.configure(bg='#0d1117')
         # Tamanho mínimo e estado inicial maximizado
         self.root.minsize(900, 800)
@@ -5408,32 +5475,33 @@ class AppInterface:
         corpo = str(release.get('body') or '').strip()
         if len(corpo) > 400:
             corpo = corpo[:400].rstrip() + '…'
+        sufixo = ".exe" if _eh_windows() else ".AppImage"
         mensagem = (
             f"NavePro {APP_VERSION} → {versao}\n\n"
             "Uma nova versão está disponível no GitHub.\n"
         )
         if corpo:
             mensagem += f"\nNovidades:\n{corpo}\n"
-        mensagem += "\nDeseja baixar o novo AppImage agora?"
+        mensagem += f"\nDeseja baixar o novo {sufixo} agora?"
         if not tkinter.messagebox.askyesno(
                 "🔄 Atualização disponível", mensagem, parent=self.root):
             return
-        asset = _procurar_asset_appimage(release)
+        asset = _procurar_asset_instalador(release)
         if asset is None:
             tkinter.messagebox.showwarning(
                 "Atualização",
-                "O release não contém um arquivo .AppImage.",
+                f"O release não contém um arquivo {sufixo}.",
                 parent=self.root)
             return
         self._baixar_atualizacao(
             versao,
             str(asset.get('browser_download_url', '')),
-            str(asset.get('name', f'NavePro-{versao}.AppImage')),
+            str(asset.get('name', f'NavePro-{versao}{sufixo}')),
         )
 
     def _baixar_atualizacao(self, versao: str, url: str,
                             nome_arquivo: str) -> None:
-        """Baixa o novo AppImage para ~/Downloads com barra de progresso."""
+        """Baixa o novo instalador para ~/Downloads com barra de progresso."""
         destino = os.path.join(_pasta_downloads(), nome_arquivo)
 
         janela = tk.Toplevel(self.root)
@@ -5484,8 +5552,9 @@ class AppInterface:
                                     0, lambda p=pct, b=baixado, t=total:
                                     _atualizar_progresso(p, b, t))
                     os.replace(temporario, destino)
-                    os.chmod(destino, 0o744)
-                    self.root.after(0, lambda: self._instrucoes_troca_appimage(
+                    if not _eh_windows():
+                        os.chmod(destino, 0o744)
+                    self.root.after(0, lambda: self._instrucoes_troca_instalador(
                         destino))
             except Exception as e:
                 print(f"⚠️  Erro ao baixar atualização: {e}")
@@ -5499,25 +5568,41 @@ class AppInterface:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _instrucoes_troca_appimage(self, destino: str) -> None:
-        """Mostra como substituir o AppImage antigo pelo baixado e abre Downloads."""
-        tkinter.messagebox.showinfo(
-            "✅ Download concluído",
-            "O novo AppImage foi salvo em:\n\n"
-            f"  {destino}\n\n"
-            "Para instalar:\n"
-            "1. Feche o NavePro.\n"
-            "2. Substitua o AppImage atual por este novo arquivo "
-            "(mova-o para o mesmo lugar do antigo).\n"
-            "3. Dê permissão de execução se precisar:\n"
-            "     chmod +x \"<novo arquivo>\"\n"
-            "4. Abra o novo arquivo para rodar a versão atualizada.",
-            parent=self.root)
+    def _instrucoes_troca_instalador(self, destino: str) -> None:
+        """Mostra como substituir o instalador antigo pelo baixado e abre Downloads."""
+        if _eh_windows():
+            msg = (
+                "O novo executável foi salvo em:\n\n"
+                f"  {destino}\n\n"
+                "Para instalar:\n"
+                "1. Feche o NavePro.\n"
+                "2. Substitua o arquivo atual por este novo "
+                "(mova-o para o mesmo lugar do antigo).\n"
+                "3. Abra o novo arquivo para rodar a versão atualizada.\n\n"
+                "Dica: o NavePro é portátil — basta copiar o .exe novo."
+            )
+        else:
+            msg = (
+                "O novo AppImage foi salvo em:\n\n"
+                f"  {destino}\n\n"
+                "Para instalar:\n"
+                "1. Feche o NavePro.\n"
+                "2. Substitua o AppImage atual por este novo arquivo "
+                "(mova-o para o mesmo lugar do antigo).\n"
+                "3. Dê permissão de execução se precisar:\n"
+                "     chmod +x \"<novo arquivo>\"\n"
+                "4. Abra o novo arquivo para rodar a versão atualizada."
+            )
+        tkinter.messagebox.showinfo("✅ Download concluído", msg,
+                                    parent=self.root)
         try:
-            subprocess.Popen(['xdg-open', _pasta_downloads()],
-                             stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
+            if _eh_windows():
+                os.startfile(_pasta_downloads())
+            else:
+                subprocess.Popen(['xdg-open', _pasta_downloads()],
+                                 stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
         except Exception:
             pass
 
