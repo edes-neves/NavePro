@@ -147,7 +147,7 @@ def _baixar(url, timeout: int = 8, **kwargs):
 # CONSTANTES
 # ────────────────────────────────────────────────────────────────────
 
-APP_VERSION: str = "1.9.3"
+APP_VERSION: str = "1.9.4"
 CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
 PLAYER_PADRAO: str = "smplayer"
 BACKEND_PORT: int = 5897
@@ -1784,7 +1784,11 @@ class TelaoWindow:
             "fator_temp": 1.0,
             "espacamento": 1.0,
             "fundo_opaco": False,
+            "fundo_imagem": "",
         }
+        self._fundo_relogio_item = None
+        self._fundo_relogio_to_tk = None
+        self._fundo_relogio_caminho = ""
 
         self.root.geometry(geometry)
         self.root.configure(bg='black')
@@ -1849,10 +1853,15 @@ class TelaoWindow:
         self.mostrando_letra = False
         self._em_slides = False
         self._mostrando_imagem = False
+        self._mostrando_imagem_com_texto = False
         self._imagem_item = None
+        self._imagem_rect_base = None
         self._imagem_pil = None
         self._imagem_orig_pil = None
         self._imagem_escala = 1.0
+        self._texto_box = (0, 0, 100, 100)
+        self._texto_escala = 1.0
+        self._texto_largura_base = None
         self._slides: list = []
         self._slide_index = 0
         self._proj_cfg: dict = {
@@ -1861,7 +1870,13 @@ class TelaoWindow:
             "cor": "#FFFFFF",
             "duracao_seg": 30,
             "cor_ref": "#A0A0A0",
+            "cor_fundo": "#000000",
+            "fundo_opaco": True,
+            "fundo_imagem": "",
         }
+        self._fundo_imagem_item = None
+        self._fundo_imagem_to_tk = None
+        self._fundo_imagem_caminho = ""
         self._proj_timer = None
         self._temp_salvo = ""
         self.root.protocol("WM_DELETE_WINDOW", self.fechar)
@@ -2100,6 +2115,9 @@ class TelaoWindow:
             "cor": "#FFFFFF",
             "duracao_seg": 30,
             "cor_ref": "#A0A0A0",
+            "cor_fundo": "#000000",
+            "fundo_opaco": True,
+            "fundo_imagem": "",
         }
         merged = dict(defaults)
         if isinstance(cfg, dict):
@@ -2107,6 +2125,83 @@ class TelaoWindow:
                 if k in defaults and v not in (None, ""):
                     merged[k] = v
         self._proj_cfg = merged
+
+    def _alpha_projecao(self) -> float:
+        """Alpha do telão durante uma projeção (opaco por padrão).
+
+        Padrão histórico do NavePro: projeções são opacas (alpha 1.0).
+        Se o operador desmarcar "Fundo opaco" na Aparência da Projeção,
+        aplica a mesma transparência do modo relógio (0.55).
+        """
+        if not getattr(self, "_proj_cfg", {}).get("fundo_opaco", True):
+            return 0.55
+        return 1.0
+
+    def _aplicar_fundo_projecao(self) -> None:
+        """Aplica a cor de fundo ou a imagem de fundo configurada no telão.
+
+        A imagem de fundo (se definida) vira um item de canvas posicionado
+        abaixo de TODO o conteúdo projetado (tag_lower); sem imagem, aplica
+        apenas a cor de fundo. Não afeta o modo relógio: ao retornar para o
+        relógio, _retornar_ao_relogio limpa o item de imagem de fundo.
+        """
+        # Durante a projeção, some com a imagem de fundo do relógio para ela
+        # não aparecer por trás (cada modo gerencia seu próprio fundo).
+        if getattr(self, "_fundo_relogio_item", None) is not None:
+            try:
+                self.canvas.delete(self._fundo_relogio_item)
+            except tk.TclError:
+                pass
+            self._fundo_relogio_item = None
+            self._fundo_relogio_to_tk = None
+            self._fundo_relogio_caminho = ""
+        cfg = getattr(self, "_proj_cfg", {})
+        cor_fundo = cfg.get("cor_fundo", "#000000")
+        caminho = (cfg.get("fundo_imagem") or "").strip()
+        atual = getattr(self, "_fundo_imagem_caminho", "")
+        if caminho == atual and getattr(self, "_fundo_imagem_item", None) is not None:
+            return
+        # Remove o item de fundo anterior (se houver)
+        if getattr(self, "_fundo_imagem_item", None) is not None:
+            try:
+                self.canvas.delete(self._fundo_imagem_item)
+            except tk.TclError:
+                pass
+            self._fundo_imagem_item = None
+        self._fundo_imagem_to_tk = None
+        self._fundo_imagem_caminho = caminho
+        ext_ok = caminho.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"))
+        if caminho and os.path.exists(caminho) and ext_ok:
+            try:
+                from PIL import Image, ImageTk
+                with Image.open(caminho) as img:
+                    img_fundo = img.convert("RGB")
+                w = self.canvas.winfo_width() or self._monitor.width
+                h = self.canvas.winfo_height() or self._monitor.height
+                if w < 1 or h < 1:
+                    w, h = self._monitor.width, self._monitor.height
+                redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
+                img_fundo = img_fundo.resize((w, h), redimensao)
+                self._fundo_imagem_to_tk = ImageTk.PhotoImage(
+                    img_fundo, master=self.root)
+                self._fundo_imagem_item = self.canvas.create_image(
+                    w // 2, h // 2, image=self._fundo_imagem_to_tk,
+                    anchor="center", tags=("fundo_imagem",))
+                try:
+                    self.canvas.tag_lower(self._fundo_imagem_item)
+                except tk.TclError:
+                    pass
+                self.canvas.configure(bg=cor_fundo)
+            except Exception as e:
+                print(f"⚠️ Não foi possível exibir a imagem de fundo: {e}")
+                self._fundo_imagem_item = None
+                self.canvas.configure(bg=cor_fundo)
+        else:
+            self.root.configure(bg=cor_fundo)
+            self.main_frame.configure(bg=cor_fundo)
+            self.canvas.configure(bg=cor_fundo)
+        self.root.update_idletasks()
 
     def configurar_relogio(self, cfg: Optional[dict] = None) -> None:
         """Define a configuração de aparência do relógio/temperatura no telão."""
@@ -2118,6 +2213,7 @@ class TelaoWindow:
             "fator_temp": 1.0,
             "espacamento": 1.0,
             "fundo_opaco": False,
+            "fundo_imagem": "",
         }
         merged = dict(defaults)
         if isinstance(cfg, dict):
@@ -2153,6 +2249,46 @@ class TelaoWindow:
         cor_fundo = cfg.get("cor_fundo", "#000000")
         self.canvas.itemconfig(self.overlay_text, fill=cor_hora)
         self.canvas.itemconfig(self.temp_text, fill=cor_temp)
+        # Imagem de fundo do relógio (opcional): vira item de canvas abaixo
+        # do texto. Sem imagem, aplica apenas a cor de fundo.
+        caminho = (cfg.get("fundo_imagem") or "").strip()
+        caminho_atual = getattr(self, "_fundo_relogio_caminho", "")
+        item_atual = getattr(self, "_fundo_relogio_item", None)
+        if caminho != caminho_atual or item_atual is None:
+            if item_atual is not None:
+                try:
+                    self.canvas.delete(item_atual)
+                except tk.TclError:
+                    pass
+                self._fundo_relogio_item = None
+            self._fundo_relogio_to_tk = None
+            self._fundo_relogio_caminho = caminho
+            ext_ok = caminho.lower().endswith(
+                (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"))
+            if caminho and os.path.exists(caminho) and ext_ok:
+                try:
+                    from PIL import Image, ImageTk
+                    with Image.open(caminho) as img:
+                        img_fundo = img.convert("RGB")
+                    w = self.canvas.winfo_width() or self._monitor.width
+                    h = self.canvas.winfo_height() or self._monitor.height
+                    if w < 1 or h < 1:
+                        w, h = self._monitor.width, self._monitor.height
+                    redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
+                    img_fundo = img_fundo.resize((w, h), redimensao)
+                    self._fundo_relogio_to_tk = ImageTk.PhotoImage(
+                        img_fundo, master=self.root)
+                    self._fundo_relogio_item = self.canvas.create_image(
+                        w // 2, h // 2, image=self._fundo_relogio_to_tk,
+                        anchor="center", tags=("fundo_relogio",))
+                    try:
+                        self.canvas.tag_lower(self._fundo_relogio_item)
+                    except tk.TclError:
+                        pass
+                except Exception as e:
+                    print(f"⚠️ Não foi possível exibir a imagem de fundo do relógio: {e}")
+                    self._fundo_relogio_item = None
+                    self._fundo_relogio_caminho = ""
         self.root.configure(bg=cor_fundo)
         self.main_frame.configure(bg=cor_fundo)
         self.canvas.configure(bg=cor_fundo)
@@ -2181,17 +2317,22 @@ class TelaoWindow:
         # Guarda a temperatura exibida para restaurar depois
         self._temp_salvo = self._current_temp
 
+        # Remove qualquer imagem de uma projeção anterior
+        self._limpar_camada_imagem()
+
         self.mostrando_letra = True
         self._em_slides = False
         self.mostrando_relogio = False
 
-        # Exibe a janela e opaca
+        # Exibe a janela e aplica o fundo/opacidade configurados
         if not self._is_visible:
             self.root.deiconify()
             self._is_visible = True
-        if self._current_alpha != 1.0:
-            self.root.attributes('-alpha', 1.0)
-            self._current_alpha = 1.0
+        alpha = self._alpha_projecao()
+        if self._current_alpha != alpha:
+            self.root.attributes('-alpha', alpha)
+            self._current_alpha = alpha
+        self._aplicar_fundo_projecao()
         self.root.lift()
 
         # Esconde temperatura
@@ -2205,12 +2346,16 @@ class TelaoWindow:
         seg = max(1, int(float(cfg.get("duracao_seg", 30))))
         self._proj_timer = self.root.after(seg * 1000, self._retornar_ao_relogio)
 
-    def _desenhar_texto_no_canvas(self, texto: str, referencia: str = "") -> tuple:
+    def _desenhar_texto_no_canvas(self, texto: str, referencia: str = "",
+                                  largura_max: Optional[int] = None) -> tuple:
         """Desenha texto centralizado no canvas com auto-ajuste de fonte.
 
         Usado tanto na projeção simples (projetar_texto) quanto nos slides.
         Retorna a tupla de fonte aplicada.
         Se referencia for fornecida (ex.: "João 3:16"), exibe no canto inferior direito.
+        Se largura_max for fornecida, o texto é quebrado (e centralizado)
+        dentro dessa largura máxima — usado pelo anúncio de imagem + texto,
+        em que parte da tela é ocupada pela imagem.
         """
         cfg = getattr(self, "_proj_cfg", None)
         if cfg is None:
@@ -2220,6 +2365,11 @@ class TelaoWindow:
         w = self.canvas.winfo_width() or self._monitor.width
         h = self.canvas.winfo_height() or self._monitor.height
         wrap_width = max(200, int(w * 0.95))
+        if largura_max:
+            wrap_width = max(120, min(wrap_width, int(largura_max)))
+        centro_x = w // 2
+        if largura_max:
+            centro_x = int(largura_max) // 2
         tamanho = max(18, int(h * (float(cfg.get("tamanho_pct", 5.0)) / 100.0)))
         familia = cfg.get("fonte", "Montserrat")
         cor = cfg.get("cor", "#FFFFFF")
@@ -2263,7 +2413,7 @@ class TelaoWindow:
             justify="center",
             state="normal",
         )
-        self.canvas.coords(self.overlay_text, w // 2, h // 2)
+        self.canvas.coords(self.overlay_text, centro_x, h // 2)
 
         # Referência bíblica (livro cap:vers.) — canto inferior direito
         if referencia:
@@ -2285,6 +2435,29 @@ class TelaoWindow:
         return fonte
 
     # ── Projeção em slides (título + versos, navegação do administrador) ──
+
+    def _limpar_camada_imagem(self) -> None:
+        """Remove a camada de imagem projetada (anúncio de imagem/composto).
+
+        Chamado ao projetar um conteúdo só de texto POR CIMA de uma projeção
+        anterior com imagem, para não deixar a imagem antiga "colada" no telão
+        (o texto novo apareceria por trás da imagem velha).
+        """
+        if getattr(self, "_imagem_item", None) is not None:
+            try:
+                self.canvas.delete(self._imagem_item)
+            except tk.TclError:
+                pass
+            self._imagem_item = None
+        self._imagem_pil = None
+        self._imagem_orig_pil = None
+        self._imagem_escala = 1.0
+        self._imagem_rect_base = None
+        self._texto_largura_base = None
+        self._texto_box = (0, 0, 100, 100)
+        self._texto_escala = 1.0
+        self._mostrando_imagem = False
+        self._mostrando_imagem_com_texto = False
 
     def projetar_slides(self, slides: list, indice_inicial: int = 0) -> None:
         """Inicia projeção em slides (ex.: título do hino e versos).
@@ -2309,19 +2482,25 @@ class TelaoWindow:
         # Guarda a temperatura exibida para restaurar depois
         self._temp_salvo = self._current_temp
 
+        # Remove qualquer imagem de uma projeção anterior (ex.: anúncio de
+        # imagem + texto) para o novo texto aparecer limpo por cima.
+        self._limpar_camada_imagem()
+
         self._slides = list(slides)
         self._slide_index = 0
         self._em_slides = True
         self.mostrando_letra = True
         self.mostrando_relogio = False
 
-        # Exibe a janela e opaca
+        # Exibe a janela e aplica o fundo/opacidade configurados
         if not self._is_visible:
             self.root.deiconify()
             self._is_visible = True
-        if self._current_alpha != 1.0:
-            self.root.attributes('-alpha', 1.0)
-            self._current_alpha = 1.0
+        alpha = self._alpha_projecao()
+        if self._current_alpha != alpha:
+            self.root.attributes('-alpha', alpha)
+            self._current_alpha = alpha
+        self._aplicar_fundo_projecao()
         self.root.lift()
 
         # Esconde temperatura
@@ -2352,21 +2531,29 @@ class TelaoWindow:
                 pass
             self._proj_timer = None
 
+        # Remove qualquer composição anterior (anúncio imagem + texto): o
+        # _imagem_rect_base velho redirecionaria a imagem pura para a posição
+        # do editor em vez de centralizá-la.
+        self._limpar_camada_imagem()
+
         # Guarda a temperatura exibida para restaurar depois
         self._temp_salvo = self._current_temp
 
         self.mostrando_letra = True
         self._em_slides = False
         self._mostrando_imagem = True
+        self._mostrando_imagem_com_texto = False
         self.mostrando_relogio = False
 
-        # Exibe a janela e opaca
+        # Exibe a janela e aplica o fundo/opacidade configurados
         if not self._is_visible:
             self.root.deiconify()
             self._is_visible = True
-        if self._current_alpha != 1.0:
-            self.root.attributes('-alpha', 1.0)
-            self._current_alpha = 1.0
+        alpha = self._alpha_projecao()
+        if self._current_alpha != alpha:
+            self.root.attributes('-alpha', alpha)
+            self._current_alpha = alpha
+        self._aplicar_fundo_projecao()
         self.root.lift()
 
         # Esconde temperatura, referência e hora para exibir só a imagem
@@ -2397,7 +2584,13 @@ class TelaoWindow:
         return True
 
     def _renderizar_imagem_projetada(self) -> bool:
-        """Renderiza a imagem projetada com a escala atual (centralizada)."""
+        """Renderiza a imagem projetada com a escala atual.
+
+        Quando o anúncio está em modo composição (imagem + texto em camadas
+        vivas), renderiza SOMENTE a camada da imagem — o texto continua no
+        canvas (overlay_text) intacto. Assim os botões "🖼️ −/+" do painel
+        redimensionam apenas a imagem em tempo real.
+        """
         orig = getattr(self, "_imagem_orig_pil", None)
         if orig is None or not getattr(self, "_mostrando_imagem", False):
             return False
@@ -2410,9 +2603,29 @@ class TelaoWindow:
         lar, alt = orig.size
         if lar <= 0 or alt <= 0:
             return False
+
         escala = float(getattr(self, "_imagem_escala", 1.0) or 1.0)
-        fator = min(w / lar, h / alt) * escala
-        tamanho = (max(1, int(lar * fator)), max(1, int(alt * fator)))
+        rect = getattr(self, "_imagem_rect_base", None)
+        if rect is not None:
+            # Modo composição (imagem + texto): usa a posição/tamanho salvos
+            # no editor (espaço virtual 1440x1080) e redimensiona ao redor
+            # do ponto central — nunca escala o texto nem o fundo.
+            base_x, base_y, base_w, base_h = rect
+            novo_w = max(1, min(int(base_w * escala), w))
+            novo_h = max(1, min(int(base_h * escala), h))
+            cx = base_x + base_w // 2
+            cy = base_y + base_h // 2
+            pos_x = max(0, min(cx - novo_w // 2, max(0, w - novo_w)))
+            pos_y = max(0, min(cy - novo_h // 2, max(0, h - novo_h)))
+            tamanho = (max(1, novo_w), max(1, novo_h))
+            pos = (pos_x, pos_y)
+        else:
+            # Imagem pura: redimensiona para caber na tela preservando a
+            # proporção (comportamento original de projetar_imagem).
+            fator = min(w / lar, h / alt) * escala
+            tamanho = (max(1, int(lar * fator)), max(1, int(alt * fator)))
+            pos = None
+
         redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
         img_final = orig.resize(tamanho, redimensao)
         try:
@@ -2426,8 +2639,13 @@ class TelaoWindow:
                 except tk.TclError:
                     pass
                 self._imagem_item = None
-            self._imagem_item = self.canvas.create_image(
-                w // 2, h // 2, image=self._imagem_pil, anchor="center")
+            if pos is None:
+                pos = (w // 2, h // 2)
+                self._imagem_item = self.canvas.create_image(
+                    pos[0], pos[1], image=self._imagem_pil, anchor="center")
+            else:
+                self._imagem_item = self.canvas.create_image(
+                    pos[0], pos[1], image=self._imagem_pil, anchor="nw")
         except Exception as e:
             print(f"⚠️ Não foi possível renderizar a imagem no telão: {e}")
             return False
@@ -2446,6 +2664,224 @@ class TelaoWindow:
         self._imagem_escala = max(0.25, escala - 0.15)
         return self._renderizar_imagem_projetada()
 
+    def projetar_imagem_com_texto(self, caminho: str, texto: str,
+                                  config_midia: str = "") -> bool:
+        """Projeta imagem + texto em CAMADAS separadas no telão.
+
+        A imagem é posicionada/tamanhada conforme config_midia (espaço
+        virtual 1440x1080 do editor) e o texto é desenhado por cima como
+        camada de canvas (como nos hinos). Assim o operador pode:
+          - "🖼️ −/+" redimensionar SÓ a imagem (escala ao vivo);
+          - "A−/A+" redimensionar SÓ o texto (fonte ao vivo).
+        Sem config_midia (legado), a imagem fica à direita ocupando 55% da
+        área útil (mesmo layout lado a lado do compositor antigo).
+        Retorna False se o arquivo for inválido/inexistente.
+        """
+        if not self.rodando or not caminho or not os.path.exists(caminho):
+            return False
+        try:
+            from PIL import Image
+        except Exception as e:
+            print(f"⚠️ PIL indisponível para projetar imagem + texto: {e}")
+            return False
+
+        # Cancela retorno automático anterior (re-projeção)
+        if getattr(self, "_proj_timer", None) is not None:
+            try:
+                self.root.after_cancel(self._proj_timer)
+            except tk.TclError:
+                pass
+            self._proj_timer = None
+
+        # Guarda a temperatura exibida para restaurar depois
+        self._temp_salvo = self._current_temp
+
+        self.mostrando_letra = True
+        self._em_slides = False
+        self._mostrando_imagem = True
+        self._mostrando_imagem_com_texto = True
+        self._imagem_escala = 1.0
+        self.mostrando_relogio = False
+
+        # Exibe a janela e aplica o fundo/opacidade configurados
+        if not self._is_visible:
+            self.root.deiconify()
+            self._is_visible = True
+        alpha = self._alpha_projecao()
+        if self._current_alpha != alpha:
+            self.root.attributes('-alpha', alpha)
+            self._current_alpha = alpha
+        self._aplicar_fundo_projecao()
+        self.root.lift()
+
+        # Esconde temperatura e referência (o texto do anúncio usa o overlay)
+        self.canvas.itemconfig(self.temp_text, text="", state="hidden")
+        self.canvas.itemconfig(self.ref_text, text="", state="hidden")
+        self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
+
+        ok = self._composicao_anuncio(caminho, texto, config_midia)
+        if not ok:
+            self._retornar_ao_relogio()
+            return False
+        return True
+
+    def _composicao_anuncio(self, caminho: str, texto: str,
+                            config_midia: str = "") -> bool:
+        """Composição imagem + texto em camadas (reutilizada pela projeção).
+
+        Desenha a imagem (camada própria) e o texto (overlay na caixa
+        ajustada) a partir de config_midia. Não altera os flags de estado
+        (/em_slides, /mostrando_*); o chamador decide. Retorna False se o
+        arquivo for inválido/inexistente (sem voltar ao relógio).
+        """
+        if not self.rodando or not caminho or not os.path.exists(caminho):
+            return False
+        try:
+            from PIL import Image
+        except Exception as e:
+            print(f"⚠️ PIL indisponível para projetar imagem + texto: {e}")
+            return False
+
+        try:
+            with Image.open(caminho) as img_src:
+                img_orig = img_src.convert("RGBA")
+        except Exception as e:
+            print(f"⚠️ Não foi possível abrir a imagem {caminho}: {e}")
+            return False
+
+        w = self.canvas.winfo_width() or self._monitor.width
+        h = self.canvas.winfo_height() or self._monitor.height
+
+        # Área útil (margens do editor/compositor) para a imagem.
+        margem_h = int(w * 0.04) or 40
+        margem_v = int(h * 0.06) or 60
+        area_w = max(100, w - margem_h * 2)
+        area_h = max(100, h - margem_v * 2)
+
+        cfg: dict = {}
+        try:
+            c = json.loads(config_midia or "{}")
+            if isinstance(c, dict):
+                cfg = c
+        except (ValueError, TypeError, AttributeError):
+            cfg = {}
+        conf_w = int(cfg.get("w") or 0)
+        conf_h = int(cfg.get("h") or 0)
+        conf_x = int(cfg.get("x") or 0)
+        conf_y = int(cfg.get("y") or 0)
+        absoluto = conf_w > 0 and conf_h > 0 and conf_x > 0 and conf_y > 0
+
+        ow, oh = img_orig.size
+        if absoluto:
+            # Formato novo: converte o espaço virtual 1440x1080 do editor.
+            escala_x = w / 1440.0
+            escala_y = h / 1080.0
+            img_w = max(20, min(int(conf_w * escala_x), w))
+            img_h = max(20, min(int(conf_h * escala_y), h))
+            img_x = max(0, min(int(conf_x * escala_x), w - img_w))
+            img_y = max(0, min(int(conf_y * escala_y), h - img_h))
+        elif conf_w > 0 and conf_h > 0:
+            # Config legada (320x250 sem posição): imagem à direita, 55%.
+            frac = max(0.20, min(0.75, conf_w / (conf_w + 200)))
+            asp = ow / max(1, oh)
+            iw = max(120, int(area_w * frac))
+            ih = int(iw / asp)
+            if ih > area_h:
+                ih = int(area_h)
+                iw = max(120, int(ih * asp))
+            img_w = max(20, min(iw, w))
+            img_h = max(20, min(ih, h))
+            img_x = max(0, min(w - margem_h - img_w, w - img_w))
+            img_y = margem_v + (area_h - img_h) // 2
+        else:
+            # Sem configuração: mesma regra do compositor (lado a lado 55%).
+            asp = ow / max(1, oh)
+            iw = max(120, int(area_w * 0.55))
+            ih = int(iw / asp)
+            if ih > area_h:
+                ih = int(area_h)
+                iw = max(120, int(ih * asp))
+            img_w = max(20, min(iw, w))
+            img_h = max(20, min(ih, h))
+            img_x = max(0, min(w - margem_h - img_w, w - img_w))
+            img_y = margem_v + (area_h - img_h) // 2
+
+        self._imagem_rect_base = (img_x, img_y, img_w, img_h)
+        self._imagem_orig_pil = img_orig
+
+        # Anúncio de imagem nunca mostra temperatura/referência da Bíblia.
+        self.canvas.itemconfig(self.temp_text, text="", state="hidden")
+        self.canvas.itemconfig(self.ref_text, text="", state="hidden")
+
+        # Texto em MAIÚSCULAS dentro da caixa ajustada no editor.
+        texto = (texto or "").strip()
+        if not texto:
+            # Slide só de imagem: esconde o texto de um slide anterior
+            # (overlay_text foi usado pela projeção/tela anterior).
+            self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
+            self._current_text = ""
+        caixa = _caixa_texto_config(config_midia, texto,
+                                    aspect_imagem=ow / max(1.0, oh))
+        escala_x = w / 1440.0
+        escala_y = h / 1080.0
+        cx = max(0, min(int(caixa["x"] * escala_x), w - 1))
+        cy = max(0, min(int(caixa["y"] * escala_y), h - 1))
+        cw = max(40, min(int(caixa["w"] * escala_x), w - cx))
+        ch = max(40, min(int(caixa["h"] * escala_y), h - cy))
+        self._texto_box = (cx, cy, cw, ch)
+        self._texto_escala = float(caixa.get("s") or 1.0)
+        self._texto_largura_base = None
+        if texto:
+            self._desenhar_texto_anuncio(texto)
+
+        try:
+            ok = self._renderizar_imagem_projetada()
+        except Exception as e:
+            print(f"⚠️ Não foi possível exibir a imagem + texto no telão: {e}")
+            ok = False
+        return ok
+
+    def _desenhar_texto_anuncio(self, texto: str) -> None:
+        """Desenha o texto do anúncio (caixa) no telão, respeitando a escala.
+
+        O texto é desenhado centralizado na caixa (posição/tamanho salvos no
+        editor, tx/ty/tw/th) com fonte proporcional à altura da caixa; a
+        escala ('ts') é aplicada em tempo real pelos botões A−/A+ do painel.
+        A cor segue a configuração "🎨 Projeção" (cor do texto), como no
+        modo só-texto.
+        """
+        cfg = getattr(self, "_proj_cfg", None)
+        if cfg is None:
+            self.configurar_projecao()
+            cfg = getattr(self, "_proj_cfg", None)
+        cor_texto = (cfg or {}).get("cor", "#FFFFFF") or "#FFFFFF"
+        cx, cy, cw, ch = self._texto_box
+        escala = float(getattr(self, "_texto_escala", 1.0) or 1.0)
+        base_pct = 0.10 * escala
+        fonte_pil, linhas = _calcular_texto_em_caixa(
+            texto, cw, ch, base_pct=base_pct)
+        familia = _fonte_familia_do_pil(fonte_pil)
+        pt = max(8, min(300, int(fonte_pil.size)))
+        passo = fonte_pil.size + max(1, fonte_pil.size // 5)
+
+        self.canvas.itemconfig(
+            self.overlay_text,
+            text="\n".join(linhas),
+            font=(familia, pt, "bold"),
+            fill=cor_texto,
+            width=cw,
+            justify="center",
+            state="normal",
+        )
+        # Centraliza vertical e horizontalmente na caixa.
+        topo = cy + (ch - passo * len(linhas)) // 2
+        centro_x = cx + cw // 2
+        centro_y = topo + (passo * len(linhas)) // 2
+        self.canvas.coords(self.overlay_text, centro_x, centro_y)
+        self._current_text = texto
+        self._current_temp = ""
+        self.root.update_idletasks()
+
     def _mostrar_slide(self, indice: int) -> bool:
         """Exibe o slide no índice dado (se válido) e retorna True."""
         if not self._slides:
@@ -2454,6 +2890,26 @@ class TelaoWindow:
             return False
         self._slide_index = indice
         slide = self._slides[indice]
+        if isinstance(slide, dict):
+            # Anúncio multi-slide texto+imagem (ou só texto por slide).
+            texto = (slide.get("texto") or "").strip()
+            caminho = (slide.get("imagem") or "").strip()
+            if caminho and os.path.exists(caminho):
+                self._mostrando_imagem = True
+                self._mostrando_imagem_com_texto = True
+                ok = self._composicao_anuncio(
+                    caminho, texto, slide.get("config") or "")
+                if ok:
+                    # Lembra que ainda estamos em slides (não em imagem única):
+                    # a navegação por setas continua valendo para o próximo.
+                    self._em_slides = True
+                    return True
+                # Se a composição falhar, mostra ao menos o texto.
+                self._limpar_camada_imagem()
+            else:
+                self._limpar_camada_imagem()
+            self._desenhar_texto_no_canvas(texto or "ANÚNCIO")
+            return True
         if isinstance(slide, tuple):
             texto, ref = slide
         else:
@@ -2511,7 +2967,22 @@ class TelaoWindow:
         self._imagem_pil = None
         self._imagem_orig_pil = None
         self._imagem_escala = 1.0
+        self._imagem_rect_base = None
+        self._texto_largura_base = None
+        self._texto_box = (0, 0, 100, 100)
+        self._texto_escala = 1.0
         self._mostrando_imagem = False
+        self._mostrando_imagem_com_texto = False
+        # Remove a imagem de fundo da projeção (o modo relógio usa a própria
+        # cor de fundo configurada no "Configura Relógio").
+        if getattr(self, "_fundo_imagem_item", None) is not None:
+            try:
+                self.canvas.delete(self._fundo_imagem_item)
+            except tk.TclError:
+                pass
+            self._fundo_imagem_item = None
+        self._fundo_imagem_to_tk = None
+        self._fundo_imagem_caminho = ""
         # Restaura a aparência padrão do relógio no canvas: fonte Digital-7,
         # cor, e posições originais de hora e temperatura (a projeção troca a
         # fonte e move o texto para o centro da tela).
@@ -3269,21 +3740,8 @@ def _migrar_anuncios_do_json() -> int:
 # ────────────────────────────────────────────────────────────────────
 # COMPOSIÇÃO IMAGEM + TEXTO (anúncios de imagem)
 # ────────────────────────────────────────────────────────────────────
-# Gera um único slide (PIL) com o texto à esquerda e a imagem à direita,
-# lado a lado, para projetar no telão via TelaoWindow.projetar_imagem().
-
-
-def _tamanho_telao(telao: Any) -> Tuple[int, int]:
-    """Devolve (largura, altura) do monitor do telão (1440x1080 como padrão)."""
-    try:
-        mon = getattr(getattr(telao, "_monitor", None), "width", None)
-        if mon:
-            alt = getattr(telao._monitor, "height", 0) or 0
-            if alt:
-                return int(mon), int(alt)
-    except Exception:
-        pass
-    return 1440, 1080
+# Medição e ajuste de caixas de texto em espaço virtual 1440x1080,
+# usados de forma IDÊNTICA pelo editor (prévia) e pelo telão (projeção).
 
 
 def _carregar_fonte_pil(tamanho: int):
@@ -3343,121 +3801,119 @@ def _carregar_fonte_atual(draw, texto: str, largura_max: int, altura_max: int):
     return fonte, _quebrar_linhas_medindo(draw, texto, largura_max, fonte)
 
 
-def _compor_anuncio_imagem_texto(imagem_caminho: str, texto: str,
-                                 config_midia: str = "", largura: int = 1440,
-                                 altura: int = 1080) -> Optional[str]:
-    """Compõe texto + imagem no slide (imagem sobre o texto na posição ajustada).
+_DUMMY_DRAW: list = [None]
 
-    Com config_midia novo (w/h/x/y em espaço virtual 1440x1080) a imagem é
-    colocada exatamente onde o usuário ajustou no editor, sobre o texto.
-    Sem x/y (config antiga) mantém o layout texto à esquerda + imagem à direita.
 
-    Retorna o caminho de um PNG temporário com a composição, ou None se
-    não for possível compor (a imagem não abre, sem texto, PIL ausente).
-    O chamador é responsável por remover o arquivo após projetar.
+def _draw_pil_reciclavel():
+    """Devolve um objeto de desenho PIL reutilizável para medir texto."""
+    from PIL import Image, ImageDraw
+    if _DUMMY_DRAW[0] is None:
+        _DUMMY_DRAW[0] = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    return _DUMMY_DRAW[0]
+
+
+def _fonte_familia_do_pil(fonte) -> str:
+    """Nome da família da fonte PIL (para usar no canvas do Tk)."""
+    if fonte is None:
+        return "Helvetica"
+    try:
+        return fonte.getname()[0] or "Helvetica"
+    except Exception:
+        return "Helvetica"
+
+
+def _calcular_texto_em_caixa(texto: str, caixa_larg: int, caixa_alt: int,
+                             base_pct: float = 0.10) -> tuple:
+    """Calcula fonte + linhas para desenhar 'texto' dentro de uma caixa.
+
+    Usado pelo editor de anúncio (prévia) e pelo telão de forma IDÊNTICA:
+    a fonte é proporcional à ALTURA DA CAIXA (base_pct * caixa_alt) e as
+    linhas são quebradas na largura da caixa. Se o texto não couber
+    verticalmente, encolhe até caber (respeitando um mínimo legível).
+    Retorna (fonte_pil, linhas).
     """
-    if not imagem_caminho or not os.path.exists(imagem_caminho):
-        return None
-    texto = (texto or "").strip()
-    if not texto:
-        return None
-    try:
-        from PIL import Image, ImageDraw
-    except Exception as e:
-        print(f"⚠️ PIL indisponível para compor imagem+texto: {e}")
-        return None
-    try:
-        with Image.open(imagem_caminho) as im_src:
-            img = im_src.convert("RGBA")
-    except Exception as e:
-        print(f"⚠️ Não foi possível abrir a imagem para composição: {e}")
-        return None
+    desenho = _draw_pil_reciclavel()
+    larg = max(60, caixa_larg)
+    alt = max(60, caixa_alt)
+    texto_up = (texto or "").upper()
+    base = max(12, int(round(alt * (base_pct or 0.10))))
+    tamanhos = list(dict.fromkeys([base, 108, 88, 72, 60, 52, 44, 36, 30, 26, 22, 18, 14, 12]))
+    for tam in tamanhos:
+        tam = max(12, min(tam, 400))
+        fonte = _carregar_fonte_pil(tam)
+        linhas = _quebrar_linhas_medindo(desenho, texto_up, larg, fonte)
+        tam_linha = fonte.size + max(1, fonte.size // 5)
+        if tam_linha * max(1, len(linhas)) <= alt:
+            return fonte, linhas
+    fonte = _carregar_fonte_pil(12)
+    return fonte, _quebrar_linhas_medindo(desenho, texto_up, larg, fonte)
 
-    margem_h = int(largura * 0.04) or 40
-    margem_v = int(altura * 0.06) or 60
-    espaco = int(largura * 0.02) or 20
-    area_w = largura - margem_h * 2
-    area_h = altura - margem_v * 2
 
-    cfg = {}
-    try:
-        c = json.loads(config_midia or "{}")
-        if isinstance(c, dict):
-            cfg = c
-    except (ValueError, TypeError, AttributeError):
-        cfg = {}
-    conf_w = int(cfg.get("w") or 0)
-    conf_h = int(cfg.get("h") or 0)
-    conf_x = int(cfg.get("x") or 0)
-    conf_y = int(cfg.get("y") or 0)
-    # Formato novo (posição absoluta sobre o texto em espaço virtual 1440x1080)
-    absoluto = conf_w > 0 and conf_h > 0 and conf_x > 0 and conf_y > 0
+def _caixa_texto_padrao(texto: str, area_larg: int, area_alt: int,
+                        margem_h: int, margem_v: int,
+                        aspect_imagem: Optional[float] = None, espaco: int = 20) -> dict:
+    """Caixa inicial (espaço virtual 1440x1080) para o texto do anúncio.
 
-    ow, oh = img.size
-    redim = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
-
-    if absoluto:
-        # O texto ocupa a área inteira; a imagem fica por cima onde o editor colocou.
-        text_w = area_w
-        text_h = area_h
-    else:
-        # Layout antigo: texto à esquerda + imagem à direita (mantém proporção).
-        frac = 0.55
-        if conf_w > 0:
-            largura_texto_ref = 200
-            frac = max(0.20, min(0.75, conf_w / (conf_w + largura_texto_ref)))
-        asp = ow / max(1, oh)
-        img_w = max(120, int(area_w * frac))
+    Usa o mesmo layout lado a lado do compositor legado (texto à esquerda,
+    imagem à direita). O tamanho é escolhido para que o texto inicial couba
+    exatamente como na projeção/composição antiga. Se 'aspect_imagem' for
+    dado, a largura do texto reflete o espaço real que sobra após a imagem
+    (55%) + espaçamento. Retorna dict com x/y/w/h (posição/tamanho da caixa)
+    e s (fator de escala de fonte).
+    """
+    if aspect_imagem is not None and aspect_imagem > 0:
+        asp = aspect_imagem
+        img_w = max(120, int(area_larg * 0.55))
         img_h = int(img_w / asp)
-        if img_h > area_h:
-            img_h = int(area_h)
+        if img_h > area_alt:
+            img_h = int(area_alt)
             img_w = max(120, int(img_h * asp))
-        text_w = area_w - img_w - espaco
-        if text_w < 120:
-            text_w = 120
-        text_h = area_h
-
-    fundo = Image.new("RGBA", (largura, altura), (13, 17, 23, 255))
-    draw = ImageDraw.Draw(fundo)
-
-    fonte, linhas = _carregar_fonte_atual(draw, texto.upper(), text_w, text_h - margem_v)
-    y = margem_v + 20
-    passo = fonte.size + max(1, fonte.size // 5)
-    cor = (201, 209, 217, 255)
-    for linha in linhas:
-        if linha:
-            draw.text((margem_h, y), linha, font=fonte, fill=cor)
-        y += passo
-
-    if absoluto:
-        # Converte a posição virtual (1440x1080) para a resolução real do telão.
-        escala_x = largura / 1440.0
-        escala_y = altura / 1080.0
-        img_w = max(20, min(int(conf_w * escala_x), largura))
-        img_h = max(20, min(int(conf_h * escala_y), altura))
-        img_x = max(0, min(int(conf_x * escala_x), largura - img_w))
-        img_y = max(0, min(int(conf_y * escala_y), altura - img_h))
-        img_red = img.resize((img_w, img_h), redim)
-        fundo.paste(img_red, (img_x, img_y), img_red)
+        text_w = max(120, area_larg - img_w - max(0, espaco))
     else:
-        # Cola a imagem à direita, centralizada verticalmente
-        img_esq = margem_h + text_w + espaco
-        region_w = largura - margem_h - img_esq
-        fator = min(region_w / max(1, ow), (margem_v + area_h) / max(1, oh))
-        novo = (max(1, int(ow * fator)), max(1, int(oh * fator)))
-        img_red = img.resize(novo, redim)
-        img_x = img_esq + (region_w - novo[0]) // 2
-        img_y = margem_v + (area_h - novo[1]) // 2
-        fundo.paste(img_red, (img_x, img_y), img_red)
+        text_w = max(120, int(area_larg * 0.55))
+    texto_up = (texto or "").upper()
+    desenho = _draw_pil_reciclavel()
+    fonte_enc, _ = _carregar_fonte_atual(desenho, texto_up, text_w,
+                                         max(120, int(area_alt * 0.55)))
+    passo = fonte_enc.size + max(1, fonte_enc.size // 5)
+    altura_caixa = max(120, min(int(area_alt), passo * 4))
+    largura_caixa = max(120, min(text_w, int(area_larg)))
+    x = margem_h
+    y = max(margem_v, (area_alt - altura_caixa) // 2)
+    return {"x": x, "y": y, "w": largura_caixa, "h": altura_caixa, "s": 1.0}
 
+
+def _caixa_texto_config(config_midia: str = "", texto: str = "",
+                        aspect_imagem: Optional[float] = None) -> dict:
+    """Lê a caixa de texto (tx/ty/tw/th/ts) do config_midia, com defaults.
+
+    Retorna dict já preenchido com x/y/w/h/s (posição da caixa + escala de
+    fonte). Para configs antigas sem caixa de texto usa o layout lado a lado
+    (o mesmo do compositor legado), calculado conforme o espaço virtual
+    1440x1080.
+    """
     try:
-        tmpdir = tempfile.mkdtemp(prefix="navepro_anuncio_")
-        caminho_tmp = os.path.join(tmpdir, "composicao.png")
-        fundo.convert("RGB").save(caminho_tmp, "PNG")
-        return caminho_tmp
-    except OSError as e:
-        print(f"⚠️ Não foi possível salvar a composição: {e}")
-        return None
+        c = json.loads(config_midia or "{}") or {}
+    except (ValueError, TypeError, AttributeError):
+        c = {}
+    if not isinstance(c, dict):
+        c = {}
+    tx = int(c.get("tx") or 0)
+    ty = int(c.get("ty") or 0)
+    tw = int(c.get("tw") or 0)
+    th = int(c.get("th") or 0)
+    if th > 0 and (tw > 0 or tx > 0):
+        return {"x": tx, "y": ty, "w": tw, "h": th, "s": float(c.get("ts") or 1.0)}
+    if not texto:
+        return {"x": 0, "y": 0, "w": 0, "h": 0, "s": 1.0}
+    mh = int(1440 * 0.04) or 40
+    mv = int(1080 * 0.06) or 60
+    area_larg = 1440 - mh * 2
+    area_alt = 1080 - mv * 2
+    if tw > 0 and th > 0:
+        return {"x": tx, "y": ty, "w": tw, "h": th, "s": float(c.get("ts") or 1.0)}
+    return _caixa_texto_padrao(texto, area_larg, area_alt, mh, mv,
+                               aspect_imagem=aspect_imagem)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -4069,10 +4525,13 @@ class AppInterface:
         if self.player and self.player.telao:
             self.player.telao.configurar_projecao(cfg)
 
-    def abrir_config_projecao_dialogo(self, parent=None) -> None:
+    def abrir_config_projecao_dialogo(self, parent=None,
+                                      mostrar_cor_ref: bool = False) -> None:
         """Abre a janela de ajuste da aparência da projeção no telão.
 
-        Compartilhada entre as janelas de Hinos e de Bíblia.
+        Compartilhada entre as janelas de Anúncios, Hinos e de Bíblia.
+        A opção "Cor da referência bíblica" só faz sentido onde há Bíblia
+        para projetar, por isso aparece somente com mostrar_cor_ref=True.
         """
         janela = parent or self.root
         cfg_atual = dict(getattr(self.player.telao, "_proj_cfg", {}))
@@ -4081,10 +4540,13 @@ class AppInterface:
         cfg_atual.setdefault("cor", "#FFFFFF")
         cfg_atual.setdefault("duracao_seg", 30)
         cfg_atual.setdefault("cor_ref", "#A0A0A0")
+        cfg_atual.setdefault("cor_fundo", "#000000")
+        cfg_atual.setdefault("fundo_opaco", True)
+        cfg_atual.setdefault("fundo_imagem", "")
 
         cfg_win = tk.Toplevel(janela)
         cfg_win.title("🎨 Aparência da Projeção (Telão)")
-        cfg_win.geometry("520x520")
+        cfg_win.geometry("620x760")
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(janela)
         cfg_win.after(50, cfg_win.grab_set)
@@ -4123,7 +4585,8 @@ class AppInterface:
         lista_cores = [
             ("Branco", "#FFFFFF"), ("Amarelo", "#F5BE08"),
             ("Vermelho", "#FF5555"), ("Azul", "#58A6FF"),
-            ("Verde", "#3FB950"), ("Roxo", "#D2A8FF")]
+            ("Verde", "#3FB950"), ("Roxo", "#D2A8FF"),
+            ("Ciano", "#00E5FF"), ("Laranja", "#FF9800")]
         var_cor = tk.StringVar(value=str(cfg_atual["cor"]))
         cor_frame = tk.Frame(c_main, bg='#0d1117')
         cor_frame.pack(fill='x', pady=(0, 10))
@@ -4135,20 +4598,76 @@ class AppInterface:
                 font=("Arial", 10))
             rb.pack(side='left', padx=2)
 
-        # ── Cor da referência bíblica (livro cap:vers. — canto inferior direito) ──
-        tk.Label(c_main, text="Cor da referência bíblica (livro cap:vers.):",
-                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117', anchor='w'
-                 ).pack(fill='x')
-        var_cor_ref = tk.StringVar(value=str(cfg_atual["cor_ref"]))
-        cor_ref_frame = tk.Frame(c_main, bg='#0d1117')
-        cor_ref_frame.pack(fill='x', pady=(0, 10))
-        for nome, codigo in lista_cores:
-            rb = tk.Radiobutton(
-                cor_ref_frame, text=nome, value=codigo, variable=var_cor_ref,
+        if mostrar_cor_ref:
+            # ── Cor da referência bíblica (livro cap:vers. — canto inferior direito) ──
+            tk.Label(c_main, text="Cor da referência bíblica (livro cap:vers.):",
+                     font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117', anchor='w'
+                     ).pack(fill='x')
+            var_cor_ref = tk.StringVar(value=str(cfg_atual["cor_ref"]))
+            cor_ref_frame = tk.Frame(c_main, bg='#0d1117')
+            cor_ref_frame.pack(fill='x', pady=(0, 10))
+            for nome, codigo in lista_cores:
+                rb = tk.Radiobutton(
+                    cor_ref_frame, text=nome, value=codigo, variable=var_cor_ref,
+                    bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                    activebackground='#0d1117', activeforeground='#f0c040',
+                    font=("Arial", 10))
+                rb.pack(side='left', padx=2)
+
+        # ── Cor de fundo ──
+        tk.Label(c_main, text="Cor de fundo:", font=("Arial", 11, "bold"),
+                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+        var_cor_fundo = tk.StringVar(value=str(cfg_atual["cor_fundo"]))
+        cor_fundo_frame = tk.Frame(c_main, bg='#0d1117')
+        cor_fundo_frame.pack(fill='x', pady=(0, 8))
+        cores_fundo = [
+            ("Preto", "#000000"), ("Cinza escuro", "#1a1a2e"),
+            ("Azul escuro", "#0d1b2a"), ("Verde escuro", "#0a1f0a"),
+            ("Vinho", "#2d0a0a")]
+        for nome, codigo in cores_fundo:
+            tk.Radiobutton(
+                cor_fundo_frame, text=nome, value=codigo, variable=var_cor_fundo,
                 bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
                 activebackground='#0d1117', activeforeground='#f0c040',
-                font=("Arial", 10))
-            rb.pack(side='left', padx=2)
+                font=("Arial", 10)).pack(side='left', padx=2)
+
+        # ── Fundo opaco (sem transparência) ──
+        var_fundo_opaco = tk.BooleanVar(value=bool(cfg_atual["fundo_opaco"]))
+        tk.Checkbutton(
+            c_main, text="Fundo opaco (sem transparência)", variable=var_fundo_opaco,
+            bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+            activebackground='#0d1117', activeforeground='#f0c040',
+            font=("Arial", 11, "bold")).pack(anchor='w', pady=(0, 8))
+
+        # ── Imagem de fundo (opcional) ──
+        tk.Label(c_main, text="Imagem de fundo (opcional):",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117', anchor='w'
+                 ).pack(fill='x')
+        linha_imagem = tk.Frame(c_main, bg='#0d1117')
+        linha_imagem.pack(fill='x', pady=(0, 12))
+        var_fundo_imagem = tk.StringVar(value=str(cfg_atual["fundo_imagem"]))
+        entry_imagem = tk.Entry(
+            linha_imagem, textvariable=var_fundo_imagem, font=("Arial", 10),
+            bg='#21262d', fg='#c9d1d9', insertbackground='#f0c040',
+            bd=0, highlightthickness=0)
+        entry_imagem.pack(side='left', fill='x', expand=True, ipady=3)
+
+        def _escolher_imagem_fundo():
+            escolhido = tkinter.filedialog.askopenfilename(
+                parent=cfg_win, title="Escolher imagem de fundo",
+                filetypes=[("Imagens", "*.png *.jpg *.jpeg *.bmp *.webp *.gif"),
+                           ("Todos os arquivos", "*.*")])
+            if escolhido:
+                var_fundo_imagem.set(escolhido)
+
+        tk.Button(linha_imagem, text="Procurar…", font=("Arial", 10, "bold"),
+                  bg='#1f6feb', fg='white', activebackground='#388bfd',
+                  command=_escolher_imagem_fundo, cursor='hand2', padx=8, pady=2
+                  ).pack(side='left', padx=3)
+        tk.Button(linha_imagem, text="✖ Limpar", font=("Arial", 10, "bold"),
+                  bg='#da3633', fg='white', activebackground='#f85149',
+                  command=lambda: var_fundo_imagem.set(""), cursor='hand2',
+                  padx=8, pady=2).pack(side='left')
 
         # ── Duração antes de voltar ao relógio ──
         tk.Label(c_main, text="Duração antes de voltar ao relógio (segundos):",
@@ -4170,8 +4689,12 @@ class AppInterface:
                 "tamanho_pct": float(var_tamanho.get()),
                 "cor": var_cor.get(),
                 "duracao_seg": duracao,
-                "cor_ref": var_cor_ref.get(),
+                "cor_fundo": var_cor_fundo.get(),
+                "fundo_opaco": bool(var_fundo_opaco.get()),
+                "fundo_imagem": var_fundo_imagem.get().strip(),
             }
+            if mostrar_cor_ref:
+                novo["cor_ref"] = var_cor_ref.get()
             self.salvar_config_projecao(novo)
             cfg_win.destroy()
 
@@ -4201,10 +4724,11 @@ class AppInterface:
         cfg_atual.setdefault("fator_temp", 1.0)
         cfg_atual.setdefault("espacamento", 1.0)
         cfg_atual.setdefault("fundo_opaco", False)
+        cfg_atual.setdefault("fundo_imagem", "")
 
         cfg_win = tk.Toplevel(self.root)
         cfg_win.title("⚙️ Configura Relógio")
-        cfg_win.geometry("620x620")
+        cfg_win.geometry("620x740")
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(self.root)
         cfg_win.after(50, cfg_win.grab_set)
@@ -4272,7 +4796,37 @@ class AppInterface:
             bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
             activebackground='#0d1117', activeforeground='#f0c040',
             font=("Arial", 11, "bold")).pack(
-                anchor='w', pady=(0, 12))
+                anchor='w', pady=(0, 8))
+
+        # ── Imagem de fundo (opcional) ──
+        tk.Label(c_main, text="Imagem de fundo (opcional):",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117', anchor='w'
+                 ).pack(fill='x')
+        linha_imagem = tk.Frame(c_main, bg='#0d1117')
+        linha_imagem.pack(fill='x', pady=(0, 12))
+        var_fundo_imagem = tk.StringVar(value=str(cfg_atual["fundo_imagem"]))
+        entry_imagem = tk.Entry(
+            linha_imagem, textvariable=var_fundo_imagem, font=("Arial", 10),
+            bg='#21262d', fg='#c9d1d9', insertbackground='#f0c040',
+            bd=0, highlightthickness=0)
+        entry_imagem.pack(side='left', fill='x', expand=True, ipady=3)
+
+        def _escolher_imagem_fundo_relogio():
+            escolhido = tkinter.filedialog.askopenfilename(
+                parent=cfg_win, title="Escolher imagem de fundo",
+                filetypes=[("Imagens", "*.png *.jpg *.jpeg *.bmp *.webp *.gif"),
+                           ("Todos os arquivos", "*.*")])
+            if escolhido:
+                var_fundo_imagem.set(escolhido)
+
+        tk.Button(linha_imagem, text="Procurar…", font=("Arial", 10, "bold"),
+                  bg='#1f6feb', fg='white', activebackground='#388bfd',
+                  command=_escolher_imagem_fundo_relogio, cursor='hand2',
+                  padx=8, pady=2).pack(side='left', padx=3)
+        tk.Button(linha_imagem, text="✖ Limpar", font=("Arial", 10, "bold"),
+                  bg='#da3633', fg='white', activebackground='#f85149',
+                  command=lambda: var_fundo_imagem.set(""), cursor='hand2',
+                  padx=8, pady=2).pack(side='left')
 
         # ── Tamanho do relógio ──
         tk.Label(c_main, text="Tamanho do relógio:", font=("Arial", 11, "bold"),
@@ -4311,6 +4865,7 @@ class AppInterface:
                 "fator_temp": float(var_fator_temp.get()),
                 "espacamento": float(var_espacamento.get()),
                 "fundo_opaco": bool(var_fundo_opaco.get()),
+                "fundo_imagem": var_fundo_imagem.get().strip(),
             }
             self.salvar_config_relogio(novo)
             cfg_win.destroy()
@@ -7167,6 +7722,16 @@ class AppInterface:
 
         def _ajustar_fonte(delta: float):
             telao = self.player.telao
+            if getattr(telao, "_mostrando_imagem_com_texto", False):
+                # Anúncio de imagem + texto: ajusta o tamanho da fonte (escala
+                # 'ts' da caixa de texto) em tempo real, sem tocar na imagem.
+                texto = getattr(telao, "_current_text", "")
+                if texto:
+                    escala = float(getattr(telao, "_texto_escala", 1.0) or 1.0)
+                    telao._texto_escala = min(2.5, max(0.25, escala + delta * 0.1))
+                    telao._desenhar_texto_anuncio(texto)
+                _atualizar_indicador_slide()
+                return
             cfg = getattr(telao, "_proj_cfg", None)
             if cfg is None:
                 telao.configurar_projecao()
@@ -7182,7 +7747,12 @@ class AppInterface:
             _atualizar_indicador_slide()
 
         def _ajustar_imagem(aumentar: bool):
-            """Redimensiona a imagem já projetada no telão (ao vivo)."""
+            """Redimensiona SOMENTE a imagem já projetada no telão (ao vivo).
+
+            Em anúncios de imagem + texto, é a camada da imagem que muda —
+            o texto fica intacto. Em imagem pura, o comportamento é o mesmo
+            de antes (escala centralizada).
+            """
             telao = self.player.telao
             if not getattr(telao, "_mostrando_imagem", False):
                 return
@@ -7205,16 +7775,14 @@ class AppInterface:
 
         def _montar_slides_anuncio(anuncio: dict) -> list:
             """Monta os slides de um anúncio em MAIÚSCULAS: slide 0 é o título,
-            os demais são uma linha de texto por slide (mesmo padrão dos hinos)."""
+            os demais são os parágrafos do texto (cada parágrafo = 1 slide,
+            exatamente como o editor adiciona telas)."""
             titulo = (anuncio.get('titulo') or '').strip().upper()
             texto = (anuncio.get('texto') or '').strip()
             paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto) if seg.strip()]
             slides = [titulo] if titulo else []
             for paragrafo in paragrafos:
-                for linha in paragrafo.split('\n'):
-                    linha = linha.strip().upper()
-                    if linha:
-                        slides.append(linha)
+                slides.append(paragrafo.upper())
             if not slides:
                 slides = [titulo or "ANÚNCIO"]
             return slides
@@ -7241,36 +7809,41 @@ class AppInterface:
                 return
             if tipo == 'imagem' and arquivo and os.path.exists(arquivo):
                 texto_anuncio = (anuncio.get('texto') or '').strip()
-                composicao = None
-                if texto_anuncio:
-                    l_t, a_t = _tamanho_telao(self.player.telao)
-                    composicao = _compor_anuncio_imagem_texto(
+                if self.player.telao.projetar_imagem_com_texto(
                         arquivo, texto_anuncio,
-                        anuncio.get('config_midia') or '', l_t, a_t)
-                if composicao:
-                    ok = self.player.telao.projetar_imagem(composicao)
-                    try:
-                        os.remove(composicao)
-                        os.rmdir(os.path.dirname(composicao))
-                    except OSError:
-                        pass
-                    if ok:
-                        _atualizar_indicador_slide()
-                        return
-                    # Falhou a composição projetada: tenta a imagem pura
-                    if self.player.telao.projetar_imagem(arquivo):
-                        _atualizar_indicador_slide()
-                        return
-                    tkinter.messagebox.showwarning(
-                        "Imagem", f"Não foi possível projetar:\n{arquivo}", parent=janela)
+                        anuncio.get('config_midia') or ''):
+                    _atualizar_indicador_slide()
                     return
+                # Falhou a composição projetada: tenta a imagem pura
                 if self.player.telao.projetar_imagem(arquivo):
                     _atualizar_indicador_slide()
-                else:
-                    tkinter.messagebox.showwarning(
-                        "Imagem", f"Não foi possível projetar:\n{arquivo}", parent=janela)
+                    return
+                tkinter.messagebox.showwarning(
+                    "Imagem", f"Não foi possível projetar:\n{arquivo}", parent=janela)
                 return
-            slides = _montar_slides_anuncio(dict(anuncio))
+            cfg_a: dict = {}
+            try:
+                _p = json.loads(anuncio.get('config_midia') or '{}')
+                if isinstance(_p, dict):
+                    cfg_a = _p
+            except (ValueError, TypeError, AttributeError):
+                cfg_a = {}
+            if isinstance(cfg_a, dict) and isinstance(cfg_a.get("mslides"), list):
+                # Anúncio multi-slide texto+imagem (cada slide pode ter imagem).
+                slides = []
+                for s in cfg_a["mslides"]:
+                    if not isinstance(s, dict):
+                        continue
+                    texto_s = (s.get("texto") or '').strip()
+                    imagem_s = (s.get("imagem") or '').strip()
+                    if not texto_s and not imagem_s:
+                        continue
+                    slides.append({"texto": texto_s, "imagem": imagem_s,
+                                   "config": s.get("config") or ''})
+                if not slides:
+                    slides = [{"texto": "ANÚNCIO", "imagem": '', "config": ''}]
+            else:
+                slides = _montar_slides_anuncio(dict(anuncio))
             self.player.telao.projetar_slides(slides)
             _atualizar_indicador_slide()
 
@@ -7389,7 +7962,44 @@ class AppInterface:
             # Estado compartilhado do modo imagem (posição/tamanho no espaço 1440x1080)
             _widget_texto = {"w": None}
             _texto_salvo = {"t": dados_anuncio.get('texto', '') if dados_anuncio else ''}
+            # Estado do MODO SLIDE (múltiplas telas): lista de slides + índice atual.
+            # Cada slide é {"texto", "imagem", "nome"} (imagem opcional).
+            # São persistidos: textos separados por linha em branco na coluna
+            # texto (mesmo formato da projeção) e, havendo imagens, o JSON
+            # {"mslides": [...]} em config_midia.
+            texto_original = dados_anuncio.get('texto', '') if dados_anuncio else ''
+            mslides_ini: list = []
+            if dados_anuncio:
+                try:
+                    _cfg_e = json.loads(dados_anuncio.get('config_midia') or '{}')
+                    if isinstance(_cfg_e, dict) and isinstance(_cfg_e.get("mslides"), list):
+                        mslides_ini = _cfg_e["mslides"]
+                except (ValueError, TypeError, AttributeError):
+                    mslides_ini = []
+            if mslides_ini:
+                lista_inicial = [
+                    {"texto": (s.get("texto") or '') if isinstance(s, dict) else str(s),
+                     "imagem": (s.get("imagem") or '') if isinstance(s, dict) else '',
+                     "nome": (s.get("nome") or '') if isinstance(s, dict) else '',
+                     "config": (s.get("config") or '') if isinstance(s, dict) else ''}
+                    for s in mslides_ini]
+            else:
+                lista_inicial = [
+                    {"texto": seg.strip(), "imagem": '', "nome": ''}
+                    for seg in re.split(r'\n\s*\n', texto_original) if seg.strip()]
+                if not lista_inicial and texto_original.strip():
+                    lista_inicial = [{"texto": texto_original.strip(), "imagem": '', "nome": ''}]
+                elif not lista_inicial:
+                    lista_inicial = [{"texto": '', "imagem": '', "nome": ''}]
+            _slides_estado = {
+                "modo": False,
+                "lista": lista_inicial,
+                "idx": 0,
+                "w": None,
+            }
             _tam_img = {"w": None, "h": None, "x": None, "y": None, "orig": None}
+            # Estado da CAIXA DE TEXTO (mesma prévia): posição/tamanho/escala.
+            _tam_txt = {"w": None, "h": None, "x": None, "y": None, "s": 1.0}
             if dados_anuncio:
                 try:
                     cfg = json.loads(dados_anuncio.get('config_midia') or '{}')
@@ -7398,29 +8008,69 @@ class AppInterface:
                         _tam_img["h"] = int(cfg["h"] or 0)
                         _tam_img["x"] = int(cfg.get("x") or 0)
                         _tam_img["y"] = int(cfg.get("y") or 0)
+                        # Caixa de texto salva (tx/ty/tw/th/ts), se houver.
+                        tw = int(cfg.get("tw") or 0)
+                        th = int(cfg.get("th") or 0)
+                        if tw > 0 and th > 0:
+                            _tam_txt["w"] = tw
+                            _tam_txt["h"] = th
+                            _tam_txt["x"] = int(cfg.get("tx") or 0)
+                            _tam_txt["y"] = int(cfg.get("ty") or 0)
+                            _tam_txt["s"] = float(cfg.get("ts") or 1.0)
                 except (ValueError, TypeError):
                     pass
 
             def _ler_texto() -> str:
-                """Lê o texto do widget atual de conteúdo (e sincroniza o guardado)."""
+                """Lê o texto atual (widget ou slides abertos) e sincroniza.
+
+                Para anúncios de slide (múltiplas telas), devolve o texto que
+                representa TODOS os slides separados por linha em branco
+                (um slide por parágrafo — mesmo formato da projeção).
+                """
+                if _slides_estado["modo"]:
+                    lista = _slides_estado["lista"]
+                    idx = _slides_estado["idx"]
+                    if 0 <= idx < len(lista):
+                        _widget_texto_slide = _slides_estado.get("w")
+                        if _widget_texto_slide is not None:
+                            lista[idx]["texto"] = _widget_texto_slide.get(
+                                '1.0', tk.END).strip()
+                        _texto_salvo["t"] = "\n\n".join(
+                            s.get("texto", '') for s in lista)
+                    return _texto_salvo["t"]
                 w = _widget_texto.get("w")
                 if w is not None:
                     _texto_salvo["t"] = w.get('1.0', tk.END).strip()
                 return _texto_salvo["t"]
 
-            def _montar_painel_imagem(container, texto_widget, caminho) -> None:
+            def _montar_painel_imagem(container, texto_widget, caminho,
+                                      tam_img=None, tam_txt=None,
+                                      texto_salvo=None, widget_texto=None) -> None:
                 """Prévia única: o texto + a imagem no MESMO canvas, como será projetado.
 
                 Coordenadas em espaço virtual 1440x1080 (o mesmo da composição no
                 telão); o canvas mostra uma miniatura proporcional. A imagem fica
                 por cima do texto, arrastável e redimensionável pelas alças.
+
+                Por padrão usa o estado compartilhado do anúncio de imagem única.
+                Passando tam_img/tam_txt/texto_salvo/widget_texto (e o container
+                de um Toplevel), a MESMA prévia edita um slide específico do modo
+                multi-slide, sem tocar no estado do editor principal.
                 """
+                if tam_img is None:
+                    tam_img = _tam_img
+                if tam_txt is None:
+                    tam_txt = _tam_txt
+                if texto_salvo is None:
+                    texto_salvo = _texto_salvo
+                if widget_texto is None:
+                    widget_texto = _widget_texto
                 try:
                     from PIL import Image
                     with Image.open(caminho) as im:
-                        _tam_img["orig"] = im.size
+                        tam_img["orig"] = im.size
                 except Exception:
-                    _tam_img["orig"] = None
+                    tam_img["orig"] = None
 
                 VW, VH = 1440, 1080
                 ESCALA = 1 / 3.0
@@ -7441,7 +8091,7 @@ class AppInterface:
 
                 texto_widget.config(height=5)
                 texto_widget.pack(fill='x', side='top', pady=(0, 6))
-                _widget_texto["w"] = texto_widget
+                widget_texto["w"] = texto_widget
 
                 quadro = tk.Frame(painel, bg='#0d1117')
                 quadro.pack(fill='both', expand=True)
@@ -7449,7 +8099,7 @@ class AppInterface:
                                    highlightthickness=0)
                 canvas.pack(anchor='center')
 
-                origem_img = _tam_img.get("orig")
+                origem_img = tam_img.get("orig")
                 if not origem_img:
                     canvas.create_text(CW // 2, CH // 2,
                                        text="Imagem inválida", fill='#8b949e',
@@ -7458,10 +8108,10 @@ class AppInterface:
                 ow, oh = origem_img
                 aspect = ow / max(1, oh)
 
-                prefe_w = _tam_img.get("w")
-                prefe_h = _tam_img.get("h")
-                prefe_x = _tam_img.get("x")
-                prefe_y = _tam_img.get("y")
+                prefe_w = tam_img.get("w")
+                prefe_h = tam_img.get("h")
+                prefe_x = tam_img.get("x")
+                prefe_y = tam_img.get("y")
                 tem_posicao = bool(prefe_w and prefe_h and prefe_x and prefe_y)
 
                 if tem_posicao:
@@ -7488,9 +8138,9 @@ class AppInterface:
                     novo_x = VW - margem_hv - novo_w
                     novo_y = (VH - novo_h) // 2
 
-                tam = {"w": novo_w, "h": novo_h}
-                pos = {"x": novo_x, "y": novo_y}
-                _tam_img.update({"w": novo_w, "h": novo_h, "x": novo_x, "y": novo_y})
+                pos = {"x": novo_x, "y": novo_y, "w": novo_w, "h": novo_h}
+                tam = pos
+                tam_img.update({"w": novo_w, "h": novo_h, "x": novo_x, "y": novo_y})
 
                 PREVIEW_OK = [True]
                 _photo_atual = [None]
@@ -7516,6 +8166,16 @@ class AppInterface:
 
                 itens = {}
 
+                # Caixa de texto padrão quando o anúncio ainda não salvou uma
+                # (layout lado a lado, com a mesma largura/dimensão da projeção).
+                if tam_txt.get("w") is None:
+                    caixa = _caixa_texto_padrao(
+                        texto_salvo.get("t") or "", area_wv, area_hv,
+                        margem_hv, margem_vv, aspect_imagem=aspect)
+                    tam_txt.update({"w": caixa["w"], "h": caixa["h"],
+                                     "x": caixa["x"], "y": caixa["y"],
+                                     "s": float(caixa.get("s") or 1.0)})
+
                 def _limpar_canvas():
                     for valor in list(itens.values()):
                         lista = valor if isinstance(valor, (list, tuple)) else (valor,)
@@ -7526,9 +8186,8 @@ class AppInterface:
                                 pass
                     itens.clear()
 
-                def _desenhar_marcadores(x, y, w, h):
-                    cor = '#58a6ff'
-                    s = 8
+                def _desenhar_alcas(x, y, w, h, prefixo, cor):
+                    s = 10
                     posicoes = {
                         "nw": (x, y), "n": (x + w // 2, y), "ne": (x + w, y),
                         "w": (x, y + h // 2), "e": (x + w, y + h // 2),
@@ -7536,80 +8195,13 @@ class AppInterface:
                         "se": (x + w, y + h),
                     }
                     for nome, (px, py) in posicoes.items():
-                        itens["h_" + nome] = canvas.create_rectangle(
+                        itens[prefixo + "_" + nome] = canvas.create_rectangle(
                             px - s // 2, py - s // 2, px + s // 2, py + s // 2,
                             fill=cor, outline='white')
 
-                def _renderizar_texto_canvas():
-                    for it in list(itens.get("txt", [])):
-                        try:
-                            canvas.delete(it)
-                        except tk.TclError:
-                            pass
-                    itens["txt"] = []
-                    ww = _widget_texto.get("w")
-                    txt = ww.get('1.0', tk.END).strip() if ww else (
-                        str(_texto_salvo.get("t") or ""))
-                    if not txt:
-                        return
-                    try:
-                        from PIL import Image as _PI
-                        from PIL import ImageDraw as _PD
-                        dummy = _PI.new("RGBA", (8, 8))
-                        dr = _PD.Draw(dummy)
-                        fonte, linhas = _carregar_fonte_atual(
-                            dr, txt.upper(), area_wv, area_hv - margem_vv)
-                        fam = "Helvetica"
-                        try:
-                            fam = fonte.getname()[0]
-                        except Exception:
-                            pass
-                        pt = max(5, int(fonte.size * ESCALA * 0.75))
-                        passo = fonte.size + max(1, fonte.size // 5)
-                        mh = margem_hv * ESCALA
-                        my = (margem_vv + 20) * ESCALA
-                        for i, ln in enumerate(linhas):
-                            if ln:
-                                itens["txt"].append(canvas.create_text(
-                                    mh, my + i * passo * ESCALA, text=ln,
-                                    anchor='nw', fill='#c9d1d9',
-                                    font=(fam, pt, 'bold')))
-                    except Exception:
-                        return
-
-                def _redesenhar(final=False):
-                    _limpar_canvas()
-                    w, h = tam["w"], tam["h"]
-                    x, y = pos["x"], pos["y"]
-                    _tam_img["x"] = int(x)
-                    _tam_img["y"] = int(y)
-                    _tam_img["w"] = int(w)
-                    _tam_img["h"] = int(h)
-                    # 1) texto por baixo (mesma posição/margens da projeção)
-                    _renderizar_texto_canvas()
-                    # 2) imagem por cima, na posição ajustada
-                    px, py = int(x * ESCALA), int(y * ESCALA)
-                    pw, ph = max(1, int(w * ESCALA)), max(1, int(h * ESCALA))
-                    itens["fundo"] = canvas.create_rectangle(
-                        px, py, px + pw, py + ph, fill='#0d1117',
-                        outline=('#f0c040' if not final else '#3fb950'),
-                        width=2 if final else 1)
-                    foto = _gerar_foto(w, h) if final else None
-                    if foto is not None:
-                        itens["foto"] = canvas.create_image(px, py, image=foto, anchor="nw")
-                    else:
-                        itens["placeholder"] = canvas.create_text(
-                            px + pw // 2, py + ph // 2,
-                            text="", fill='#8b949e', font=("Arial", 12))
-                    # 3) alças por cima de tudo
-                    _desenhar_marcadores(px, py, pw, ph)
-
-                def _alca_em(px, py):
-                    chaves = [("nw", "h_nw"), ("n", "h_n"), ("ne", "h_ne"),
-                              ("w", "h_w"), ("e", "h_e"),
-                              ("sw", "h_sw"), ("s", "h_s"), ("se", "h_se")]
-                    for nome, key in chaves:
-                        it_id = itens.get(key)
+                def _alca_em(px, py, prefixo):
+                    for nome in ("nw", "n", "ne", "w", "e", "sw", "s", "se"):
+                        it_id = itens.get(prefixo + "_" + nome)
                         if it_id is None:
                             continue
                         try:
@@ -7620,90 +8212,230 @@ class AppInterface:
                             return nome
                     return None
 
-                _estado = {"modo": None, "alca": None, "press_px": (0, 0),
-                           "ix": 0, "iy": 0, "iw": 0, "ih": 0, "aspect": aspect}
+                def _renderizar_texto_caixa():
+                    """Desenha a caixa de texto (contorno + alças + conteúdo).
+
+                    A caixa é SEMPRE desenhada (mesmo com texto vazio) para que
+                    o usuário possa arrastá-la pelo centro e redimensioná-la.
+                    O preenchimento translúcido deixa o "meio" da caixa visível
+                    e arrastável, exatamente como o meio da imagem.
+                    """
+                    for chave in list(itens):
+                        if chave.startswith("t_"):
+                            try:
+                                canvas.delete(itens[chave])
+                            except tk.TclError:
+                                pass
+                            del itens[chave]
+
+                    tx = tam_txt.get("x") or 0
+                    ty = tam_txt.get("y") or 0
+                    tw = max(60, int(tam_txt.get("w") or 60))
+                    th = max(60, int(tam_txt.get("h") or 60))
+                    px, py = int(tx * ESCALA), int(ty * ESCALA)
+                    pw, ph = max(1, int(tw * ESCALA)), max(1, int(th * ESCALA))
+                    # Preenchimento translúcido que torna a região arrastável.
+                    itens["t_fill"] = canvas.create_rectangle(
+                        px, py, px + pw, py + ph, fill='#5c4304', outline='')
+                    itens["t_box"] = canvas.create_rectangle(
+                        px, py, px + pw, py + ph, outline='#f0c040',
+                        dash=(4, 3), width=2)
+
+                    ww = widget_texto.get("w")
+                    txt = ww.get('1.0', tk.END).strip() if ww else (
+                        str(texto_salvo.get("t") or ""))
+                    if not txt:
+                        return
+                    escala = float(tam_txt.get("s") or 1.0)
+                    fonte_pil, linhas = _calcular_texto_em_caixa(
+                        txt, tw, th, base_pct=0.10 * escala)
+                    familia = _fonte_familia_do_pil(fonte_pil)
+                    passo = fonte_pil.size + max(1, fonte_pil.size // 5)
+                    cx = px + pw // 2
+                    cy_txt = py + ph // 2 - (passo * len(linhas) * ESCALA) // 2
+                    for i, ln in enumerate(linhas):
+                        if ln:
+                            itens["t_txt_" + str(i)] = canvas.create_text(
+                                cx, cy_txt + i * passo * ESCALA, text=ln,
+                                anchor='n', width=pw, fill='#c9d1d9',
+                                font=(familia, max(
+                                    8, int(fonte_pil.size * ESCALA)), 'bold'))
+                    # Alças do texto por cima do conteúdo.
+                    _desenhar_alcas(px, py, pw, ph, "t_", '#e3b341')
+
+                def _redesenhar(final=False):
+                    _limpar_canvas()
+                    w, h = tam["w"], tam["h"]
+                    x, y = pos["x"], pos["y"]
+                    tam_img["x"] = int(x)
+                    tam_img["y"] = int(y)
+                    tam_img["w"] = int(w)
+                    tam_img["h"] = int(h)
+                    # 1) texto em caixa ajustável (posição/tamanho próprios)
+                    _renderizar_texto_caixa()
+                    # 2) imagem, na posição ajustada
+                    px, py = int(x * ESCALA), int(y * ESCALA)
+                    pw, ph = max(1, int(w * ESCALA)), max(1, int(h * ESCALA))
+                    itens["fundo"] = canvas.create_rectangle(
+                        px, py, px + pw, py + ph, fill='#0d1117',
+                        outline=('#58a6ff' if not final else '#3fb950'),
+                        width=2 if final else 1)
+                    foto = _gerar_foto(w, h) if final else None
+                    if foto is not None:
+                        itens["foto"] = canvas.create_image(px, py, image=foto, anchor="nw")
+                    else:
+                        itens["placeholder"] = canvas.create_text(
+                            px + pw // 2, py + ph // 2,
+                            text="", fill='#8b949e', font=("Arial", 12))
+                    # 3) alças da imagem por cima de tudo
+                    _desenhar_alcas(px, py, pw, ph, "h_", '#58a6ff')
+
+                _estado = {"modo": None, "alvo": None, "alca": None,
+                           "press_px": (0, 0), "ix": 0, "iy": 0, "iw": 0, "ih": 0}
                 _estado_final = [True]
 
-                def _em_retangulo(px, py):
+                def _em_retangulo_img(px, py):
                     vx = px / ESCALA
                     vy = py / ESCALA
                     return (pos["x"] <= vx <= pos["x"] + tam["w"]
                             and pos["y"] <= vy <= pos["y"] + tam["h"])
 
-                def _on_press(e):
-                    _estado["modo"] = None
-                    alca = _alca_em(e.x, e.y)
-                    if alca:
-                        _estado.update({"modo": "resize", "alca": alca,
-                                        "press_px": (e.x, e.y),
-                                        "ix": pos["x"], "iy": pos["y"],
-                                        "iw": tam["w"], "ih": tam["h"]})
-                        return
-                    if _em_retangulo(e.x, e.y):
-                        _estado.update({"modo": "move", "alca": None,
-                                        "press_px": (e.x, e.y),
-                                        "ix": pos["x"], "iy": pos["y"],
-                                        "iw": tam["w"], "ih": tam["h"]})
+                def _em_retangulo_txt(px, py):
+                    vx = px / ESCALA
+                    vy = py / ESCALA
+                    tx = int(tam_txt.get("x") or 0)
+                    ty = int(tam_txt.get("y") or 0)
+                    tw = max(60, int(tam_txt.get("w") or 60))
+                    th = max(60, int(tam_txt.get("h") or 60))
+                    return (tx <= vx <= tx + tw and ty <= vy <= ty + th)
 
-                def _on_motion(e):
-                    if not _estado["modo"]:
+                def _on_press(e):
+                    _estado.update({"modo": None, "alvo": None, "alca": None})
+                    alca_i = _alca_em(e.x, e.y, "h_")
+                    if alca_i:
+                        _estado.update({"modo": "resize", "alvo": "img",
+                                        "alca": alca_i, "press_px": (e.x, e.y),
+                                        "ix": pos["x"], "iy": pos["y"],
+                                        "iw": tam["w"], "ih": tam["h"]})
                         return
+                    if _em_retangulo_img(e.x, e.y):
+                        _estado.update({"modo": "move", "alvo": "img",
+                                        "alca": None, "press_px": (e.x, e.y),
+                                        "ix": pos["x"], "iy": pos["y"],
+                                        "iw": tam["w"], "ih": tam["h"]})
+                        return
+                    alca_t = _alca_em(e.x, e.y, "t_")
+                    if alca_t:
+                        _estado.update({"modo": "resize", "alvo": "txt",
+                                        "alca": alca_t, "press_px": (e.x, e.y),
+                                        "ix": tam_txt["x"], "iy": tam_txt["y"],
+                                        "iw": tam_txt["w"], "ih": tam_txt["h"]})
+                        return
+                    if _em_retangulo_txt(e.x, e.y):
+                        _estado.update({"modo": "move", "alvo": "txt",
+                                        "alca": None, "press_px": (e.x, e.y),
+                                        "ix": tam_txt["x"], "iy": tam_txt["y"],
+                                        "iw": tam_txt["w"], "ih": tam_txt["h"]})
+                        return
+
+                def _mover_reg(vals, dx, dy, lw, lh):
+                    vals["x"] = _clamp_v(_estado["ix"] + dx, LIN_V,
+                                         max(LIN_V, VW - LIN_V - _estado["iw"]))
+                    vals["y"] = _clamp_v(_estado["iy"] + dy, LIN_V,
+                                         max(LIN_V, VH - LIN_V - _estado["ih"]))
+                    if lw is not None and lw.get("w"):
+                        lw["x"] = int(vals["x"])
+                        lw["y"] = int(vals["y"])
+                        lw["w"] = int(_estado["iw"])
+                        lw["h"] = int(_estado["ih"])
+
+                def _redimensionar_alca(vals, e, final):
+                    alca = _estado["alca"]
                     dx = (e.x - _estado["press_px"][0]) / ESCALA
                     dy = (e.y - _estado["press_px"][1]) / ESCALA
-                    if _estado["modo"] == "move":
-                        pos["x"] = _clamp_v(_estado["ix"] + dx, LIN_V,
-                                            max(LIN_V, VW - LIN_V - tam["w"]))
-                        pos["y"] = _clamp_v(_estado["iy"] + dy, LIN_V,
-                                            max(LIN_V, VH - LIN_V - tam["h"]))
-                        _redesenhar(final=True)
-                        return
-                    alca = _estado["alca"]
-                    asp = _estado["aspect"]
                     esq = alca in ("nw", "w", "sw")
                     top = alca in ("nw", "n", "ne")
                     dir_ = alca in ("ne", "e", "se")
                     bot = alca in ("sw", "s", "se")
-
                     w_lim = ((VW - LIN_V) - _estado["ix"]) if dir_ \
                         else ((_estado["ix"] + _estado["iw"]) - LIN_V)
                     h_lim = ((VH - LIN_V) - _estado["iy"]) if bot \
                         else ((_estado["iy"] + _estado["ih"]) - LIN_V)
-
+                    eh_imagem = _estado.get("alvo") == "img"
                     if alca in ("n", "s"):
                         novo_h = _clamp_v(_estado["ih"] + (dy if bot else -dy),
                                           MINV_V, h_lim)
                         if top:
-                            pos["y"] = _estado["iy"] + (_estado["ih"] - novo_h)
-                        tam["h"] = novo_h
+                            vals["y"] = _estado["iy"] + (_estado["ih"] - novo_h)
+                        vals["h"] = novo_h
                     elif alca in ("w", "e"):
                         novo_w = _clamp_v(_estado["iw"] + (dx if dir_ else -dx),
                                           MINV_V, w_lim)
                         if esq:
-                            pos["x"] = _estado["ix"] + (_estado["iw"] - novo_w)
-                        tam["w"] = novo_w
+                            vals["x"] = _estado["ix"] + (_estado["iw"] - novo_w)
+                        vals["w"] = novo_w
                     else:
+                        # Cantos: preserva a proporção atual do elemento
+                        # (imagem ou caixa de texto) — comportamento idêntico
+                        # para os dois.
+                        rap = _estado["ih"] / max(1, _estado["iw"])
                         delta = dx if abs(dx) >= abs(dy) else dy
                         novo_w = _clamp_v(_estado["iw"] + (delta if dir_ else -delta),
                                           MINV_V, w_lim)
-                        novo_h = int(novo_w / asp)
+                        novo_h = int(novo_w * rap)
                         if novo_h > h_lim:
                             novo_h = int(h_lim)
-                            novo_w = _clamp_v(int(novo_h * asp), MINV_V, w_lim)
-                            novo_h = int(novo_w / asp)
+                            novo_w = _clamp_v(int(novo_h / rap), MINV_V, w_lim)
+                            novo_h = int(novo_w * rap)
                         if novo_h < MINV_V:
                             novo_h = MINV_V
-                            novo_w = _clamp_v(int(novo_h * asp), MINV_V, w_lim)
+                            novo_w = _clamp_v(int(novo_h / rap), MINV_V, w_lim)
                         if esq:
-                            pos["x"] = _estado["ix"] + (_estado["iw"] - novo_w)
+                            vals["x"] = _estado["ix"] + (_estado["iw"] - novo_w)
                         if top:
-                            pos["y"] = _estado["iy"] + (_estado["ih"] - novo_h)
-                        tam["w"], tam["h"] = novo_w, novo_h
+                            vals["y"] = _estado["iy"] + (_estado["ih"] - novo_h)
+                        vals["w"], vals["h"] = novo_w, novo_h
+                    if final:
+                        if vals is pos:
+                            tam_img.update({"w": int(vals["w"]), "h": int(vals["h"]),
+                                             "x": int(vals["x"]), "y": int(vals["y"])})
+                        else:
+                            tam_txt.update({"w": int(vals["w"]), "h": int(vals["h"]),
+                                             "x": int(vals["x"]), "y": int(vals["y"])})
+
+                def _on_motion(e):
+                    if not _estado["modo"]:
+                        return
+                    if _estado["alvo"] == "img":
+                        vals, lw = pos, tam_img
+                    else:
+                        vals, lw = tam_txt, tam_txt
+                    if _estado["modo"] == "move":
+                        dx = (e.x - _estado["press_px"][0]) / ESCALA
+                        dy = (e.y - _estado["press_px"][1]) / ESCALA
+                        _mover_reg(vals, dx, dy, lw, None)
+                        _redesenhar(final=True)
+                        return
+                    _redimensionar_alca(vals, e, final=False)
                     _redesenhar(final=False)
 
                 def _on_release(e):
                     if _estado["modo"]:
+                        if _estado.get("alvo") == "txt" and _estado["modo"] == "resize":
+                            _redimensionar_alca(tam_txt, e, final=True)
+                        elif _estado.get("alvo") == "img" and _estado["modo"] == "resize":
+                            _redimensionar_alca(pos, e, final=True)
+                        elif _estado.get("modo") == "move":
+                            if _estado.get("alvo") == "txt":
+                                tam_txt.update({"x": int(tam_txt["x"]),
+                                                 "y": int(tam_txt["y"])})
+                            else:
+                                tam_img.update({"x": int(pos["x"]),
+                                                 "y": int(pos["y"])})
                         _estado["modo"] = None
+                        _estado["alvo"] = None
                         _estado["alca"] = None
+                        # Re-aplica alças sob a prévia final
                         _redesenhar(final=True)
 
                 def _ao_digitar(e):
@@ -7719,10 +8451,337 @@ class AppInterface:
                 tk.Label(painel,
                          text="A prévia mostra tudo como será projetado (texto + imagem "
                               "no mesmo quadro).\n"
-                              "Arraste as alças para redimensionar a imagem; "
-                              "clique e arraste sobre ela para movê-la.",
+                              "IMAGEM: arraste no meio para mover, puxe as alças "
+                              "(laterais/cantos) para redimensionar.\n"
+                              "TEXTO: a caixa amarela funciona igual — arraste no meio "
+                              "para mover, puxe as alças para redimensionar.",
                          bg='#0d1117', fg='#8b949e', justify='left',
                          font=("Arial", 9)).pack(fill='x', pady=(6, 0))
+
+            def _montar_editor_slides(container) -> None:
+                """Editor de MÚLTIPLOS slides.
+
+                Cada slide é um texto (com imagem opcional); o operador adiciona
+                quantos quiser (botão ➕), remove (➖), atribui imagem por slide
+                (🖼️) e edita o conteúdo do slide selecionado no campo abaixo.
+                Na gravação, os textos vão separados por linha em branco
+                (parágrafo) e, havendo imagens, o JSON {"mslides": [...]} em
+                config_midia.
+                """
+                _slides_estado["modo"] = True
+                if not _slides_estado["lista"]:
+                    _slides_estado["lista"] = [
+                        {"texto": "", "imagem": "", "nome": "", "config": ""}]
+                if not (0 <= _slides_estado["idx"] < len(_slides_estado["lista"])):
+                    _slides_estado["idx"] = 0
+
+                info = tk.Label(
+                    container,
+                    text="Adicione quantos slides quiser (texto e, se quiser, "
+                         "uma imagem por slide — botão 🖼️):",
+                    font=("Arial", 10, "bold"), fg='#f0c040',
+                    bg='#0d1117', anchor='w')
+                info.pack(fill='x', pady=(0, 4))
+
+                barra = tk.Frame(container, bg='#0d1117')
+                barra.pack(fill='x', pady=2)
+                tk.Button(barra, text="➕ Adicionar slide",
+                          font=("Arial", 10, "bold"),
+                          bg='#1f6feb', fg='white', activebackground='#388bfd',
+                          command=lambda: _adicionar_slide(), cursor='hand2',
+                          padx=10, pady=2).pack(side='left')
+                tk.Button(barra, text="➖ Remover slide",
+                          font=("Arial", 10, "bold"),
+                          bg='#f85149', fg='white', activebackground='#da3633',
+                          command=lambda: _remover_slide(), cursor='hand2',
+                          padx=10, pady=2).pack(side='left', padx=6)
+                tk.Button(barra, text="🖼️ Imagem do slide",
+                          font=("Arial", 10, "bold"),
+                          bg='#6e40c9', fg='white', activebackground='#8957e5',
+                          command=lambda: _escolher_imagem_slide(),
+                          cursor='hand2', padx=10, pady=2).pack(side='left')
+                tk.Button(barra, text="🗑️ Sem imagem",
+                          font=("Arial", 10, "bold"),
+                          bg='#30363d', fg='#c9d1d9',
+                          activebackground='#484f58',
+                          command=lambda: _remover_imagem_slide(),
+                          cursor='hand2', padx=10, pady=2).pack(side='left', padx=6)
+                contador = tk.Label(barra, text="slide 1 de 1",
+                                    font=("Arial", 10),
+                                    fg='#8b949e', bg='#0d1117')
+                contador.pack(side='right')
+
+                coluna = tk.Frame(container, bg='#0d1117')
+                coluna.pack(fill='both', expand=True, pady=2)
+
+                lista_box = tk.Listbox(
+                    coluna, height=4, font=("Arial", 10), bg='#21262d',
+                    fg='#c9d1d9', selectbackground='#1f6feb',
+                    selectforeground='white', activestyle='none')
+                lista_box.pack(fill='x', side='top', pady=(0, 2))
+                barra_lista = tk.Scrollbar(coluna, orient='vertical',
+                                           command=lista_box.yview)
+                lista_box.configure(yscrollcommand=barra_lista.set)
+
+                w_texto = tk.Text(coluna, font=("Arial", 11),
+                                  bg='#21262d', fg='#c9d1d9',
+                                  insertbackground='#f0c040',
+                                  wrap='word', height=8)
+                _slides_estado["w"] = w_texto
+                w_texto.pack(side='bottom', fill='both', expand=True)
+
+                previa = tk.Label(coluna, text="🖼 Sem imagem neste slide",
+                                  font=("Arial", 9), fg='#8b949e', bg='#161b22',
+                                  height=4, anchor='center')
+                previa.pack(fill='x', side='top', pady=(0, 4))
+
+                def _atualizar_previa():
+                    """Mostra a imagem do slide selecionado (miniatura)."""
+                    idx = _slides_estado["idx"]
+                    lista = _slides_estado["lista"]
+                    caminho = ''
+                    if 0 <= idx < len(lista):
+                        caminho = (lista[idx].get("imagem") or '')
+                    if caminho and os.path.isfile(caminho):
+                        try:
+                            from PIL import Image, ImageTk
+                            with Image.open(caminho) as im:
+                                im = im.convert("RGBA")
+                                metodo = (
+                                    getattr(Image, "LANCZOS", None)
+                                    or getattr(Image, "BICUBIC", None)
+                                    or getattr(Image, "ANTIALIAS", None))
+                                im.thumbnail((max(80, coluna.winfo_width() - 12), 150),
+                                             metodo)
+                                foto = ImageTk.PhotoImage(im, master=editar_win)
+                            previa.config(text='', image=foto, bg='#161b22',
+                                          height=0)
+                            previa.imagem = foto
+                        except Exception as e:
+                            print(f"⚠️ Não foi possível mostrar a miniatura: {e}")
+                            previa.config(text="⚠️ Não foi possível exibir a imagem",
+                                          image='', bg='#0d1117', height=2)
+                    else:
+                        previa.config(text="🖼 Sem imagem neste slide", image='',
+                                      bg='#161b22', height=4)
+
+                def _atualizar_contador():
+                    total = len(_slides_estado["lista"])
+                    atual = total if _slides_estado["idx"] >= total else _slides_estado["idx"] + 1
+                    contador.config(text=f"slide {max(atual, 1)} de {total}")
+
+                def _atualizar_lista():
+                    lista_box.delete(0, tk.END)
+                    for i, t in enumerate(_slides_estado["lista"]):
+                        rotulo = (t.get("texto") or '').strip().split('\n')[0] or f"(slide {i + 1})"
+                        if len(rotulo) > 36:
+                            rotulo = rotulo[:36] + "…"
+                        marcador = "🖼" if t.get("imagem") else "·"
+                        lista_box.insert(tk.END, f"{i + 1}. {marcador} {rotulo}")
+
+                def _commit_slide():
+                    """Grava o conteúdo do campo no slide atualmente selecionado."""
+                    lista = _slides_estado["lista"]
+                    idx = _slides_estado["idx"]
+                    if 0 <= idx < len(lista):
+                        lista[idx]["texto"] = w_texto.get('1.0', tk.END).strip()
+
+                def _carregar_slide():
+                    idx = _slides_estado["idx"]
+                    lista = _slides_estado["lista"]
+                    w_texto.delete('1.0', tk.END)
+                    if 0 <= idx < len(lista):
+                        w_texto.insert('1.0', lista[idx]["texto"])
+                    if idx < lista_box.size():
+                        lista_box.selection_clear(0, tk.END)
+                        lista_box.selection_set(idx)
+                        lista_box.see(idx)
+                    _atualizar_contador()
+                    _atualizar_previa()
+
+                def _escolher_slide(event=None):
+                    _commit_slide()
+                    sel = lista_box.curselection()
+                    if sel:
+                        _slides_estado["idx"] = int(sel[0])
+                    _carregar_slide()
+
+                def _adicionar_slide():
+                    _commit_slide()
+                    _slides_estado["lista"].append(
+                        {"texto": "", "imagem": "", "nome": "", "config": ""})
+                    _slides_estado["idx"] = len(_slides_estado["lista"]) - 1
+                    _atualizar_lista()
+                    _carregar_slide()
+                    w_texto.focus_set()
+
+                def _remover_slide():
+                    _commit_slide()
+                    lista = _slides_estado["lista"]
+                    if len(lista) <= 1:
+                        tkinter.messagebox.showinfo(
+                            "Dica", "É necessário manter pelo menos um slide.",
+                            parent=editar_win)
+                        return
+                    idx = min(_slides_estado["idx"], len(lista) - 1)
+                    lista.pop(idx)
+                    _slides_estado["idx"] = max(0, idx - 1)
+                    _atualizar_lista()
+                    _carregar_slide()
+
+                def _escolher_imagem_slide():
+                    """Associa uma imagem ao slide atualmente selecionado."""
+                    _commit_slide()
+                    idx = _slides_estado["idx"]
+                    lista = _slides_estado["lista"]
+                    if not (0 <= idx < len(lista)):
+                        return
+                    try:
+                        selecionados = _escolher_arquivos_usuario(
+                            parent=editar_win, titulo="Escolher imagem do slide",
+                            sufixos=tuple(sorted(SUFIXOS_IMAGEM)))
+                    except Exception:
+                        selecionados = ()
+                    if not selecionados:
+                        return
+                    caminho = selecionados[0]
+                    if not os.path.normcase(os.path.abspath(caminho)).startswith(
+                            os.path.normcase(os.path.abspath(UPLOAD_FOLDER))):
+                        copiado = _copiar_arquivo_uploads(caminho)
+                        if copiado is None:
+                            tkinter.messagebox.showwarning(
+                                "⚠️", "Não foi possível copiar a imagem para uploads.",
+                                parent=editar_win)
+                            return
+                        caminho = copiado
+                    lista[idx]["imagem"] = caminho
+                    lista[idx]["nome"] = os.path.basename(caminho)
+                    _atualizar_lista()
+                    _carregar_slide()
+
+                def _remover_imagem_slide():
+                    """Remove a imagem do slide atualmente selecionado."""
+                    _commit_slide()
+                    idx = _slides_estado["idx"]
+                    lista = _slides_estado["lista"]
+                    if not (0 <= idx < len(lista)) or not lista[idx].get("imagem"):
+                        return
+                    lista[idx]["imagem"] = ""
+                    lista[idx]["nome"] = ""
+                    _atualizar_lista()
+                    _carregar_slide()
+
+                def _abrir_previa_slide(idx):
+                    """Abre a prévia interativa (imagem + texto) de um slide."""
+                    lista = _slides_estado["lista"]
+                    if not (0 <= idx < len(lista)):
+                        return
+                    _commit_slide()
+                    slide = lista[idx]
+                    caminho = (slide.get("imagem") or '').strip()
+                    if not os.path.isfile(caminho):
+                        tkinter.messagebox.showinfo(
+                            "Prévia",
+                            "Este slide não tem imagem para posicionar.\n"
+                            "Associe uma imagem com o botão 🖼️ Imagem deste slide.",
+                            parent=editar_win)
+                        return
+
+                    tam_img = {"w": None, "h": None, "x": None, "y": None,
+                               "orig": None}
+                    tam_txt = {"w": None, "h": None, "x": None, "y": None,
+                               "s": 1.0}
+                    txt_salvo = {"t": (slide.get("texto") or '').strip()}
+                    try:
+                        cfg_s = json.loads(slide.get("config") or '{}')
+                        if isinstance(cfg_s, dict) and cfg_s.get("w"):
+                            tam_img.update(w=int(cfg_s["w"]),
+                                           h=int(cfg_s.get("h") or 0),
+                                           x=int(cfg_s.get("x") or 0),
+                                           y=int(cfg_s.get("y") or 0))
+                            if int(cfg_s.get("tw") or 0) > 0 \
+                                    and int(cfg_s.get("th") or 0) > 0:
+                                tam_txt.update(
+                                    w=int(cfg_s["tw"]), h=int(cfg_s["th"]),
+                                    x=int(cfg_s.get("tx") or 0),
+                                    y=int(cfg_s.get("ty") or 0),
+                                    s=float(cfg_s.get("ts") or 1.0))
+                    except (ValueError, TypeError, AttributeError):
+                        pass
+
+                    prev_win = tk.Toplevel(editar_win)
+                    prev_win.title(f"Posicionar imagem e texto — slide {idx + 1}")
+                    prev_win.geometry("700x760")
+                    prev_win.configure(bg='#0d1117')
+                    prev_win.transient(editar_win)
+
+                    def _salvar_previa():
+                        slide["texto"] = \
+                            w_texto_previa.get('1.0', tk.END).strip()
+                        slide["config"] = json.dumps({
+                            "w": int(tam_img.get("w") or 0),
+                            "h": int(tam_img.get("h") or 0),
+                            "x": int(tam_img.get("x") or 0),
+                            "y": int(tam_img.get("y") or 0),
+                            "tx": int(tam_txt.get("x") or 0),
+                            "ty": int(tam_txt.get("y") or 0),
+                            "tw": int(tam_txt.get("w") or 0),
+                            "th": int(tam_txt.get("h") or 0),
+                            "ts": float(tam_txt.get("s") or 1.0),
+                        }, separators=(',', ':'))
+                        _atualizar_lista()
+                        if _slides_estado["idx"] == idx:
+                            _carregar_slide()
+                        prev_win.destroy()
+
+                    def _fechar_previa(event=None):
+                        prev_win.destroy()
+
+                    barra = tk.Frame(prev_win, bg='#0d1117')
+                    barra.pack(fill='x', side='bottom', pady=8)
+                    tk.Button(barra, text="💾 Salvar posição deste slide",
+                              font=("Arial", 11, "bold"), bg='#238636',
+                              fg='white', activebackground='#2ea043',
+                              command=_salvar_previa, cursor='hand2',
+                              padx=18, pady=4).pack(side='left', padx=(12, 6))
+                    tk.Button(barra, text="✖ Fechar", font=("Arial", 11),
+                              bg='#30363d', fg='#f0f6fc',
+                              activebackground='#484f58',
+                              command=_fechar_previa, cursor='hand2',
+                              padx=12, pady=4).pack(side='left')
+                    tk.Label(barra, text="", bg='#0d1117')\
+                        .pack(side='left', expand=True)
+
+                    w_texto_previa = tk.Text(prev_win, font=("Arial", 11),
+                                             bg='#21262d', fg='#c9d1d9',
+                                             insertbackground='#f0c040',
+                                             wrap='word', height=8)
+                    _montar_painel_imagem(prev_win, w_texto_previa,
+                                          caminho, tam_img, tam_txt,
+                                          txt_salvo, {"w": None})
+                    w_texto_previa.delete('1.0', tk.END)
+                    w_texto_previa.insert('1.0', txt_salvo["t"])
+                    prev_win.after(60, prev_win.grab_set)
+                    prev_win.bind('<Escape>', _fechar_previa)
+
+                def _previa_duplo_clique(event=None):
+                    sel = lista_box.curselection()
+                    if not sel:
+                        return
+                    idx = int(sel[0])
+                    if idx != _slides_estado["idx"]:
+                        _slides_estado["idx"] = idx
+                        _carregar_slide()
+                    _abrir_previa_slide(idx)
+
+                w_texto.bind('<KeyRelease>', lambda e: _commit_slide())
+                lista_box.bind('<<ListboxSelect>>', _escolher_slide)
+                lista_box.bind('<Double-Button-1>', _previa_duplo_clique)
+                lista_box.bind('<Delete>', lambda e: _remover_slide())
+                lista_box.bind('<Up>', _carregar_slide)
+                lista_box.bind('<Down>', _carregar_slide)
+                _atualizar_lista()
+                _carregar_slide()
 
             def _montar_area_conteudo() -> None:
                 """Constrói a área de conteúdo conforme o tipo selecionado.
@@ -7730,11 +8789,25 @@ class AppInterface:
                 - 'imagem' com arquivo: prévia única com o texto do anúncio
                   E a imagem no mesmo canvas (sobre o texto), posicionáveis
                   de forma idêntica à projeção.
+                - 'slide': editor de MÚLTIPLOS slides (uma tela por parágrafo).
                 - demais: campo de texto em largura total (como antes).
                 """
                 for w in area_conteudo.winfo_children():
                     w.destroy()
                 _widget_texto["w"] = None
+                _slides_estado["modo"] = False
+                _slides_estado["w"] = None
+
+                tipo = _tipo_interno()
+                caminho = arquivo_var.get().strip()
+
+                if tipo == "slide":
+                    _montar_editor_slides(area_conteudo)
+                    return
+
+                eh_imagem = (tipo == "imagem" and caminho
+                             and os.path.isfile(caminho)
+                             and os.path.splitext(caminho)[1].lower() in SUFIXOS_IMAGEM)
 
                 texto_atual = tk.Text(area_conteudo, font=("Arial", 11),
                                       bg='#21262d', fg='#c9d1d9',
@@ -7742,12 +8815,6 @@ class AppInterface:
                                       wrap='word', height=8)
                 if _texto_salvo["t"]:
                     texto_atual.insert('1.0', _texto_salvo["t"])
-
-                tipo = _tipo_interno()
-                caminho = arquivo_var.get().strip()
-                eh_imagem = (tipo == "imagem" and caminho
-                             and os.path.isfile(caminho)
-                             and os.path.splitext(caminho)[1].lower() in SUFIXOS_IMAGEM)
 
                 if tipo == "imagem":
                     if eh_imagem:
@@ -7766,7 +8833,7 @@ class AppInterface:
                 _widget_texto["w"] = texto_atual
 
             tipo_combo.bind("<<ComboboxSelected>>",
-                            lambda e: _montar_area_conteudo())
+                            lambda e: (_ler_texto(), _montar_area_conteudo()))
             _montar_area_conteudo()
 
             if dados_anuncio:
@@ -7804,12 +8871,39 @@ class AppInterface:
                     nome_arquivo = os.path.basename(arquivo)
 
                 config_midia = ""
-                if tipo == "imagem" and _tam_img.get("w"):
-                    config_midia = json.dumps({
+                if _slides_estado["modo"]:
+                    # Anúncio de slides: se algum slide tem imagem, guarda o
+                    # JSON {"mslides": [...]} para a projeção reutilizar.
+                    lista_final = _slides_estado["lista"]
+                    tem_imagem = any(
+                        (s or {}).get("imagem") for s in lista_final)
+                    if tem_imagem:
+                        mslides = []
+                        for s in lista_final:
+                            s = s or {}
+                            mslides.append({
+                                "texto": (s.get("texto") or '').strip(),
+                                "imagem": (s.get("imagem") or ''),
+                                "nome": (s.get("nome") or ''),
+                                "config": (s.get("config") or ''),
+                            })
+                        config_midia = json.dumps({"mslides": mslides})
+                elif tipo == "imagem" and _tam_img.get("w"):
+                    cfg_final = {
                         "w": int(_tam_img["w"]),
                         "h": int(_tam_img.get("h") or 0),
                         "x": int(_tam_img.get("x") or 0),
-                        "y": int(_tam_img.get("y") or 0)})
+                        "y": int(_tam_img.get("y") or 0)}
+                    tw = int(_tam_txt.get("w") or 0)
+                    th = int(_tam_txt.get("h") or 0)
+                    if tw > 0 and th > 0:
+                        cfg_final.update({
+                            "tx": int(_tam_txt.get("x") or 0),
+                            "ty": int(_tam_txt.get("y") or 0),
+                            "tw": tw,
+                            "th": th,
+                            "ts": float(_tam_txt.get("s") or 1.0)})
+                    config_midia = json.dumps(cfg_final)
 
                 dados_finais = {
                     "titulo": titulo,
@@ -8470,7 +9564,7 @@ class AppInterface:
                   ).pack(side='left', padx=3)
         tk.Button(btn_frame, text="🎨 Projeção", font=("Arial", 11, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
-                  command=lambda: self.abrir_config_projecao_dialogo(janela),
+                  command=lambda: self.abrir_config_projecao_dialogo(janela, mostrar_cor_ref=True),
                   cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
         tk.Button(btn_frame, text="📺 Projetar", font=("Arial", 11, "bold"),

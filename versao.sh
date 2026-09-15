@@ -1,2 +1,3 @@
 #bin/env bash
-./build.sh 1.9.1 → gh release create v<nova> NavePro-1.9.1.AppImage ....
+# Fluxo de release automatizado: commit + versão + AppImage + GitHub + release.
+./publicar.sh 1.9.x
