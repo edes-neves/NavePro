@@ -157,7 +157,7 @@ def _baixar(url, timeout: int = 8, **kwargs):
 # CONSTANTES
 # ────────────────────────────────────────────────────────────────────
 
-APP_VERSION: str = "1.9.4"
+APP_VERSION: str = "1.9.5"
 CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
 PLAYER_PADRAO: str = "mpv" if _eh_windows() else "smplayer"
 BACKEND_PORT: int = 5897
