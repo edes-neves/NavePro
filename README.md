@@ -143,7 +143,7 @@ Particularidades tratadas:
 - **Tipos de anúncio**: `slide` (texto), `imagem` (pode ter texto por cima), `vídeo`/`áudio` (tocam no player).
 - **📥 Importar Mídia**: TXT/PDF viram anúncios de texto; vídeo/áudio/imagem são copiados para `~/.navepro/uploads` e registrados no banco.
 - **📺 Projetar**:
-  - Anúncio de texto → slides em **MAIÚSCULAS** (slide 0 = título), navegação ◀/▶.
+  - Anúncio de texto → slides **respeitando a digitação do operador** (slide 0 = título), navegação ◀/▶.
   - Anúncio com imagem **e** texto → compõe a imagem sobre o texto e projeta como uma única imagem.
   - Anúncio só com imagem → projeta a imagem pura.
   - Anúncio de vídeo/áudio → toca no player (com opção de repetir).
