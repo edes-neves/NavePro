@@ -972,6 +972,60 @@ def garantir_pasta_uploads() -> bool:
     return False
 
 
+def _sincronizar_uploads_midia() -> int:
+    """Registra no banco os arquivos da pasta uploads ainda não cadastrados.
+
+    Arquivos já cadastrados (mesmo caminho_arquivo) são ignorados, então a
+    função pode ser chamada quantas vezes for preciso. Devolve a quantidade
+    de mídias sincronizadas na última chamada.
+    """
+    if not os.path.isdir(UPLOAD_FOLDER):
+        return 0
+    try:
+        registrados = {
+            r["caminho_arquivo"]
+            for r in db_query("SELECT caminho_arquivo FROM midia")
+        }
+    except Exception:
+        return 0
+    try:
+        entradas = sorted(
+            os.scandir(UPLOAD_FOLDER), key=lambda e: (e.name or "").casefold()
+        )
+    except (PermissionError, OSError):
+        return 0
+    novos = 0
+    for ent in entradas:
+        try:
+            if not ent.is_file():
+                continue
+            caminho = ent.path
+            if caminho in registrados:
+                continue
+            tipo = detectar_tipo_arquivo(caminho)
+            if not tipo:
+                continue
+            mime, _ = mimetypes.guess_type(caminho)
+            try:
+                tamanho: int = ent.stat().st_size
+            except OSError:
+                tamanho = 0
+            db_execute("""
+                INSERT INTO midia
+                    (nome_original, nome_exibicao, tipo, caminho_arquivo,
+                     tamanho_bytes, mime_type, data_upload, data_modificacao)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """, (ent.name, os.path.splitext(ent.name)[0], tipo, caminho,
+                  tamanho, mime or ''))
+            novos += 1
+        except Exception:
+            continue
+    if novos:
+        DatabaseManager().reload_cache()
+        print(f"📦 {novos} mídia(s) sincronizada(s) da pasta uploads.")
+    return novos
+
+
 # As funções inicializar_banco e garantir_pasta_uploads são
 # chamadas dentro de AppInterface.__init__ para evitar efeitos
 # colaterais na importação do módulo.
@@ -2839,13 +2893,14 @@ class TelaoWindow:
         self.canvas.itemconfig(self.temp_text, text="", state="hidden")
         self.canvas.itemconfig(self.ref_text, text="", state="hidden")
 
-        # Texto em MAIÚSCULAS dentro da caixa ajustada no editor.
+        # Texto como digitado pelo usuário, dentro da caixa ajustada no editor.
         texto = (texto or "").strip()
         if not texto:
             # Slide só de imagem: esconde o texto de um slide anterior
             # (overlay_text foi usado pela projeção/tela anterior).
             self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
             self._current_text = ""
+        self._composicao_aspect_imagem = ow / max(1.0, oh)
         caixa = _caixa_texto_config(config_midia, texto,
                                     aspect_imagem=ow / max(1.0, oh))
         escala_x = w / 1440.0
@@ -3590,6 +3645,77 @@ def _numero_do_titulo(titulo: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+def _montar_slides_letra(titulo: str, letra_completa: str) -> list:
+    """Monta os slides de uma letra de hino (título + uma linha de verso por
+    slide, em maiúsculas), no mesmo formato usado pela janela Hinos/Letras."""
+    slides = []
+    titulo = (titulo or "").strip().upper()
+    if titulo:
+        slides.append(titulo)
+    letra = (letra_completa or "").strip()
+    for verso in re.split(r'\n\s*\n', letra):
+        for linha in verso.split('\n'):
+            linha = linha.strip().upper()
+            if linha:
+                slides.append(linha)
+    if not slides:
+        slides = [titulo or "HINO"]
+    return slides
+
+
+def _buscar_hino_por_termo(termo: str) -> List[Dict]:
+    """Busca hino por número no início do título ou por trecho (título/artista).
+
+    Ex.: '46' ou '46 - Dia de Chuva' encontra o hino cujo título começa com o
+    número 46; qualquer outro termo busca por título/artista/letra (LIKE).
+    """
+    termo = (termo or "").strip()
+    if not termo:
+        return []
+    m = re.match(r"^\s*(\d+)", termo)
+    if m:
+        num = int(m.group(1))
+        rows = [r for r in db_query("SELECT * FROM letras WHERE ativo = 1 ORDER BY titulo")
+                if _numero_do_titulo(r["titulo"]) == num]
+        if rows:
+            return rows
+    busca_like = f"%{termo}%"
+    return db_query(
+        "SELECT * FROM letras WHERE ativo = 1 AND "
+        "(titulo LIKE ? OR artista LIKE ? OR letra_completa LIKE ?) "
+        "ORDER BY titulo", (busca_like, busca_like, busca_like))
+
+
+def _buscar_midia_por_termo(termo: str, tipo: str = 'video') -> List[Dict]:
+    """Busca mídia (video/audio) por número no início do nome ou por trecho.
+
+    Para termos numéricos, prioriza correspondência com o nome (ex.: '46'
+    acha '46 - Dia de Chuva'); só cai no id interno da tabela caso nenhum
+    nome comece pelo número. Isso evita que o id do banco (não relacionado
+    ao número do hino) seja escolhido por engano.
+    """
+    termo = (termo or "").strip()
+    if not termo:
+        return []
+    if termo.isdigit():
+        num = termo
+        rows = db_query(
+            "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND ("
+            "nome_exibicao = ? OR nome_exibicao LIKE ? OR nome_exibicao LIKE ?"
+            ") ORDER BY nome_exibicao",
+            (tipo, num, f"{num} -%", f"{num}-%"))
+        if not rows:
+            rows = db_query(
+                "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND id = ?",
+                (tipo, num))
+        return rows
+    busca_like = f"%{unicodedata.normalize('NFC', termo).casefold()}%"
+    return db_query(
+        "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND ("
+        "LOWER(nome_exibicao) LIKE ? OR LOWER(nome_original) LIKE ?"
+        ") ORDER BY nome_exibicao", (tipo, busca_like, busca_like))
+
+
 # ────────────────────────────────────────────────────────────────────
 # ANÚNCIOS — ARMAZENAMENTO EM ARQUIVO JSON (FORA DO BANCO DE DADOS)
 # ────────────────────────────────────────────────────────────────────
@@ -3685,6 +3811,108 @@ def _listar_anuncios_db(busca: str = "") -> List[Dict]:
     except Exception as e:
         print(f"⚠️ Erro ao listar anúncios: {e}")
         return []
+
+
+def _buscar_anuncio_por_ref(ref_id: object) -> Optional[dict]:
+    """Busca um anúncio ativo pelo id da tabela 'anuncios' (None se não achar)."""
+    try:
+        rid = int(ref_id) if ref_id is not None else None
+    except (TypeError, ValueError):
+        return None
+    if not rid:
+        return None
+    for a in _listar_anuncios_db():
+        if int(a.get('id') or 0) == rid:
+            return a
+    return None
+
+
+def _buscar_anuncio_por_termo(termo: str) -> List[dict]:
+    """Busca anúncio por número (id ou nº inicial do título) ou por nome/trecho."""
+    termo = (termo or "").strip()
+    if not termo:
+        return []
+    anuncios = _listar_anuncios_db()
+    if termo.isdigit():
+        tid = int(termo)
+        for a in anuncios:
+            if int(a.get('id') or 0) == tid:
+                return [a]
+        return [a for a in anuncios
+                if _numero_do_titulo(a.get('titulo') or '') == tid]
+    norm = remover_acentos(termo).casefold()
+    norm_anuncios = [
+        (remover_acentos((a.get('titulo') or '')).casefold(), a)
+        for a in anuncios]
+    exatos = [a for n, a in norm_anuncios if n == norm]
+    if exatos:
+        return exatos
+    por_titulo = [a for n, a in norm_anuncios if norm in n]
+    if por_titulo:
+        return por_titulo
+    return [a for a in anuncios
+            if norm in remover_acentos((a.get('categoria') or '')).casefold()
+            or norm in remover_acentos((a.get('texto') or '')).casefold()]
+
+
+def _montar_slides_anuncio_servico(anuncio: dict) -> list:
+    """Monta os slides de um anúncio (slide 0 = título; 1 parágrafo por slide),
+    no mesmo formato usado pela janela Anúncios."""
+    titulo = (anuncio.get('titulo') or '').strip()
+    texto = (anuncio.get('texto') or '').strip()
+    paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto) if seg.strip()]
+    slides = [titulo] if titulo else []
+    for paragrafo in paragrafos:
+        slides.append(paragrafo)
+    if not slides:
+        slides = [titulo or "ANÚNCIO"]
+    return slides
+
+
+def _projetar_anuncio_ordserv(telao: object, anuncio: dict) -> bool:
+    """Projeta um anúncio no telão, como a janela Anúncios faz.
+
+    O anúncio multi-slide (config_midia.mslides) projeta cada slide com seu
+    texto E imagem; anúncio de imagem única usa imagem+texto; caso contrário
+    projeta os slides de texto. Retorna True se algo foi projetado.
+    """
+    if not anuncio:
+        return False
+    tipo_an = (anuncio.get('tipo_midia') or 'slide').strip().lower()
+    arquivo = (anuncio.get('arquivo_midia') or '')
+    cfg_a: dict = {}
+    try:
+        cfg_a = json.loads(anuncio.get('config_midia') or '{}')
+        if not isinstance(cfg_a, dict):
+            cfg_a = {}
+    except (ValueError, TypeError, AttributeError):
+        cfg_a = {}
+    if isinstance(cfg_a, dict) and isinstance(cfg_a.get("mslides"), list):
+        # Anúncio multi-slide texto+imagem (cada slide pode ter imagem).
+        slides = []
+        for s in cfg_a["mslides"]:
+            if not isinstance(s, dict):
+                continue
+            texto_s = (s.get("texto") or '').strip()
+            imagem_s = (s.get("imagem") or '').strip()
+            if not texto_s and not imagem_s:
+                continue
+            slides.append({"texto": texto_s, "imagem": imagem_s,
+                           "config": s.get("config") or ''})
+        if not slides:
+            slides = [{"texto": "ANÚNCIO", "imagem": '', "config": ''}]
+        telao.projetar_slides(slides)
+        return True
+    if tipo_an == 'imagem' and arquivo and os.path.exists(arquivo):
+        if telao.projetar_imagem_com_texto(
+                arquivo, (anuncio.get('texto') or '').strip(),
+                anuncio.get('config_midia') or ''):
+            return True
+        if telao.projetar_imagem(arquivo):
+            return True
+        return False
+    telao.projetar_slides(_montar_slides_anuncio_servico(anuncio))
+    return True
 
 
 def _proximo_id_anuncio_livre() -> int:
@@ -3907,18 +4135,18 @@ def _calcular_texto_em_caixa(texto: str, caixa_larg: int, caixa_alt: int,
     desenho = _draw_pil_reciclavel()
     larg = max(60, caixa_larg)
     alt = max(60, caixa_alt)
-    texto_up = (texto or "").upper()
+    texto_fonte = (texto or "")
     base = max(12, int(round(alt * (base_pct or 0.10))))
     tamanhos = list(dict.fromkeys([base, 108, 88, 72, 60, 52, 44, 36, 30, 26, 22, 18, 14, 12]))
     for tam in tamanhos:
         tam = max(12, min(tam, 400))
         fonte = _carregar_fonte_pil(tam)
-        linhas = _quebrar_linhas_medindo(desenho, texto_up, larg, fonte)
+        linhas = _quebrar_linhas_medindo(desenho, texto_fonte, larg, fonte)
         tam_linha = fonte.size + max(1, fonte.size // 5)
         if tam_linha * max(1, len(linhas)) <= alt:
             return fonte, linhas
     fonte = _carregar_fonte_pil(12)
-    return fonte, _quebrar_linhas_medindo(desenho, texto_up, larg, fonte)
+    return fonte, _quebrar_linhas_medindo(desenho, texto_fonte, larg, fonte)
 
 
 def _caixa_texto_padrao(texto: str, area_larg: int, area_alt: int,
@@ -3943,9 +4171,9 @@ def _caixa_texto_padrao(texto: str, area_larg: int, area_alt: int,
         text_w = max(120, area_larg - img_w - max(0, espaco))
     else:
         text_w = max(120, int(area_larg * 0.55))
-    texto_up = (texto or "").upper()
+    texto_fonte = (texto or "")
     desenho = _draw_pil_reciclavel()
-    fonte_enc, _ = _carregar_fonte_atual(desenho, texto_up, text_w,
+    fonte_enc, _ = _carregar_fonte_atual(desenho, texto_fonte, text_w,
                                          max(120, int(area_alt * 0.55)))
     passo = fonte_enc.size + max(1, fonte_enc.size // 5)
     altura_caixa = max(120, min(int(area_alt), passo * 4))
@@ -4011,6 +4239,10 @@ def _carregar_servicos_json() -> Dict:
         if isinstance(dados, dict) and isinstance(dados.get("servicos"), list):
             dados.setdefault("_proximo_id_servico", 1)
             dados.setdefault("_proximo_id_item", 1)
+            # Remove a data automática (não editável) de versões anteriores.
+            for _s in dados.get("servicos", []):
+                if isinstance(_s, dict):
+                    _s.pop("data_servico", None)
             return dados
     except (OSError, ValueError):
         pass
@@ -4083,6 +4315,13 @@ def _migrar_servicos_do_banco() -> bool:
         print(f"✅ Ordens de serviço migradas do banco para {SERVICOS_FILE}")
         return True
     return False
+
+
+# Ponteiro de execução por serviço (janela "Ordem de Serviço"): cada clique
+# em "Executar Serviço" reproduz APENAS o próximo item da lista e para.
+# Chave = id do serviço (ou nome como fallback). Valor = índice do item
+# que deve ser reproduzido no próximo clique.
+_SERVICO_PROXIMO_ITEM: dict = {}
 
 
 def _reordenar_itens_servico(itens: List[Dict], id_origem: int, id_destino: int) -> List[Dict]:
@@ -7805,6 +8044,81 @@ class AppInterface:
             _atualizar_indicador_slide()
             return "break"
 
+        # Anúncio atualmente projetado (para gravar ao vivo o tamanho da fonte
+        # em anúncios de imagem + texto, do mesmo jeito que o modo só-texto já
+        # grava a configuração de projeção em config.json).
+        _anuncio_proj = {"id": None, "dados": {}, "config": {},
+                         "mslides": None, "idx_map": []}
+
+        def _persistir_escala_texto(escala: float) -> None:
+            """Grava a nova escala de fonte ('ts') no anúncio em projeção.
+
+            Anúncio de imagem única: grava 'ts' no JSON de config_midia.
+            Anúncio multi-slide com imagem: grava 'ts' no config do slide
+            atualmente exibido. Não faz nada se não houver anúncio sendo
+            projetado ou se o slide em exibição não tiver imagem.
+            """
+            pid = _anuncio_proj.get("id")
+            if not pid:
+                return
+            try:
+                cfg_dic = _anuncio_proj.get("config") or {}
+                if not isinstance(cfg_dic, dict):
+                    cfg_dic = {}
+                c: dict = {}
+                texto_local = ""
+                mslides: list = []
+                idx_ms = -1
+                if _anuncio_proj.get("mslides") is not None:
+                    idx_map = _anuncio_proj.get("idx_map") or []
+                    tela_index = int(
+                        getattr(self.player.telao, "_slide_index", 0) or 0)
+                    if not (0 <= tela_index < len(idx_map)):
+                        return
+                    mslides = cfg_dic.get("mslides") or []
+                    idx_ms = idx_map[tela_index]
+                    if not (0 <= idx_ms < len(mslides)) or not isinstance(
+                            mslides[idx_ms], dict):
+                        return
+                    try:
+                        c = json.loads(mslides[idx_ms].get("config") or "{}")
+                        if not isinstance(c, dict):
+                            c = {}
+                    except (ValueError, TypeError, AttributeError):
+                        c = {}
+                    texto_local = (mslides[idx_ms].get("texto") or "").strip()
+                else:
+                    c = cfg_dic
+                    texto_local = (_anuncio_proj.get("dados") or {}).get(
+                        "texto") or ""
+                tw = int(c.get("tw") or 0)
+                th = int(c.get("th") or 0)
+                if tw <= 0 or th <= 0:
+                    # Config sem caixa de texto (legada): cria a caixa padrão
+                    # para a nova escala 'ts' valer na próxima projeção também.
+                    mh = int(1440 * 0.04) or 40
+                    mv = int(1080 * 0.06) or 60
+                    caixa = _caixa_texto_padrao(
+                        texto_local, 1440 - mh * 2, 1080 - mv * 2, mh, mv,
+                        aspect_imagem=float(getattr(
+                            self.player.telao, "_composicao_aspect_imagem", 0.0)
+                            or 0.0))
+                    c.update({"tx": int(caixa["x"]), "ty": int(caixa["y"]),
+                              "tw": int(caixa["w"]), "th": int(caixa["h"])})
+                c["ts"] = round(escala, 3)
+                if _anuncio_proj.get("mslides") is not None:
+                    mslides[idx_ms]["config"] = json.dumps(c, ensure_ascii=False)
+                dados_proj = dict(_anuncio_proj.get("dados") or {})
+                dados_proj["config_midia"] = json.dumps(
+                    cfg_dic, ensure_ascii=False)
+                _anuncio_proj["dados"] = dados_proj
+                _anuncio_proj["config"] = cfg_dic
+                _atualizar_anuncio_db(pid, dados_proj)
+            except Exception as _e_persist:
+                import traceback as _tb_persist
+                _tb_persist.print_exc()
+                print(f"⚠️ Falha ao autosalvar escala do anúncio {pid}: {_e_persist}")
+
         def _ajustar_fonte(delta: float):
             telao = self.player.telao
             if getattr(telao, "_mostrando_imagem_com_texto", False):
@@ -7815,6 +8129,7 @@ class AppInterface:
                     escala = float(getattr(telao, "_texto_escala", 1.0) or 1.0)
                     telao._texto_escala = min(2.5, max(0.25, escala + delta * 0.1))
                     telao._desenhar_texto_anuncio(texto)
+                    _persistir_escala_texto(float(telao._texto_escala))
                 _atualizar_indicador_slide()
                 return
             cfg = getattr(telao, "_proj_cfg", None)
@@ -7859,15 +8174,15 @@ class AppInterface:
         self.root.bind("<Escape>", _parar_projecao)
 
         def _montar_slides_anuncio(anuncio: dict) -> list:
-            """Monta os slides de um anúncio em MAIÚSCULAS: slide 0 é o título,
-            os demais são os parágrafos do texto (cada parágrafo = 1 slide,
-            exatamente como o editor adiciona telas)."""
-            titulo = (anuncio.get('titulo') or '').strip().upper()
+            """Monta os slides de um anúncio respeitando o texto digitado:
+            slide 0 é o título, os demais são os parágrafos do texto (cada
+            parágrafo = 1 slide, exatamente como o editor adiciona telas)."""
+            titulo = (anuncio.get('titulo') or '').strip()
             texto = (anuncio.get('texto') or '').strip()
             paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto) if seg.strip()]
             slides = [titulo] if titulo else []
             for paragrafo in paragrafos:
-                slides.append(paragrafo.upper())
+                slides.append(paragrafo)
             if not slides:
                 slides = [titulo or "ANÚNCIO"]
             return slides
@@ -7886,6 +8201,7 @@ class AppInterface:
             tipo = anuncio.get('tipo_midia') or 'slide'
             arquivo = anuncio.get('arquivo_midia') or ''
             if tipo in ('video', 'audio') and arquivo and os.path.exists(arquivo):
+                _anuncio_proj["id"] = None
                 self.arquivos_encontrados = [arquivo]
                 self.player.carregar_playlist([arquivo])
                 self.player.tocar_indice(0)
@@ -7894,11 +8210,22 @@ class AppInterface:
                 return
             if tipo == 'imagem' and arquivo and os.path.exists(arquivo):
                 texto_anuncio = (anuncio.get('texto') or '').strip()
+                cfg_imagem: dict = {}
+                try:
+                    _ci = json.loads(anuncio.get('config_midia') or '{}')
+                    if isinstance(_ci, dict):
+                        cfg_imagem = _ci
+                except (ValueError, TypeError, AttributeError):
+                    cfg_imagem = {}
+                _anuncio_proj.update({
+                    "id": anuncio_id, "dados": dict(anuncio),
+                    "config": cfg_imagem, "mslides": None, "idx_map": []})
                 if self.player.telao.projetar_imagem_com_texto(
                         arquivo, texto_anuncio,
                         anuncio.get('config_midia') or ''):
                     _atualizar_indicador_slide()
                     return
+                _anuncio_proj["id"] = None
                 # Falhou a composição projetada: tenta a imagem pura
                 if self.player.telao.projetar_imagem(arquivo):
                     _atualizar_indicador_slide()
@@ -7915,8 +8242,10 @@ class AppInterface:
                 cfg_a = {}
             if isinstance(cfg_a, dict) and isinstance(cfg_a.get("mslides"), list):
                 # Anúncio multi-slide texto+imagem (cada slide pode ter imagem).
+                mslides_orig = cfg_a["mslides"]
                 slides = []
-                for s in cfg_a["mslides"]:
+                idx_map = []
+                for i, s in enumerate(mslides_orig):
                     if not isinstance(s, dict):
                         continue
                     texto_s = (s.get("texto") or '').strip()
@@ -7925,10 +8254,17 @@ class AppInterface:
                         continue
                     slides.append({"texto": texto_s, "imagem": imagem_s,
                                    "config": s.get("config") or ''})
+                    idx_map.append(i)
                 if not slides:
                     slides = [{"texto": "ANÚNCIO", "imagem": '', "config": ''}]
+                _anuncio_proj.update({
+                    "id": anuncio_id, "dados": dict(anuncio),
+                    "config": cfg_a, "mslides": mslides_orig, "idx_map": idx_map})
             else:
                 slides = _montar_slides_anuncio(dict(anuncio))
+                _anuncio_proj.update({
+                    "id": None, "dados": {}, "config": {},
+                    "mslides": None, "idx_map": []})
             self.player.telao.projetar_slides(slides)
             _atualizar_indicador_slide()
 
@@ -9859,10 +10195,12 @@ class AppInterface:
         arrastar e soltar os itens para reordená-los.
         """
         _migrar_servicos_do_banco()
+        _sincronizar_uploads_midia()
+        _SERVICO_PROXIMO_ITEM.clear()
         dados = _carregar_servicos_json()
         janela = tk.Toplevel(self.root)
         janela.title("📋 Ordem de Serviço")
-        janela.geometry("980x750")
+        janela.geometry("1100x750")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         janela.after(50, janela.grab_set)
@@ -9889,8 +10227,7 @@ class AppInterface:
         servico_selecionado_id = [None]
 
         def _rotulo_servico(s: Dict) -> str:
-            data = (s.get('data_servico') or '').strip()
-            return f"{s.get('id')} - {s.get('nome', '')} ({data or 'sem data'})"
+            return f"{s.get('id')} - {s.get('nome', '')}"
 
         def _servico_atual() -> Optional[Dict]:
             sid = servico_selecionado_id[0]
@@ -9901,7 +10238,7 @@ class AppInterface:
         def _ordenar_servicos():
             return sorted(
                 dados["servicos"],
-                key=lambda s: (s.get('data_servico') or '', s.get('nome') or ''),
+                key=lambda s: s.get('id') or 0,
                 reverse=True)
 
         def _carregar_servicos(escolher: bool = True):
@@ -9984,6 +10321,15 @@ class AppInterface:
         tree.bind("<ButtonPress-1>", _on_tree_button_press)
         tree.bind("<ButtonRelease-1>", _on_tree_button_release)
 
+        def _on_tree_double_click(event):
+            if tree.identify_region(event.x, event.y) == "heading":
+                return
+            if not tree.identify_row(event.y):
+                return
+            _editar_item_selecionado()
+
+        tree.bind("<Double-1>", _on_tree_double_click)
+
         def _carregar_itens():
             for item in tree.get_children():
                 tree.delete(item)
@@ -10036,7 +10382,6 @@ class AppInterface:
             dados["servicos"].append({
                 "id": novo_id,
                 "nome": nome,
-                "data_servico": datetime.now().strftime("%Y-%m-%d"),
                 "criado_em": datetime.now().isoformat(timespec="seconds"),
                 "itens": [],
             })
@@ -10096,15 +10441,15 @@ class AppInterface:
             if combo_servico['values']:
                 _on_servico_select()
 
-        def _adicionar_item_servico():
+        def _abrir_editor_item(item_edit: Optional[Dict] = None):
+            """Abre a janela para adicionar (item_edit=None) ou editar um item."""
             sid = servico_selecionado_id[0]
             if not sid:
                 tkinter.messagebox.showwarning("Seleção", "Selecione ou crie um serviço.", parent=janela)
                 return
-            # Janela para Ordem de Servm
             add_win = tk.Toplevel(janela)
-            add_win.title("Adicionar Item")
-            add_win.geometry("560x300")
+            add_win.title("Editar Item" if item_edit else "Adicionar Item")
+            add_win.geometry("700x300")
             add_win.configure(bg='#0d1117')
             add_win.transient(janela)
             add_win.after(50, add_win.grab_set)
@@ -10114,7 +10459,7 @@ class AppInterface:
 
             tk.Label(add_main, text="Tipo:", fg='#f0c040', bg='#0d1117',
                      font=("Arial", 11, "bold")).pack(anchor='w')
-            tipo_var = tk.StringVar(value="hino")
+            tipo_var = tk.StringVar(value=(item_edit or {}).get("tipo") or "hino")
             tipos = ["hino", "versiculo", "video", "audio", "slide", "anuncio", "sermao"]
             tipo_frame = tk.Frame(add_main, bg='#0d1117')
             tipo_frame.pack(fill='x', pady=2)
@@ -10127,70 +10472,161 @@ class AppInterface:
                      font=("Arial", 11, "bold")).pack(anchor='w', pady=(8, 0))
             titulo_entry = tk.Entry(add_main, font=("Arial", 11), bg='#21262d',
                                     fg='#f0c040', insertbackground='#f0c040')
+            titulo_entry.insert(0, (item_edit or {}).get("titulo_custom") or "")
             titulo_entry.pack(fill='x', ipady=3, pady=2)
 
-            tk.Label(add_main, text="Referência ID (hino/versículo/mídia):", fg='#8b949e',
+            tk.Label(add_main, text="Buscar (nº ou nome do hino/mídia/anúncio):", fg='#8b949e',
                      bg='#0d1117', font=("Arial", 9)).pack(anchor='w')
             ref_entry = tk.Entry(add_main, font=("Arial", 11), bg='#21262d',
                                  fg='#c9d1d9', insertbackground='#f0c040')
+            if item_edit:
+                _tf = (item_edit.get("tipo") or "").lower()
+                _tc = (item_edit.get("titulo_custom") or "").strip()
+                if _tf in ("hino", "audio", "video", "anuncio") and _tc and not _tc.startswith("Item "):
+                    ref_entry.insert(0, _tc)
+                else:
+                    ref_entry.insert(0, str(item_edit.get("referencia_id") or ""))
             ref_entry.pack(fill='x', ipady=3, pady=2)
 
             tk.Label(add_main, text="Duração estimada (segundos):", fg='#8b949e',
                      bg='#0d1117', font=("Arial", 9)).pack(anchor='w')
             dur_entry = tk.Entry(add_main, font=("Arial", 11), bg='#21262d',
                                  fg='#c9d1d9', insertbackground='#f0c040')
+            dur_entry.insert(0, str((item_edit or {}).get("duracao_estimada_segundos") or 0))
             dur_entry.pack(fill='x', ipady=3, pady=2)
-            dur_entry.insert(0, "0")
 
             def _salvar_item():
                 serv = _servico_atual()
                 if serv is None:
                     return
                 tipo = tipo_var.get()
-                titulo = titulo_entry.get().strip() or f"Item ({tipo.title()})"
-                ref_id = int(ref_entry.get().strip()) if ref_entry.get().strip().isdigit() else None
+                titulo = titulo_entry.get().strip()
+                termo = ref_entry.get().strip()
                 duracao = int(dur_entry.get().strip()) if dur_entry.get().strip().isdigit() else 0
 
-                # Se hino ou versículo, busca a letra automaticamente
+                # ── Resolução da referência por busca (nº ou nome) ──
+                # Se o campo "Buscar" estiver vazio, o próprio Título digitado
+                # já é usado como termo de busca (hino/mídia por número ou nome).
+                ref_id = None
                 letra_snap = ""
-                if tipo == "hino" and ref_id:
-                    rows_l = db_query("SELECT letra_completa, titulo FROM letras WHERE id = ?", (ref_id,))
-                    if rows_l:
-                        letra_snap = rows_l[0].get('letra_completa', '')
-                        if not titulo or titulo.startswith("Item"):
-                            titulo = rows_l[0].get('titulo', titulo)
-                elif tipo == "versiculo" and ref_id:
+                _usou_titulo_como_busca = (not termo)
+                if not termo:
+                    termo = titulo
+                if tipo == "hino":
+                    rows_match = _buscar_hino_por_termo(termo)
+                    if not rows_match and termo.isdigit():
+                        rows_match = db_query(
+                            "SELECT * FROM letras WHERE id = ? AND ativo = 1", (termo,))
+                    if not rows_match:
+                        tkinter.messagebox.showwarning(
+                            "Busca", f"Nenhum hino encontrado para: \"{termo}\".",
+                            parent=janela)
+                        return
+                    ref_hino = rows_match[0]
+                    ref_id = ref_hino.get("id")
+                    letra_snap = ref_hino.get("letra_completa", "")
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = ref_hino.get("titulo", "") or f"Item ({tipo.title()})"
+                elif tipo in ("video", "audio"):
+                    rows_match = _buscar_midia_por_termo(termo, tipo=tipo)
+                    if not rows_match and termo.isdigit():
+                        rows_match = db_query(
+                            "SELECT * FROM midia WHERE id = ? AND ativo = 1", (termo,))
+                    if not rows_match:
+                        tkinter.messagebox.showwarning(
+                            "Busca", f"Nenhuma {tipo.title()} encontrada para: \"{termo}\".",
+                            parent=janela)
+                        return
+                    ref_midia = rows_match[0]
+                    ref_id = ref_midia.get("id")
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = ref_midia.get("nome_exibicao", "") or f"Item ({tipo.title()})"
+                elif tipo == "anuncio":
+                    rows_match = _buscar_anuncio_por_termo(termo)
+                    if not rows_match:
+                        tkinter.messagebox.showwarning(
+                            "Busca", f"Nenhum anúncio encontrado para: \"{termo}\".",
+                            parent=janela)
+                        return
+                    ref_an = rows_match[0]
+                    ref_id = ref_an.get("id")
+                    letra_snap = ref_an.get("texto") or ""
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = ref_an.get("titulo") or f"Item ({tipo.title()})"
+                elif termo.isdigit():
+                    ref_id = int(termo)
+                if not titulo:
+                    titulo = f"Item ({tipo.title()})"
+                if tipo == "versiculo" and ref_id:
                     rows_v = db_query("SELECT * FROM versiculos WHERE id = ?", (ref_id,))
                     if rows_v:
                         r = rows_v[0]
                         letra_snap = f"{r['livro']} {r['capitulo']}:{r['versiculo']}\n\n{r['texto']}"
-                        if not titulo or titulo.startswith("Item"):
+                        if titulo.startswith("Item"):
                             titulo = f"{r['livro']} {r['capitulo']}:{r['versiculo']}"
 
-                novo_id = dados["_proximo_id_item"]
-                dados["_proximo_id_item"] = novo_id + 1
-                serv.setdefault("itens", []).append({
-                    "id": novo_id,
-                    "tipo": tipo,
-                    "referencia_id": ref_id,
-                    "titulo_custom": titulo,
-                    "letra_snapshot": letra_snap,
-                    "duracao_estimada_segundos": duracao,
-                })
+                itens = serv.setdefault("itens", [])
+                if item_edit is not None and (item_edit.get("id") or 0):
+                    item_id = item_edit.get("id")
+                    idx = next((i for i, x in enumerate(itens)
+                                if x.get("id") == item_id), None)
+                    if idx is None:
+                        return
+                    original = dict(itens[idx])
+                    itens[idx] = dict(original)
+                    itens[idx].update({
+                        "tipo": tipo,
+                        "referencia_id": ref_id,
+                        "titulo_custom": titulo,
+                        "letra_snapshot": letra_snap,
+                        "duracao_estimada_segundos": duracao,
+                    })
+                    novo_id = item_id
+                else:
+                    novo_id = dados["_proximo_id_item"]
+                    dados["_proximo_id_item"] = novo_id + 1
+                    original = None
+                    itens.append({
+                        "id": novo_id,
+                        "tipo": tipo,
+                        "referencia_id": ref_id,
+                        "titulo_custom": titulo,
+                        "letra_snapshot": letra_snap,
+                        "duracao_estimada_segundos": duracao,
+                    })
                 if not _salvar_servicos_json(dados):
-                    serv["itens"] = [it for it in serv.get("itens")
-                                     if it.get("id") != novo_id]
-                    dados["_proximo_id_item"] = novo_id
+                    if original is not None:
+                        itens[idx] = original
+                    else:
+                        serv["itens"] = [it for it in serv.get("itens")
+                                         if it.get("id") != novo_id]
+                        dados["_proximo_id_item"] = novo_id
                     tkinter.messagebox.showwarning(
                         "⚠️", "Não foi possível salvar em servicos.json.", parent=janela)
                     return
                 _carregar_itens()
+                tree.selection_set(str(novo_id))
+                tree.focus(str(novo_id))
                 add_win.destroy()
 
             tk.Button(add_main, text="💾 Salvar", font=("Arial", 12, "bold"),
                       bg='#238636', fg='white', activebackground='#2ea043',
                       command=_salvar_item, cursor='hand2', padx=20, pady=5
                       ).pack(pady=10)
+
+        def _editar_item_selecionado():
+            serv = _servico_atual()
+            sel = tree.selection()
+            if not sel:
+                tkinter.messagebox.showwarning("Seleção", "Selecione um item.", parent=janela)
+                return
+            if not serv:
+                return
+            it = next((x for x in (serv.get("itens") or [])
+                       if x.get("id") == int(sel[0])), None)
+            if it is None:
+                return
+            _abrir_editor_item(it)
 
         def _remover_item():
             sel = tree.selection()
@@ -10239,8 +10675,19 @@ class AppInterface:
             tree.selection_set(str(itens[idx_novo].get("id")))
             tree.focus(str(itens[idx_novo].get("id")))
 
+        # Snapshot da janela principal p/ restauração após cada item do
+        # serviço (capturado uma única vez por sessão desta janela).
+        snapshot_servico: dict = {"guardada": False}
+
         def _executar_servico():
-            """Carrega os itens do serviço na playlist e toca o primeiro."""
+            """Reproduz APENAS o próximo item da lista e para.
+
+            A cada clique em "Executar Serviço" avança um item, independente
+            do tipo (hino/vídeo/áudio/texto): reproduz/projeta só ele e fica
+            aguardando o próximo clique. Não altera a playlist nem a opção de
+            repetição da janela principal — o estado anterior é restaurado
+            quando o item termina.
+            """
             serv = _servico_atual()
             if not serv:
                 return
@@ -10248,30 +10695,97 @@ class AppInterface:
             if not itens:
                 tkinter.messagebox.showinfo("Vazio", "Serviço sem itens.", parent=janela)
                 return
-            # Coleta arquivos de mídia referenciados
-            arquivos = []
-            for it in itens:
-                if it.get('tipo') in ('video', 'audio') and it.get('referencia_id'):
-                    try:
-                        rows_m = db_query(
-                            "SELECT caminho_arquivo FROM midia WHERE id = ? AND ativo = 1",
-                            (it['referencia_id'],))
-                        if rows_m and os.path.exists(rows_m[0]['caminho_arquivo']):
-                            arquivos.append(rows_m[0]['caminho_arquivo'])
-                    except Exception:
-                        pass
-            if arquivos:
-                self.arquivos_encontrados = arquivos
-                self.player.carregar_playlist(arquivos)
-                self.player.tocar_indice(0)
-                self.atualizar_lista()
+            chave = serv.get("id") or serv.get("nome") or "?"
+            prox = _SERVICO_PROXIMO_ITEM.get(chave)
+            if prox is None or prox < 0 or prox >= len(itens):
+                prox = 0
+            item = itens[prox]
+            tipo = (item.get('tipo') or '').strip().lower()
+            titulo_item = (item.get('titulo_custom') or '').strip()
+            letra = (item.get('letra_snapshot') or '').strip()
+
+            # Destaque do item em execução na lista da janela de serviço
+            try:
+                tree.selection_set(str(item.get('id')))
+                tree.see(str(item.get('id')))
+            except Exception:
+                pass
+
+            iniciado = False
+            # Resolve o caminho de mídia do item: vídeo/áudio do item, ou a
+            # mídia (vídeo/áudio) anexada a um anúncio.
+            caminho_media = None
+            if tipo in ('video', 'audio') and item.get('referencia_id'):
+                try:
+                    rows_m = db_query(
+                        "SELECT caminho_arquivo FROM midia WHERE id = ? AND ativo = 1",
+                        (item['referencia_id'],))
+                    if rows_m:
+                        caminho_media = rows_m[0].get('caminho_arquivo') or ''
+                except Exception:
+                    caminho_media = None
+            elif tipo == 'anuncio' and item.get('referencia_id'):
+                anun = _buscar_anuncio_por_ref(item['referencia_id'])
+                if anun and (anun.get('tipo_midia') or '').strip().lower() in ('video', 'audio'):
+                    caminho_media = (anun.get('arquivo_midia') or '')
+            if caminho_media and os.path.exists(caminho_media):
+                caminho = caminho_media
+                # Snapshot da janela principal capturado UMA vez por
+                # sessão (restaurado quando o item termina).
+                if not snapshot_servico["guardada"]:
+                    snapshot_servico["guardada"] = True
+                    snapshot_servico["playlist"] = list(self.player.playlist or [])
+                    snapshot_servico["index"] = self.player.index
+                    snapshot_servico["arquivos"] = list(
+                        getattr(self, 'arquivos_encontrados', []) or [])
+                    snapshot_servico["atual"] = getattr(
+                        self, 'arquivo_atual', None)
+
+                def _fim_item_servico(estado: object = None):
+                    # Restaura o handler e o estado anteriores ao item
+                    self.player.on_state_change = self.quando_midia_terminar
+                    if snapshot_servico["guardada"] and self.player.playlist == [caminho]:
+                        snapshot_servico["guardada"] = False
+                        self.player.playlist = snapshot_servico["playlist"]
+                        self.player.index = snapshot_servico["index"]
+                        self.arquivos_encontrados = snapshot_servico["arquivos"]
+                        self.arquivo_atual = snapshot_servico["atual"]
+
+                self.player.on_state_change = _fim_item_servico
+                self.player.carregar_playlist([caminho])
+                if self.player.tocar_indice(0):
+                    iniciado = True
+                else:
+                    self.player.on_state_change = self.quando_midia_terminar
+
+            if not iniciado:
+                # Itens sem mídia (hino/anúncio/texto): projeta e para.
+                if tipo == 'hino' and (titulo_item or letra):
+                    self.player.telao.projetar_slides(
+                        _montar_slides_letra(titulo_item, letra))
+                    iniciado = True
+                elif tipo == 'anuncio':
+                    anun = _buscar_anuncio_por_ref(item.get('referencia_id'))
+                    if anun:
+                        if _projetar_anuncio_ordserv(self.player.telao, anun):
+                            iniciado = True
+                    else:
+                        texto = letra or titulo_item
+                        if texto:
+                            self.player.telao.projetar_texto(texto)
+                            iniciado = True
+                else:
+                    texto = letra or titulo_item
+                    if texto:
+                        self.player.telao.projetar_texto(texto)
+                        iniciado = True
+
+            if iniciado:
+                _SERVICO_PROXIMO_ITEM[chave] = prox + 1
             else:
-                primeiro = itens[0]
-                texto = (primeiro.get('letra_snapshot') or '').strip()
-                if not texto:
-                    texto = (primeiro.get('titulo_custom') or '').strip()
-                if texto:
-                    self.player.telao.projetar_texto(texto)
+                tkinter.messagebox.showwarning(
+                    "Executar", f"Não foi possível reproduzir o item {prox + 1}.",
+                    parent=janela)
 
         tk.Button(btn_frame, text="➕ Novo Serviço", font=("Arial", 11, "bold"),
                   bg='#238636', fg='white', activebackground='#2ea043',
@@ -10285,9 +10799,13 @@ class AppInterface:
                   bg='#da3633', fg='white', activebackground='#f85149',
                   command=_excluir_servico, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="➕ Ordem de m", font=("Arial", 11, "bold"),
+        tk.Button(btn_frame, text="➕ Ad. Item", font=("Arial", 11, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
-                  command=_adicionar_item_servico, cursor='hand2', padx=12, pady=4
+                  command=lambda: _abrir_editor_item(), cursor='hand2', padx=12, pady=4
+                  ).pack(side='left', padx=3)
+        tk.Button(btn_frame, text="✏️ Editar Item", font=("Arial", 11, "bold"),
+                  bg='#1f6feb', fg='white', activebackground='#388bfd',
+                  command=_editar_item_selecionado, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
         tk.Button(btn_frame, text="🗑️ Remover", font=("Arial", 11, "bold"),
                   bg='#da3633', fg='white', activebackground='#f85149',
@@ -10305,6 +10823,38 @@ class AppInterface:
                   bg='#6e40c9', fg='#f0c040', activebackground='#8b5cf6',
                   command=_executar_servico, cursor='hand2', padx=12, pady=4
                   ).pack(side='right', padx=3)
+
+        # ── Navegação por teclado dos slides projetados (sem sair da janela) ──
+        def _slide_anterior(event: object = None):
+            telao = self.player.telao
+            if not getattr(telao, "_em_slides", False):
+                return None
+            telao.slide_anterior()
+            return "break"
+
+        def _slide_proximo(event: object = None):
+            telao = self.player.telao
+            if not getattr(telao, "_em_slides", False):
+                return None
+            telao.slide_proximo()
+            return "break"
+
+        def _parar_projecao(event: object = None):
+            if not getattr(self.player.telao, "mostrando_letra", False):
+                return None
+            self.player.telao.parar_projecao()
+            return "break"
+
+        janela.bind("<Left>", _slide_anterior)
+        janela.bind("<Up>", _slide_anterior)
+        janela.bind("<Right>", _slide_proximo)
+        janela.bind("<Down>", _slide_proximo)
+        janela.bind("<Escape>", _parar_projecao)
+        self.root.bind("<Left>", _slide_anterior)
+        self.root.bind("<Up>", _slide_anterior)
+        self.root.bind("<Right>", _slide_proximo)
+        self.root.bind("<Down>", _slide_proximo)
+        self.root.bind("<Escape>", _parar_projecao)
 
         _carregar_servicos()
         # Se há serviços, seleciona o primeiro
@@ -10328,6 +10878,8 @@ class AppInterface:
 
     def _inicializar_em_segundo_plano(self) -> None:
         """Tarefas de inicialização que rodam após a interface aparecer."""
+        # Registra no banco os arquivos de mídia da pasta uploads
+        _sincronizar_uploads_midia()
         # Inicia servidor HTTP
         self._servidor_thread = ServidorAsyncHTTP()
         self._servidor_thread.iniciar()
