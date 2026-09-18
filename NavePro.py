@@ -157,7 +157,7 @@ def _baixar(url, timeout: int = 8, **kwargs):
 # CONSTANTES
 # ────────────────────────────────────────────────────────────────────
 
-APP_VERSION: str = "1.9.5"
+APP_VERSION: str = "1.9.6"
 CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
 PLAYER_PADRAO: str = "mpv" if _eh_windows() else "smplayer"
 BACKEND_PORT: int = 5897
@@ -1830,7 +1830,7 @@ class TelaoWindow:
     - Fontes calculadas proporcionalmente à altura da tela (uma vez)
     """
 
-    def __init__(self, monitor_index: int = 1) -> None:
+    def __init__(self, monitor_index: int = 2) -> None:
         self.root = tk.Tk(className="NavePro")
         self.root.title("TELÃO")
         _normalizar_escala_tk(self.root)
@@ -4243,6 +4243,12 @@ def _carregar_servicos_json() -> Dict:
             for _s in dados.get("servicos", []):
                 if isinstance(_s, dict):
                     _s.pop("data_servico", None)
+                    # Migração: "apresentacao" foi unificada com "sermao"
+                    # (o tipo "sermao" agora aceita vídeo/áudio/apresentação).
+                    for _it in _s.get("itens") or []:
+                        if isinstance(_it, dict) and \
+                                (_it.get("tipo") or "").lower() == "apresentacao":
+                            _it["tipo"] = "sermao"
             return dados
     except (OSError, ValueError):
         pass
@@ -4563,7 +4569,16 @@ class AppInterface:
         try:
             monitors = get_monitors_config()
             if monitors:
-                m = monitors[0]
+                # Usa o monitor CONFIGURADO pelo operador (config "monitor",
+                # 1-based, padrão 2) em vez de sempre o primeiro da lista.
+                # Evita abrir no monitor pequeno (ex.: DVI-D-1 640×480).
+                try:
+                    _mon_idx = int(float(
+                        self.carregar_config().get("monitor", 1) or 2))
+                except Exception:
+                    _mon_idx = 2
+                _mon_idx = max(1, min(len(monitors), _mon_idx)) - 1
+                m = monitors[_mon_idx]
                 # Salva geometria do monitor para restaurar depois
                 self._monitor_geo = (m.width, m.height, m.x, m.y)
                 self.root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
@@ -9413,7 +9428,7 @@ class AppInterface:
                          else versoes_disponiveis[0])
         versao_var = tk.StringVar(value=versao_padrao)
         combo_versao = ttk.Combobox(ref_frame, textvariable=versao_var,
-                                     values=versoes_disponiveis, width=8,
+                                     values=versoes_disponiveis, width=28,
                                      font=("Arial", 11))
         combo_versao.pack(side='left', padx=5)
 
@@ -10449,7 +10464,7 @@ class AppInterface:
                 return
             add_win = tk.Toplevel(janela)
             add_win.title("Editar Item" if item_edit else "Adicionar Item")
-            add_win.geometry("700x300")
+            add_win.geometry("700x380")
             add_win.configure(bg='#0d1117')
             add_win.transient(janela)
             add_win.after(50, add_win.grab_set)
@@ -10460,7 +10475,8 @@ class AppInterface:
             tk.Label(add_main, text="Tipo:", fg='#f0c040', bg='#0d1117',
                      font=("Arial", 11, "bold")).pack(anchor='w')
             tipo_var = tk.StringVar(value=(item_edit or {}).get("tipo") or "hino")
-            tipos = ["hino", "versiculo", "video", "audio", "slide", "anuncio", "sermao"]
+            tipos = ["hino", "versiculo", "video", "audio", "slide",
+                     "anuncio", "sermao"]
             tipo_frame = tk.Frame(add_main, bg='#0d1117')
             tipo_frame.pack(fill='x', pady=2)
             for t in tipos:
@@ -10488,12 +10504,358 @@ class AppInterface:
                     ref_entry.insert(0, str(item_edit.get("referencia_id") or ""))
             ref_entry.pack(fill='x', ipady=3, pady=2)
 
+            # ── Seletor de referência bíblica (tipo "versiculo") ──
+            biblia_versao_var = tk.StringVar()
+            biblia_livro_var = tk.StringVar()
+            biblia_cap_var = tk.StringVar()
+            biblia_vers_var = tk.StringVar()
+
+            biblia_frame = tk.Frame(add_main, bg='#0d1117')
+            tk.Label(biblia_frame, text="Referência bíblica:",
+                     fg='#f0c040', bg='#0d1117',
+                     font=("Arial", 11, "bold")).pack(anchor='w', pady=(6, 0))
+
+            _linha_vers_livro = tk.Frame(biblia_frame, bg='#0d1117')
+            _linha_vers_livro.pack(fill='x', pady=2)
+            tk.Label(_linha_vers_livro, text="Versão:", fg='#c9d1d9',
+                     bg='#0d1117', font=("Arial", 10)).pack(side='left')
+            _versoes_sel = []
+            _rows_v = db_query(
+                "SELECT DISTINCT versao FROM versiculos ORDER BY versao")
+            if _rows_v:
+                _versoes_sel = [r["versao"] for r in _rows_v]
+            if not _versoes_sel:
+                _versoes_sel = ["Almeida Revista e Corrigida", "Almeida Século 21"]
+            combo_bversao = ttk.Combobox(_linha_vers_livro,
+                                         textvariable=biblia_versao_var,
+                                         values=_versoes_sel, width=22,
+                                         font=("Arial", 10))
+            combo_bversao.pack(side='left', padx=(4, 10))
+            tk.Label(_linha_vers_livro, text="Livro:", fg='#c9d1d9',
+                     bg='#0d1117', font=("Arial", 10)).pack(side='left')
+            combo_blivro = ttk.Combobox(_linha_vers_livro,
+                                        textvariable=biblia_livro_var,
+                                        values=self.LIVROS_BIBLIA, width=16,
+                                        font=("Arial", 10))
+            combo_blivro.pack(side='left', padx=(4, 0))
+
+            _linha_cap_vers = tk.Frame(biblia_frame, bg='#0d1117')
+            _linha_cap_vers.pack(fill='x', pady=2)
+            tk.Label(_linha_cap_vers, text="Capítulo:", fg='#c9d1d9',
+                     bg='#0d1117', font=("Arial", 10)).pack(side='left')
+            entry_bcap = tk.Entry(_linha_cap_vers, textvariable=biblia_cap_var,
+                                  width=4, font=("Arial", 10), bg='#21262d',
+                                  fg='#f0c040', insertbackground='#f0c040',
+                                  bd=0, highlightthickness=0)
+            entry_bcap.pack(side='left', padx=(4, 10), ipady=2)
+            tk.Label(_linha_cap_vers, text="Versículo"
+                     " (opcional, vazio = capítulo inteiro):",
+                     fg='#c9d1d9', bg='#0d1117',
+                     font=("Arial", 10)).pack(side='left')
+            entry_bvers = tk.Entry(_linha_cap_vers, textvariable=biblia_vers_var,
+                                   width=5, font=("Arial", 10), bg='#21262d',
+                                   fg='#f0c040', insertbackground='#f0c040',
+                                   bd=0, highlightthickness=0)
+            entry_bvers.pack(side='left', padx=(4, 8), ipady=2)
+            tk.Button(_linha_cap_vers, text="🔍 Ver texto",
+                      font=("Arial", 10, "bold"), bg='#21262d', fg='#f0c040',
+                      activebackground='#30363d', cursor='hand2',
+                      command=lambda: _preview_biblia()
+                      ).pack(side='left')
+
+            preview_text = tk.Text(biblia_frame, height=4, wrap='word',
+                                   font=("Arial", 9), bg='#161b22', fg='#c9d1d9',
+                                   relief='flat')
+            preview_text.pack(fill='x', pady=4)
+            preview_text.config(state='disabled')
+
+            biblia_frame.pack_forget()
+
+            # ── Painel de hino (tipo "hino") ──
+            # O operador digita diretamente o Nº do hino (ex.: '46'); o botão
+            # "🔍 Ver letra" resolve o número → título/letra da tabela letras e
+            # mostra o preview. Salva referencia_id (id da letra) + snapshot.
+            hino_num_var = tk.StringVar()
+            hino_frame = tk.Frame(add_main, bg='#0d1117')
+            tk.Label(hino_frame, text="Buscar hino por número:",
+                     fg='#f0c040', bg='#0d1117',
+                     font=("Arial", 11, "bold")).pack(anchor='w', pady=(6, 0))
+
+            _linha_hino_num = tk.Frame(hino_frame, bg='#0d1117')
+            _linha_hino_num.pack(fill='x', pady=2)
+            tk.Label(_linha_hino_num, text="Nº do hino:", fg='#c9d1d9',
+                     bg='#0d1117', font=("Arial", 10)).pack(side='left')
+            entry_hino_num = tk.Entry(_linha_hino_num, textvariable=hino_num_var,
+                                      width=8, font=("Arial", 11), bg='#21262d',
+                                      fg='#f0c040', insertbackground='#f0c040',
+                                      bd=0, highlightthickness=0)
+            entry_hino_num.pack(side='left', padx=(4, 8), ipady=2)
+            tk.Label(_linha_hino_num, text="(ou título/artista)",
+                     fg='#8b949e', bg='#0d1117',
+                     font=("Arial", 9)).pack(side='left')
+            tk.Button(_linha_hino_num, text="🔍 Ver letra",
+                      font=("Arial", 10, "bold"), bg='#21262d', fg='#f0c040',
+                      activebackground='#30363d', cursor='hand2',
+                      command=lambda: _ver_letra_hino()
+                      ).pack(side='right')
+
+            preview_hino = tk.Text(hino_frame, height=7, wrap='word',
+                                   font=("Arial", 9), bg='#161b22', fg='#c9d1d9',
+                                   relief='flat', state='disabled')
+            preview_hino.pack(fill='x', pady=4)
+
+            def _ver_letra_hino():
+                """Resolve o nº/termo digitado → letra do hino e mostra preview."""
+                res = _resolver_hino()
+                if not res[0]:
+                    tkinter.messagebox.showwarning("Hino", res[1], parent=janela)
+                    return
+                _, _, letra_snap, ref_display, _rid = res
+                preview_hino.config(state='normal')
+                preview_hino.delete('1.0', tk.END)
+                preview_hino.insert(tk.END, letra_snap)
+                preview_hino.config(state='disabled')
+
+            def _resolver_hino():
+                """Resolve hino por nº/termo.
+
+                Retorna (ok, msg_erro, letra_snapshot, ref_display, ref_id).
+                Aceita número ('46' → hino cujo título começa com '46') ou
+                trecho de título/artista/letra.
+                """
+                termo = hino_num_var.get().strip()
+                if not termo:
+                    return (False, "Informe o número do hino (ou título/artista).",
+                            "", "", None)
+                rows_match = _buscar_hino_por_termo(termo)
+                if not rows_match:
+                    return (False, f"Nenhum hino encontrado para: \"{termo}\".",
+                            "", "", None)
+                ref_hino = rows_match[0]
+                rid = ref_hino.get("id")
+                letra_snap = ref_hino.get("letra_completa", "")
+                ref_disp = ref_hino.get("titulo", "") or f"Item (Hino)"
+                return (True, "", letra_snap, ref_disp, rid)
+
+            # Preenche o painel ao editar um hino existente
+            if item_edit and (item_edit.get("tipo") or "").lower() == "hino":
+                _hid_ed = item_edit.get("referencia_id")
+                if _hid_ed:
+                    _rh_ed = db_query("SELECT * FROM letras WHERE id = ? AND ativo = 1",
+                                      (_hid_ed,))
+                    if _rh_ed:
+                        _hh = _rh_ed[0]
+                        if not item_edit.get("titulo_custom"):
+                            titulo = _hh.get("titulo", "") or f"Item (Hino)"
+                        letra_snap = _hh.get("letra_completa", "") or ""
+                if letra_snap:
+                    preview_hino.config(state='normal')
+                    preview_hino.delete('1.0', tk.END)
+                    preview_hino.insert(tk.END, letra_snap)
+                    preview_hino.config(state='disabled')
+
+            hino_frame.pack_forget()
+
+            # Preenche o painel ao editar um versículo existente
+            if item_edit and (item_edit.get("tipo") or "").lower() == "versiculo":
+                _rid_ed = item_edit.get("referencia_id")
+                if _rid_ed:
+                    _rv_ed = db_query("SELECT * FROM versiculos WHERE id = ?",
+                                      (_rid_ed,))
+                    if _rv_ed:
+                        biblia_versao_var.set(_rv_ed[0]["versao"])
+                        biblia_livro_var.set(_rv_ed[0]["livro"])
+                        biblia_cap_var.set(str(_rv_ed[0]["capitulo"]))
+                        biblia_vers_var.set(str(_rv_ed[0]["versiculo"]))
+
+            def _resolver_referencia_biblia():
+                """Resolve a referência do painel bíblico.
+
+                Retorna (ok, msg_erro, letra_snap, ref_display, ref_id).
+                """
+                versao = biblia_versao_var.get().strip()
+                livro = biblia_livro_var.get().strip()
+                cap = biblia_cap_var.get().strip()
+                vers = biblia_vers_var.get().strip()
+                if not (versao and livro and cap.isdigit()):
+                    return (False,
+                            "Selecione a versão, o livro e informe o capítulo.",
+                            "", "", None)
+                cap = int(cap)
+                if vers and not vers.isdigit():
+                    return (False,
+                            "O versículo deve ser um número (ou vazio"
+                            " = capítulo inteiro).", "", "", None)
+                if vers:
+                    v_ini = v_fim = int(vers)
+                else:
+                    v_ini, v_fim = 1, 9999
+                rows = db_query(
+                    "SELECT * FROM versiculos WHERE versao = ? AND livro = ? "
+                    "AND capitulo = ? AND versiculo >= ? AND versiculo <= ? "
+                    "ORDER BY versiculo",
+                    (versao, livro, cap, v_ini, v_fim))
+                if not rows:
+                    return (False,
+                            "Nenhum versículo encontrado para "
+                            f"{livro} {cap}:{vers or '*'} ({versao}).",
+                            "", "", None)
+                if vers:
+                    r = rows[0]
+                    return (True, "",
+                            f"{livro} {cap}:{vers}\n\n{r['texto']}",
+                            f"{livro} {cap}:{vers}", r["id"])
+                partes = [f"{r['versiculo']}. {r['texto']}" for r in rows]
+                return (True, "",
+                        f"{livro} {cap}\n\n" + "\n\n".join(partes),
+                        f"{livro} {cap}", rows[0]["id"])
+
+            def _preview_biblia():
+                res = _resolver_referencia_biblia()
+                preview_text.config(state='normal')
+                preview_text.delete('1.0', tk.END)
+                preview_text.insert(tk.END, res[1] if not res[0] else res[2])
+                preview_text.config(state='disabled')
+
+            # ── Seletor de anúncio (tipo "anuncio") ──
+            anuncio_var = tk.StringVar()
+            _anuncios_sel = _listar_anuncios_db()
+            _anuncios_titulos = [(a.get("titulo") or "").strip()
+                                 for a in _anuncios_sel]
+
+            anuncio_frame = tk.Frame(add_main, bg='#0d1117')
+            tk.Label(anuncio_frame, text="Anúncio:",
+                     fg='#f0c040', bg='#0d1117',
+                     font=("Arial", 11, "bold")).pack(anchor='w', pady=(6, 0))
+            combo_anun = ttk.Combobox(anuncio_frame, textvariable=anuncio_var,
+                                      values=_anuncios_titulos, width=44,
+                                      font=("Arial", 10))
+            combo_anun.pack(fill='x', pady=(0, 2))
+            anun_preview = tk.Text(anuncio_frame, height=3, wrap='word',
+                                   font=("Arial", 9), bg='#161b22', fg='#c9d1d9',
+                                   relief='flat')
+            anun_preview.pack(fill='x', pady=(0, 4))
+            anun_preview.config(state='disabled')
+
+            def _preview_anuncio(event: object = None):
+                sel = anuncio_var.get().strip()
+                an = next((a for a in _anuncios_sel
+                           if (a.get("titulo") or "").strip() == sel), None)
+                anun_preview.config(state='normal')
+                anun_preview.delete('1.0', tk.END)
+                if an:
+                    cat = (an.get("categoria") or "").strip()
+                    texto = (an.get("texto") or "").strip()
+                    anun_preview.insert(
+                        tk.END, ((cat + "\n") if cat else "") + texto[:500])
+                else:
+                    anun_preview.insert(
+                        tk.END, "Selecione o anúncio na lista acima.")
+                anun_preview.config(state='disabled')
+
+            combo_anun.bind("<<ComboboxSelected>>", _preview_anuncio)
+
+            anuncio_frame.pack_forget()
+
+            # Preenche o painel ao editar um anúncio existente
+            if item_edit and (item_edit.get("tipo") or "").lower() == "anuncio":
+                _an_ed = _buscar_anuncio_por_ref(item_edit.get("referencia_id"))
+                if _an_ed:
+                    anuncio_var.set((_an_ed.get("titulo") or "").strip())
+                    _preview_anuncio()
+
             tk.Label(add_main, text="Duração estimada (segundos):", fg='#8b949e',
                      bg='#0d1117', font=("Arial", 9)).pack(anchor='w')
             dur_entry = tk.Entry(add_main, font=("Arial", 11), bg='#21262d',
                                  fg='#c9d1d9', insertbackground='#f0c040')
             dur_entry.insert(0, str((item_edit or {}).get("duracao_estimada_segundos") or 0))
             dur_entry.pack(fill='x', ipady=3, pady=2)
+
+            arquivo_path_var = tk.StringVar(
+                value=(item_edit or {}).get("caminho_arquivo") or "")
+
+            arquivo_frame = tk.Frame(add_main, bg='#0d1117')
+            tk.Label(arquivo_frame, text="Arquivo (vídeo/áudio/PowerPoint/Impress):",
+                     fg='#8b949e', bg='#0d1117',
+                     font=("Arial", 9)).pack(anchor='w')
+            arquivo_row = tk.Frame(arquivo_frame, bg='#0d1117')
+            arquivo_row.pack(fill='x', pady=2)
+            arquivo_nome_lbl = tk.Label(
+                arquivo_row,
+                text=os.path.basename(arquivo_path_var.get()) or
+                     "Nenhum arquivo selecionado",
+                fg='#c9d1d9', bg='#21262d', font=("Arial", 10),
+                anchor='w', padx=6, pady=3, width=1)
+            arquivo_nome_lbl.pack(side='left', fill='x', expand=True)
+
+            def _selecionar_arquivo():
+                _sufixos = (
+                    ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".m4v",
+                    ".flv", ".mp3", ".wav", ".ogg", ".oga", ".m4a", ".flac",
+                    ".aac", ".wma", ".ppt", ".pptx", ".pps", ".ppsx", ".odp",
+                )
+                # Usa o seletor do próprio aplicativo (inicia no home do
+                # usuário, esconde os "." ocultos e não "pisca" como o
+                # diálogo nativo do Tk/GTK).
+                escolhidos = _escolher_arquivos_usuario(
+                    parent=add_win,
+                    titulo="Selecionar vídeo, áudio ou apresentação",
+                    pasta_inicial=os.path.expanduser("~"),
+                    sufixos=_sufixos)
+                if not escolhidos:
+                    return
+                caminho = escolhidos[0]
+                arquivo_path_var.set(caminho)
+                arquivo_nome_lbl.config(text=os.path.basename(caminho))
+                if not titulo_entry.get().strip() or \
+                        titulo_entry.get().strip().startswith("Item "):
+                    _nome_base = os.path.splitext(os.path.basename(caminho))[0]
+                    titulo_entry.delete(0, tk.END)
+                    titulo_entry.insert(0, _nome_base)
+
+            def _limpar_arquivo():
+                arquivo_path_var.set("")
+                arquivo_nome_lbl.config(text="Nenhum arquivo selecionado")
+
+            tk.Button(arquivo_row, text="📁 Buscar", font=("Arial", 10, "bold"),
+                      bg='#1f6feb', fg='white', activebackground='#388bfd',
+                      cursor='hand2', padx=10,
+                      command=_selecionar_arquivo
+                      ).pack(side='left', padx=(5, 0))
+            tk.Button(arquivo_row, text="❌", font=("Arial", 10, "bold"),
+                      bg='#da3633', fg='white', activebackground='#f85149',
+                      cursor='hand2', padx=8, command=_limpar_arquivo
+                      ).pack(side='left', padx=(3, 0))
+            arquivo_frame.pack_forget()
+
+            def _atualizar_paineis():
+                t = tipo_var.get()
+                if t in ("video", "audio", "sermao"):
+                    arquivo_frame.pack(fill='x')
+                else:
+                    arquivo_frame.pack_forget()
+                if t == "versiculo":
+                    biblia_frame.pack(fill='x', pady=(2, 0))
+                else:
+                    biblia_frame.pack_forget()
+                if t == "hino":
+                    hino_frame.pack(fill='x', pady=(2, 0))
+                else:
+                    hino_frame.pack_forget()
+                if t == "anuncio":
+                    anuncio_frame.pack(fill='x', pady=(2, 0))
+                else:
+                    anuncio_frame.pack_forget()
+                try:
+                    add_win.geometry("700x540" if t == "versiculo"
+                                     else "700x540" if t == "hino"
+                                     else "700x450" if t == "anuncio"
+                                     else "700x380")
+                except tk.TclError:
+                    pass
+
+            tipo_var.trace_add("write", lambda *a: _atualizar_paineis())
+            _atualizar_paineis()
 
             def _salvar_item():
                 serv = _servico_atual()
@@ -10503,6 +10865,21 @@ class AppInterface:
                 titulo = titulo_entry.get().strip()
                 termo = ref_entry.get().strip()
                 duracao = int(dur_entry.get().strip()) if dur_entry.get().strip().isdigit() else 0
+                caminho_arquivo = arquivo_path_var.get().strip()
+                if tipo not in ("video", "audio", "sermao"):
+                    caminho_arquivo = ""
+
+                # Verdadeiro quando o usuário usou o seletor bíblico do
+                # painel "versiculo" (versão + livro + capítulo preenchidos).
+                _usou_painel_biblia = bool(
+                    tipo == "versiculo"
+                    and biblia_versao_var.get().strip()
+                    and biblia_livro_var.get().strip()
+                    and biblia_cap_var.get().strip().isdigit())
+                _usou_painel_anuncio = bool(
+                    tipo == "anuncio" and anuncio_var.get().strip())
+                _usou_painel_hino = bool(
+                    tipo == "hino" and hino_num_var.get().strip())
 
                 # ── Resolução da referência por busca (nº ou nome) ──
                 # Se o campo "Buscar" estiver vazio, o próprio Título digitado
@@ -10512,7 +10889,16 @@ class AppInterface:
                 _usou_titulo_como_busca = (not termo)
                 if not termo:
                     termo = titulo
-                if tipo == "hino":
+                if tipo == "hino" and _usou_painel_hino:
+                    res_h = _resolver_hino()
+                    if not res_h[0]:
+                        tkinter.messagebox.showwarning("Hino", res_h[1],
+                                                       parent=janela)
+                        return
+                    _, _, letra_snap, ref_display, ref_id = res_h
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = ref_display
+                elif tipo == "hino":
                     rows_match = _buscar_hino_por_termo(termo)
                     if not rows_match and termo.isdigit():
                         rows_match = db_query(
@@ -10527,6 +10913,15 @@ class AppInterface:
                     letra_snap = ref_hino.get("letra_completa", "")
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_hino.get("titulo", "") or f"Item ({tipo.title()})"
+                elif tipo in ("video", "audio", "sermao") and caminho_arquivo:
+                    if not os.path.exists(caminho_arquivo):
+                        tkinter.messagebox.showwarning(
+                            "Arquivo", f"Arquivo não encontrado:\n{caminho_arquivo}",
+                            parent=janela)
+                        return
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = (os.path.splitext(os.path.basename(caminho_arquivo))[0]
+                                  or f"Item ({tipo.title()})")
                 elif tipo in ("video", "audio"):
                     rows_match = _buscar_midia_por_termo(termo, tipo=tipo)
                     if not rows_match and termo.isdigit():
@@ -10541,6 +10936,21 @@ class AppInterface:
                     ref_id = ref_midia.get("id")
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_midia.get("nome_exibicao", "") or f"Item ({tipo.title()})"
+                elif tipo == "anuncio" and _usou_painel_anuncio:
+                    ref_an = next(
+                        (a for a in _anuncios_sel
+                         if (a.get("titulo") or "").strip()
+                         == anuncio_var.get().strip()), None)
+                    if ref_an is None:
+                        tkinter.messagebox.showwarning(
+                            "Anúncios",
+                            "O anúncio selecionado não foi encontrado.",
+                            parent=janela)
+                        return
+                    ref_id = ref_an.get("id")
+                    letra_snap = ref_an.get("texto") or ""
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = ref_an.get("titulo") or f"Item ({tipo.title()})"
                 elif tipo == "anuncio":
                     rows_match = _buscar_anuncio_por_termo(termo)
                     if not rows_match:
@@ -10553,11 +10963,20 @@ class AppInterface:
                     letra_snap = ref_an.get("texto") or ""
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_an.get("titulo") or f"Item ({tipo.title()})"
+                elif tipo == "versiculo" and _usou_painel_biblia:
+                    res = _resolver_referencia_biblia()
+                    if not res[0]:
+                        tkinter.messagebox.showwarning("Bíblia", res[1],
+                                                       parent=janela)
+                        return
+                    _, _, letra_snap, ref_display, ref_id = res
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = ref_display
                 elif termo.isdigit():
                     ref_id = int(termo)
                 if not titulo:
                     titulo = f"Item ({tipo.title()})"
-                if tipo == "versiculo" and ref_id:
+                if tipo == "versiculo" and ref_id and not _usou_painel_biblia:
                     rows_v = db_query("SELECT * FROM versiculos WHERE id = ?", (ref_id,))
                     if rows_v:
                         r = rows_v[0]
@@ -10579,6 +10998,7 @@ class AppInterface:
                         "referencia_id": ref_id,
                         "titulo_custom": titulo,
                         "letra_snapshot": letra_snap,
+                        "caminho_arquivo": caminho_arquivo,
                         "duracao_estimada_segundos": duracao,
                     })
                     novo_id = item_id
@@ -10592,6 +11012,7 @@ class AppInterface:
                         "referencia_id": ref_id,
                         "titulo_custom": titulo,
                         "letra_snapshot": letra_snap,
+                        "caminho_arquivo": caminho_arquivo,
                         "duracao_estimada_segundos": duracao,
                     })
                 if not _salvar_servicos_json(dados):
@@ -10712,51 +11133,101 @@ class AppInterface:
                 pass
 
             iniciado = False
-            # Resolve o caminho de mídia do item: vídeo/áudio do item, ou a
-            # mídia (vídeo/áudio) anexada a um anúncio.
+            # Resolve o caminho de mídia do item: 1ª o arquivo escolhido
+            # diretamente no editor (vídeo/áudio/PowerPoint/Impress); 2ª o
+            # vídeo/áudio do acervo (tabela midia); 3ª a mídia (vídeo/áudio)
+            # anexada a um anúncio.
             caminho_media = None
-            if tipo in ('video', 'audio') and item.get('referencia_id'):
-                try:
-                    rows_m = db_query(
-                        "SELECT caminho_arquivo FROM midia WHERE id = ? AND ativo = 1",
-                        (item['referencia_id'],))
-                    if rows_m:
-                        caminho_media = rows_m[0].get('caminho_arquivo') or ''
-                except Exception:
-                    caminho_media = None
-            elif tipo == 'anuncio' and item.get('referencia_id'):
-                anun = _buscar_anuncio_por_ref(item['referencia_id'])
-                if anun and (anun.get('tipo_midia') or '').strip().lower() in ('video', 'audio'):
-                    caminho_media = (anun.get('arquivo_midia') or '')
+            _caminho_direto = (item.get('caminho_arquivo') or '').strip()
+            if tipo in ('video', 'audio', 'sermao') and _caminho_direto \
+                    and os.path.exists(_caminho_direto):
+                caminho_media = _caminho_direto
+            else:
+                if tipo in ('video', 'audio') and item.get('referencia_id'):
+                    try:
+                        rows_m = db_query(
+                            "SELECT caminho_arquivo FROM midia WHERE id = ? AND ativo = 1",
+                            (item['referencia_id'],))
+                        if rows_m:
+                            caminho_media = rows_m[0].get('caminho_arquivo') or ''
+                    except Exception:
+                        caminho_media = None
+                elif tipo == 'anuncio' and item.get('referencia_id'):
+                    anun = _buscar_anuncio_por_ref(item['referencia_id'])
+                    if anun and (anun.get('tipo_midia') or '').strip().lower() in ('video', 'audio'):
+                        caminho_media = (anun.get('arquivo_midia') or '')
             if caminho_media and os.path.exists(caminho_media):
                 caminho = caminho_media
-                # Snapshot da janela principal capturado UMA vez por
-                # sessão (restaurado quando o item termina).
-                if not snapshot_servico["guardada"]:
-                    snapshot_servico["guardada"] = True
-                    snapshot_servico["playlist"] = list(self.player.playlist or [])
-                    snapshot_servico["index"] = self.player.index
-                    snapshot_servico["arquivos"] = list(
-                        getattr(self, 'arquivos_encontrados', []) or [])
-                    snapshot_servico["atual"] = getattr(
-                        self, 'arquivo_atual', None)
-
-                def _fim_item_servico(estado: object = None):
-                    # Restaura o handler e o estado anteriores ao item
-                    self.player.on_state_change = self.quando_midia_terminar
-                    if snapshot_servico["guardada"] and self.player.playlist == [caminho]:
-                        snapshot_servico["guardada"] = False
-                        self.player.playlist = snapshot_servico["playlist"]
-                        self.player.index = snapshot_servico["index"]
-                        self.arquivos_encontrados = snapshot_servico["arquivos"]
-                        self.arquivo_atual = snapshot_servico["atual"]
-
-                self.player.on_state_change = _fim_item_servico
-                self.player.carregar_playlist([caminho])
-                if self.player.tocar_indice(0):
-                    iniciado = True
+                _ext = os.path.splitext(caminho)[1].lower()
+                if _ext in ('.ppt', '.pptx', '.pps', '.ppsx', '.odp'):
+                    # Apresentação (PowerPoint/Impress): abre em tela cheia no
+                    # aplicativo do sistema (LibreOffice --show ou o aplicativo
+                    # padrão), escondendo o telão enquanto estiver aberta.
+                    self.player._matar_processo()
+                    self.player.telao.preparar_video()
+                    if _eh_windows():
+                        _cmd_apres = ['cmd', '/c', 'start', '', caminho]
+                    else:
+                        _cmd_apres = ['xdg-open', caminho]
+                        for _so in ('libreoffice', 'soffice'):
+                            if self.player._player_existe(_so):
+                                _cmd_apres = [_so, '--show', caminho]
+                                break
+                    try:
+                        _proc_apres = subprocess.Popen(
+                            _cmd_apres, start_new_session=True,
+                            env=_ambiente_sem_appimage())
+                    except Exception as e:
+                        print(f"❌ Erro ao abrir apresentação: {e}")
+                        iniciado = False
+                    else:
+                        iniciado = True
+                        if _cmd_apres[0] in ('libreoffice', 'soffice'):
+                            # Monitora o fim da apresentação e restaura o telão
+                            def _monitor_apres():
+                                _rc = _proc_apres.poll()
+                                if _rc is not None:
+                                    try:
+                                        self.player.telao.restaurar_tela()
+                                    except Exception:
+                                        pass
+                                    return
+                                try:
+                                    self.player.telao.root.after(1000, _monitor_apres)
+                                except tk.TclError:
+                                    pass
+                            try:
+                                self.player.telao.root.after(1000, _monitor_apres)
+                            except tk.TclError:
+                                pass
                 else:
-                    self.player.on_state_change = self.quando_midia_terminar
+                    # Snapshot da janela principal capturado UMA vez por
+                    # sessão (restaurado quando o item termina).
+                    if not snapshot_servico["guardada"]:
+                        snapshot_servico["guardada"] = True
+                        snapshot_servico["playlist"] = list(self.player.playlist or [])
+                        snapshot_servico["index"] = self.player.index
+                        snapshot_servico["arquivos"] = list(
+                            getattr(self, 'arquivos_encontrados', []) or [])
+                        snapshot_servico["atual"] = getattr(
+                            self, 'arquivo_atual', None)
+
+                    def _fim_item_servico(estado: object = None):
+                        # Restaura o handler e o estado anteriores ao item
+                        self.player.on_state_change = self.quando_midia_terminar
+                        if snapshot_servico["guardada"] and self.player.playlist == [caminho]:
+                            snapshot_servico["guardada"] = False
+                            self.player.playlist = snapshot_servico["playlist"]
+                            self.player.index = snapshot_servico["index"]
+                            self.arquivos_encontrados = snapshot_servico["arquivos"]
+                            self.arquivo_atual = snapshot_servico["atual"]
+
+                    self.player.on_state_change = _fim_item_servico
+                    self.player.carregar_playlist([caminho])
+                    if self.player.tocar_indice(0):
+                        iniciado = True
+                    else:
+                        self.player.on_state_change = self.quando_midia_terminar
 
             if not iniciado:
                 # Itens sem mídia (hino/anúncio/texto): projeta e para.
@@ -10775,10 +11246,17 @@ class AppInterface:
                             self.player.telao.projetar_texto(texto)
                             iniciado = True
                 else:
-                    texto = letra or titulo_item
-                    if texto:
-                        self.player.telao.projetar_texto(texto)
-                        iniciado = True
+                    if tipo == 'versiculo' and letra:
+                        # Projeta como slide persistente (igual janela Bíblia):
+                        # fica no telão até o operador parar (Esc/fechar).
+                        self.player.telao.projetar_slides(
+                            [(letra, titulo_item or '')], indice_inicial=0)
+                    else:
+                        texto = letra or titulo_item
+                        if texto:
+                            self.player.telao.projetar_texto(texto)
+                    iniciado = True if (letra if tipo == 'versiculo'
+                                        else (letra or titulo_item)) else False
 
             if iniciado:
                 _SERVICO_PROXIMO_ITEM[chave] = prox + 1
