@@ -2504,6 +2504,10 @@ class TelaoWindow:
         self._imagem_rect_base = (img_x, img_y, img_w, img_h)
         self._imagem_orig_pil = img_orig
 
+        # Escala de imagem salva pelos botões 🖼️ −/+ do painel de projeção
+        # (persistida em config_midia). Aplica ao vivo sobre a base acima.
+        self._imagem_escala = min(2.5, max(0.25, float(cfg.get("img_escala") or 1.0)))
+
         # Anúncio de imagem nunca mostra temperatura/referência da Bíblia.
         self.canvas.itemconfig(self.temp_text, text="", state="hidden")
         self.canvas.itemconfig(self.ref_text, text="", state="hidden")
@@ -3882,6 +3886,20 @@ def _salvar_servicos_json(dados: Dict) -> bool:
     except OSError as e:
         print(f"⚠️ Erro ao salvar ordens de serviço: {e}")
         return False
+
+
+def _proximo_id_servico_livre(dados: Dict) -> int:
+    """Menor id positivo ainda não usado em servicos.json.
+
+    Permite reaproveitar o menor número vazio após uma exclusão
+    (mesma lógica do _proximo_id_anuncio_livre).
+    """
+    usados = {s.get("id") for s in dados.get("servicos", [])
+              if isinstance(s, dict)}
+    cand = 1
+    while cand in usados:
+        cand += 1
+    return cand
 
 
 def _migrar_servicos_do_banco() -> bool:
@@ -7542,6 +7560,16 @@ class AppInterface:
                 return
             _abrir_editor_anuncio(int(sel[0]))
 
+        def _anuncio_duplo_clique(event):
+            if tree.identify_region(event.x, event.y) == "heading":
+                return
+            if not tree.identify_row(event.y):
+                return
+            if tree.selection():
+                _abrir_editor_anuncio(int(tree.selection()[0]))
+
+        tree.bind("<Double-1>", _anuncio_duplo_clique)
+
         def _excluir_anuncio():
             sel = tree.selection()
             if not sel:
@@ -7776,12 +7804,64 @@ class AppInterface:
             self.salvar_config_projecao(dict(cfg))
             _atualizar_indicador_slide()
 
+        def _persistir_escala_imagem(escala: float) -> None:
+            """Grava a nova escala de imagem ('img_escala') no anúncio em projeção.
+
+            Anúncio de imagem única: grava 'img_escala' no JSON de config_midia.
+            Anúncio multi-slide com imagem: grava 'img_escala' no config do slide
+            atualmente exibido. Não faz nada se não houver anúncio sendo projetado.
+            """
+            pid = _anuncio_proj.get("id")
+            if not pid:
+                return
+            try:
+                cfg_dic = _anuncio_proj.get("config") or {}
+                if not isinstance(cfg_dic, dict):
+                    cfg_dic = {}
+                c: dict = {}
+                mslides: list = []
+                idx_ms = -1
+                if _anuncio_proj.get("mslides") is not None:
+                    idx_map = _anuncio_proj.get("idx_map") or []
+                    tela_index = int(
+                        getattr(self.player.telao, "_slide_index", 0) or 0)
+                    if not (0 <= tela_index < len(idx_map)):
+                        return
+                    mslides = cfg_dic.get("mslides") or []
+                    idx_ms = idx_map[tela_index]
+                    if not (0 <= idx_ms < len(mslides)) or not isinstance(
+                            mslides[idx_ms], dict):
+                        return
+                    try:
+                        c = json.loads(mslides[idx_ms].get("config") or "{}")
+                        if not isinstance(c, dict):
+                            c = {}
+                    except (ValueError, TypeError, AttributeError):
+                        c = {}
+                else:
+                    c = cfg_dic
+                c["img_escala"] = round(escala, 3)
+                if _anuncio_proj.get("mslides") is not None:
+                    mslides[idx_ms]["config"] = json.dumps(c, ensure_ascii=False)
+                dados_proj = dict(_anuncio_proj.get("dados") or {})
+                dados_proj["config_midia"] = json.dumps(
+                    cfg_dic, ensure_ascii=False)
+                _anuncio_proj["dados"] = dados_proj
+                _anuncio_proj["config"] = cfg_dic
+                _atualizar_anuncio_db(pid, dados_proj)
+            except Exception as _e_persist_img:
+                import traceback as _tb_persist_img
+                _tb_persist_img.print_exc()
+                print(f"⚠️ Falha ao autosalvar escala da imagem do anúncio "
+                      f"{pid}: {_e_persist_img}")
+
         def _ajustar_imagem(aumentar: bool):
             """Redimensiona SOMENTE a imagem já projetada no telão (ao vivo).
 
             Em anúncios de imagem + texto, é a camada da imagem que muda —
             o texto fica intacto. Em imagem pura, o comportamento é o mesmo
-            de antes (escala centralizada).
+            de antes (escala centralizada). A nova escala é persistida no
+            anúncio (config_midia) para valer em todas as projeções seguintes.
             """
             telao = self.player.telao
             if not getattr(telao, "_mostrando_imagem", False):
@@ -7790,6 +7870,8 @@ class AppInterface:
                 telao.imagem_aumentar()
             else:
                 telao.imagem_diminuir()
+            _persistir_escala_imagem(
+                float(getattr(telao, "_imagem_escala", 1.0) or 1.0))
 
         # Setas do teclado e Esc (janela de anúncios), mesmo esquema da de hinos.
         janela.bind("<Left>", _slide_anterior)
@@ -8004,8 +8086,16 @@ class AppInterface:
                       command=_escolher_arquivo, cursor='hand2', padx=10, pady=2
                       ).pack(side='right', padx=5)
 
-            tk.Label(e_main, text="Texto do anúncio:", font=("Arial", 11, "bold"),
-                     fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x', pady=(8, 2))
+            rotulo_texto = tk.Frame(e_main, bg='#0d1117')
+            rotulo_texto.pack(fill='x', pady=(8, 2))
+            tk.Label(rotulo_texto, text="Texto do anúncio:", font=("Arial", 11, "bold"),
+                     fg='#f0c040', bg='#0d1117', anchor='w').pack(side='left')
+            btn_copiar_texto = tk.Button(
+                rotulo_texto, text="📋 Copiar", font=("Arial", 9, "bold"),
+                bg='#21262d', fg='#f0c040', activebackground='#30363d',
+                cursor='hand2', padx=10, pady=1,
+                command=lambda: _copiar_texto_editor())
+            btn_copiar_texto.pack(side='right')
 
             area_conteudo = tk.Frame(e_main, bg='#0d1117')
             area_conteudo.pack(fill='both', expand=True, pady=2)
@@ -8093,6 +8183,37 @@ class AppInterface:
                 if w is not None:
                     _texto_salvo["t"] = w.get('1.0', tk.END).strip()
                 return _texto_salvo["t"]
+
+            def _copiar_texto_editor():
+                """Copia o conteúdo em edição para a área de transferência.
+
+                No modo slide (múltiplas telas), copia APENAS o slide
+                atualmente em edição; nos demais tipos, copia o texto todo.
+                """
+                if _slides_estado["modo"]:
+                    lista = _slides_estado["lista"]
+                    idx = _slides_estado["idx"]
+                    _widget_slide = _slides_estado.get("w")
+                    if _widget_slide is not None and 0 <= idx < len(lista):
+                        lista[idx]["texto"] = _widget_slide.get(
+                            '1.0', tk.END).strip()
+                    texto = (lista[idx].get("texto", '')
+                             if 0 <= idx < len(lista) else '')
+                else:
+                    texto = _ler_texto()
+                texto = (texto or '').strip()
+                if not texto:
+                    tkinter.messagebox.showinfo(
+                        "Copiar", "Não há texto para copiar neste slide.",
+                        parent=editar_win)
+                    return
+                editar_win.clipboard_clear()
+                editar_win.clipboard_append(texto)
+                btn_copiar_texto.config(text="✅ Copiado!", bg='#238636',
+                                        fg='white')
+                editar_win.after(
+                    1500, lambda: btn_copiar_texto.config(
+                        text="📋 Copiar", bg='#21262d', fg='#f0c040'))
 
             def _montar_painel_imagem(container, texto_widget, caminho,
                                       tam_img=None, tam_txt=None,
@@ -8568,7 +8689,8 @@ class AppInterface:
                 lista_box = tk.Listbox(
                     coluna, height=4, font=("Arial", 10), bg='#21262d',
                     fg='#c9d1d9', selectbackground='#1f6feb',
-                    selectforeground='white', activestyle='none')
+                    selectforeground='white', activestyle='none',
+                    exportselection=False)
                 lista_box.pack(fill='x', side='top', pady=(0, 2))
                 barra_lista = tk.Scrollbar(coluna, orient='vertical',
                                            command=lista_box.yview)
@@ -8577,7 +8699,8 @@ class AppInterface:
                 w_texto = tk.Text(coluna, font=("Arial", 11),
                                   bg='#21262d', fg='#c9d1d9',
                                   insertbackground='#f0c040',
-                                  wrap='word', height=8)
+                                  wrap='word', height=8,
+                                  exportselection=False)
                 _slides_estado["w"] = w_texto
                 w_texto.pack(side='bottom', fill='both', expand=True)
 
@@ -8806,7 +8929,8 @@ class AppInterface:
                     w_texto_previa = tk.Text(prev_win, font=("Arial", 11),
                                              bg='#21262d', fg='#c9d1d9',
                                              insertbackground='#f0c040',
-                                             wrap='word', height=8)
+                                             wrap='word', height=8,
+                                             exportselection=False)
                     _montar_painel_imagem(prev_win, w_texto_previa,
                                           caminho, tam_img, tam_txt,
                                           txt_salvo, {"w": None})
@@ -8863,7 +8987,8 @@ class AppInterface:
                 texto_atual = tk.Text(area_conteudo, font=("Arial", 11),
                                       bg='#21262d', fg='#c9d1d9',
                                       insertbackground='#f0c040',
-                                      wrap='word', height=8)
+                                      wrap='word', height=8,
+                                      exportselection=False)
                 if _texto_salvo["t"]:
                     texto_atual.insert('1.0', _texto_salvo["t"])
 
@@ -10008,14 +10133,15 @@ class AppInterface:
                 nome = resultado[0]
             if not nome:
                 return
-            novo_id = dados["_proximo_id_servico"]
+            novo_id = _proximo_id_servico_livre(dados)
             dados["servicos"].append({
                 "id": novo_id,
                 "nome": nome,
                 "criado_em": datetime.now().isoformat(timespec="seconds"),
                 "itens": [],
             })
-            dados["_proximo_id_servico"] = novo_id + 1
+            dados["_proximo_id_servico"] = max(
+                dados.get("_proximo_id_servico", 1), novo_id + 1)
             if not _salvar_servicos_json(dados):
                 dados["servicos"] = [s for s in dados["servicos"]
                                      if s.get("id") != novo_id]
@@ -10180,9 +10306,28 @@ class AppInterface:
 
             preview_text = tk.Text(biblia_frame, height=4, wrap='word',
                                    font=("Arial", 9), bg='#161b22', fg='#c9d1d9',
-                                   relief='flat')
+                                   relief='flat', exportselection=False)
             preview_text.pack(fill='x', pady=4)
             preview_text.config(state='disabled')
+
+            def _copiar_previa(widget: tk.Text) -> None:
+                try:
+                    conteudo = widget.get('1.0', tk.END).strip()
+                except tk.TclError:
+                    conteudo = ""
+                if not conteudo:
+                    tkinter.messagebox.showinfo(
+                        "Copiar", "Não há conteúdo para copiar.", parent=add_win)
+                    return
+                add_win.clipboard_clear()
+                add_win.clipboard_append(conteudo)
+
+            btn_copia_biblia = tk.Button(
+                biblia_frame, text="📋 Copiar", font=("Arial", 9, "bold"),
+                bg='#21262d', fg='#f0c040', activebackground='#30363d',
+                cursor='hand2', padx=10, pady=1,
+                command=lambda: _copiar_previa(preview_text))
+            btn_copia_biblia.pack(anchor='e', pady=(0, 2))
 
             biblia_frame.pack_forget()
 
@@ -10216,8 +10361,16 @@ class AppInterface:
 
             preview_hino = tk.Text(hino_frame, height=7, wrap='word',
                                    font=("Arial", 9), bg='#161b22', fg='#c9d1d9',
-                                   relief='flat', state='disabled')
+                                   relief='flat', state='disabled',
+                                   exportselection=False)
             preview_hino.pack(fill='x', pady=4)
+
+            btn_copia_hino = tk.Button(
+                hino_frame, text="📋 Copiar", font=("Arial", 9, "bold"),
+                bg='#21262d', fg='#f0c040', activebackground='#30363d',
+                cursor='hand2', padx=10, pady=1,
+                command=lambda: _copiar_previa(preview_hino))
+            btn_copia_hino.pack(anchor='e', pady=(0, 2))
 
             def _ver_letra_hino():
                 """Resolve o nº/termo digitado → letra do hino e mostra preview."""
@@ -10348,9 +10501,16 @@ class AppInterface:
             combo_anun.pack(fill='x', pady=(0, 2))
             anun_preview = tk.Text(anuncio_frame, height=3, wrap='word',
                                    font=("Arial", 9), bg='#161b22', fg='#c9d1d9',
-                                   relief='flat')
+                                   relief='flat', exportselection=False)
             anun_preview.pack(fill='x', pady=(0, 4))
             anun_preview.config(state='disabled')
+
+            btn_copia_anuncio = tk.Button(
+                anuncio_frame, text="📋 Copiar", font=("Arial", 9, "bold"),
+                bg='#21262d', fg='#f0c040', activebackground='#30363d',
+                cursor='hand2', padx=10, pady=1,
+                command=lambda: _copiar_previa(anun_preview))
+            btn_copia_anuncio.pack(anchor='e', pady=(0, 4))
 
             def _preview_anuncio(event: object = None):
                 sel = anuncio_var.get().strip()
