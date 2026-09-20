@@ -1729,7 +1729,7 @@ class TelaoWindow:
 
     def mostrar_relogio(self, texto: str, temperatura: str = "") -> None:
         """Exibe relógio e temperatura no telão (só redesenha se mudou)."""
-        if not self.rodando:
+        if not self.rodando or not self._raiz_viva():
             return
 
         # Evita chamadas Tk desnecessárias se os valores não mudaram
@@ -1774,18 +1774,36 @@ class TelaoWindow:
         if not self._is_visible or not self.mostrando_relogio:
             self.root.lower()
 
+    def _raiz_viva(self) -> bool:
+        """True se o Tk do telão ainda existe (não foi fechado/destruído)."""
+        try:
+            return bool(getattr(self, "rodando", False)) and bool(
+                self.root.winfo_exists())
+        except tk.TclError:
+            return False
+
     def preparar_video(self) -> None:
         """Prepara para exibição de vídeo (esconde o telão)."""
+        if not self._raiz_viva():
+            return
         self.mostrando_relogio = False
         if self._current_alpha != 0.0:
-            self.root.attributes('-alpha', 0.0)
+            try:
+                self.root.attributes('-alpha', 0.0)
+            except tk.TclError:
+                return
             self._current_alpha = 0.0
         if self._is_visible:
-            self.root.withdraw()
+            try:
+                self.root.withdraw()
+            except tk.TclError:
+                pass
             self._is_visible = False
 
     def restaurar_tela(self) -> None:
         """Restaura o telão após o término do vídeo (sem after repetido)."""
+        if not self._raiz_viva():
+            return
         if self._is_visible and self.mostrando_relogio:
             return  # Já está visível
 
@@ -1995,7 +2013,7 @@ class TelaoWindow:
         agenda o retorno automático do relógio + temperatura após o tempo
         configurado (duracao_seg).
         """
-        if not self.rodando:
+        if not self.rodando or not self._raiz_viva():
             return
         cfg = getattr(self, "_proj_cfg", None)
         if cfg is None:
@@ -2052,6 +2070,8 @@ class TelaoWindow:
         dentro dessa largura máxima — usado pelo anúncio de imagem + texto,
         em que parte da tela é ocupada pela imagem.
         """
+        if not self._raiz_viva():
+            return ("", 0)
         cfg = getattr(self, "_proj_cfg", None)
         if cfg is None:
             self.configurar_projecao()
@@ -2164,7 +2184,7 @@ class TelaoWindow:
         (slide_proximo/slide_anterior) e encerra com Esc ou
         parar_projecao(), voltando o relógio + temperatura ao telão.
         """
-        if not self.rodando or not slides:
+        if not self.rodando or not self._raiz_viva() or not slides:
             return
         # Cancela retorno automático anterior (re-projeção)
         if getattr(self, "_proj_timer", None) is not None:
@@ -2210,7 +2230,8 @@ class TelaoWindow:
         A parada (Esc, parar_projecao, _retornar_ao_relogio) volta o relógio +
         temperatura. Retorna False se o arquivo for inválido/inexistente.
         """
-        if not self.rodando or not caminho or not os.path.exists(caminho):
+        if not self.rodando or not self._raiz_viva() or not caminho \
+                or not os.path.exists(caminho):
             return False
         try:
             from PIL import Image, ImageTk
@@ -2372,7 +2393,8 @@ class TelaoWindow:
         área útil (mesmo layout lado a lado do compositor antigo).
         Retorna False se o arquivo for inválido/inexistente.
         """
-        if not self.rodando or not caminho or not os.path.exists(caminho):
+        if not self.rodando or not self._raiz_viva() or not caminho \
+                or not os.path.exists(caminho):
             return False
         try:
             from PIL import Image
@@ -2733,6 +2755,8 @@ class TelaoWindow:
 
     def _exibir_hora_inicial(self, temperatura: str = "") -> None:
         """Exibe a hora atual e temperatura no telão logo após a criação."""
+        if not self._raiz_viva():
+            return
         hora = datetime.now().strftime("%H:%M")
         self.canvas.itemconfig(self.overlay_text, text=hora, state="normal")
         self._current_text = hora
@@ -2809,6 +2833,33 @@ class MediaPlayer:
         """Retorna o processo do player (somente leitura)."""
         return self._process
 
+    def _garantir_telao(self) -> TelaoWindow:
+        """Garante que o telão existe; recria se tiver sido fechado.
+
+        O telão é um tk.Tk() separado e pode ser destruído em execução
+        normal (Esc fora de projeção, Ctrl+Q ou X na janela TELÃO). Sem
+        recuperação, a próxima reprodução estourava com "can't invoke wm
+        command: application has been destroyed".
+        """
+        telao = getattr(self, "telao", None)
+        if telao is not None and getattr(telao, "_raiz_viva", lambda: False)():
+            return telao
+        print("🖥️ Telão fechado — recriando automaticamente...")
+        try:
+            novo = TelaoWindow(self.monitor_index)
+        except Exception as e:
+            print(f"⚠️ Falha ao recriar telão: {e}")
+            return telao if telao is not None else TelaoWindow(self.monitor_index)
+        novo.root.lower()
+        self.telao = novo
+        cb = getattr(self, "on_telao_recriado", None)
+        if cb:
+            try:
+                cb(novo)
+            except Exception as e:
+                print(f"⚠️ Falha ao reaplicar config no telão recriado: {e}")
+        return novo
+
     def _monitorar(self) -> None:
         """Verifica se o player terminou (sem polling, via after)."""
         processo_terminou = False
@@ -2825,6 +2876,7 @@ class MediaPlayer:
                     self._player_pid = None
 
         if processo_terminou:
+            self.telao = self._garantir_telao()
             self.telao.restaurar_tela()
             # Só dispara "ended" se o processo NÃO foi morto intencionalmente
             # (stop, próximo, anterior, tocar_indice já tratam a transição)
@@ -2964,6 +3016,7 @@ class MediaPlayer:
             return False
 
         print(f"🎵 Tocando: {os.path.basename(arquivo)}")
+        self.telao = self._garantir_telao()
         self.telao.preparar_video()
         self.tempo_acumulado = 0.0
         self.tempo_inicio = time.time()
@@ -3205,6 +3258,7 @@ class MediaPlayer:
         self.tempo_inicio = None
         self.tempo_acumulado = 0.0
         self.duracao_total = None
+        self.telao = self._garantir_telao()
         self.telao.restaurar_tela()
         print("✅ Player parado")
 
@@ -4264,6 +4318,21 @@ class AppInterface:
 
         # Aplica configuração de aparência do relógio/temperatura
         self.player.telao.configurar_relogio(self.config_data.get("relogio", {}))
+
+        # Quando o telão for fechado (Esc/Ctrl+Q) e recriado pelo player,
+        # reaplica a aparência configurada e volta a mostrar a hora inicial.
+        def _reaplicar_telao_recriado(novo_telao) -> None:
+            try:
+                novo_telao.configurar_projecao(
+                    self.config_data.get("projecao", {}))
+                novo_telao.configurar_relogio(
+                    self.config_data.get("relogio", {}))
+                novo_telao._exibir_hora_inicial()
+            except Exception as _e_reap:
+                print(f"⚠️ Erro ao reaplicar config no telão recriado: "
+                      f"{_e_reap}")
+
+        self.player.on_telao_recriado = _reaplicar_telao_recriado
 
         self._criar_menu()
 
