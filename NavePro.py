@@ -17,9 +17,7 @@ import shutil
 import signal
 import sqlite3
 import subprocess
-import ssl
 import sys
-import tempfile
 import threading
 import time
 import tkinter as tk
@@ -43,434 +41,62 @@ except ImportError:
     _HAS_SCREENINFO = False
 
 # ────────────────────────────────────────────────────────────────────
-# AMBIENTE LIMPO PARA PROCESSOS EXTERNOS
+# IMPORTS INTERNOS (infraestrutura modularizada)
 # ────────────────────────────────────────────────────────────────────
 
-def _ambiente_sem_appimage() -> dict[str, str]:
-    """Retorna um ambiente SEM as bibliotecas embutidas do AppImage.
-
-    Quando o NavePro roda dentro de um AppImage, o runtime injeta
-    LD_LIBRARY_PATH (e ARGV0/APPDIR/OWD) apontando para as libs embutidas
-    (fontconfig, pango, glib...). Ao lançar programas do sistema
-    (smplayer -> mpv, ffprobe, dbus-send, vlc, xrandr...), essa variável
-    faz com que eles carreguem versões ERRADAS das bibliotecas e quebrem
-    com "symbol lookup error" (ex.: libpangoft2 vs fontconfig).
-
-    Aqui removemos QUALQUER LDLIBRARY_PATH herdado do AppImage antes de
-    executar programas externos. O processo NavePro já carregou todas as
-    libs que precisa em memória no arranque, então é seguro repassar
-    um ambiente sem essa variável aos filhos do sistema.
-    """
-    env = os.environ.copy()
-    for var in ('LD_LIBRARY_PATH', 'APPDIR', 'APPIMAGE', 'OWD', 'ARGV0'):
-        env.pop(var, None)
-    return env
-
-
-def _eh_windows() -> bool:
-    """True se estivermos rodando no Windows."""
-    return sys.platform.startswith('win')
-
-
-def _eh_linux() -> bool:
-    """True se estivermos rodando no Linux."""
-    return sys.platform.startswith('linux')
-
-
-# ────────────────────────────────────────────────────────────────────
-# CONTEXTO SSL USANDO OS CERTIFICADOS DO SISTEMA
-# ────────────────────────────────────────────────────────────────────
-
-_SSL_CONTEXTO: Optional[ssl.SSLContext] = None
-_SSL_CONTEXTO_LOCK: threading.Lock = threading.Lock()
-# Locais comuns do bundle de CA do sistema
-_CAMINHOS_CACERT: tuple[str, ...] = (
-    "/etc/ssl/certs/ca-certificates.crt",   # Debian/Ubuntu/derivados (BigLinux)
-    "/etc/ssl/cert.pem",                    # macOS/Fedora
-    "/etc/pki/tls/certs/ca-bundle.crt",     # RHEL/Fedora
-    "/etc/ssl/ca-bundle.pem",               # openSUSE
-    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+from navepro.core.ambiente import (
+    _ambiente_sem_appimage,
+    _eh_windows,
+    _eh_linux,
 )
-# Caminhos onde o host pode ter CAs corporativas (MITM/proxy) adicionais
-_CAMINHOS_CLIENTE: tuple[str, ...] = (
-    "/etc/ssl/certs/ca-certificates.crt",
-    "/etc/pki/tls/certs/ca-bundle.crt",
-    "/etc/ssl/cert.pem",
+from navepro.core.ssl_context import (
+    _ssl_context,
+    _baixar,
 )
-
-
-def _ssl_context() -> ssl.SSLContext:
-    """Retorna um contexto SSL com as CAs do SISTEMA (não as embutidas).
-
-    Dentro do AppImage, o Python embutido usa um bundle de CA próprio que
-    nem sempre confia nas raízes (ex.: proxy corporativo, ou distribuições
-    em que as CAs ficam em local específico — como no BigLinux). Isso
-    causa "SSL: CERTIFICATE_VERIFY_FAILED". Aqui carregamos o bundle de CA
-    do sistema do host de verdade.
-    """
-    global _SSL_CONTEXTO
-    if _SSL_CONTEXTO is not None:
-        return _SSL_CONTEXTO
-    with _SSL_CONTEXTO_LOCK:
-        if _SSL_CONTEXTO is not None:
-            return _SSL_CONTEXTO
-
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = True
-        ctx.verify_mode = ssl.CERT_REQUIRED
-
-        # 1) Tenta carregar explicitamente o bundle de CA do sistema.
-        for cafile in _CAMINHOS_CACERT:
-            try:
-                if os.path.isfile(cafile):
-                    ctx.load_verify_locations(cafile=cafile)
-                    break
-            except (ssl.SSLError, OSError):
-                continue
-
-        # 2) Tenta um bundle de cliente/CA corporativa (evita MITM falso).
-        for cafile in _CAMINHOS_CLIENTE:
-            try:
-                if os.path.isfile(cafile):
-                    ctx.load_verify_locations(cafile=cafile)
-                    break
-            except (ssl.SSLError, OSError):
-                continue
-
-        _SSL_CONTEXTO = ctx
-        return ctx
-
-
-def _baixar(url, timeout: int = 8, **kwargs):
-    """Faz uma requisição HTTPS usando o certificado do sistema.
-
-    Aceita uma URL (str) ou um urllib.request.Request já montado
-    (headers/User-Agent etc.). Encapsular um Request em outro Request
-    quebra a URL e levanta 'ValueError: unknown url type'.
-    """
-    if not isinstance(url, urllib.request.Request):
-        url = urllib.request.Request(url, **kwargs)
-    return urllib.request.urlopen(url, timeout=timeout, context=_ssl_context())
-
-
-# ────────────────────────────────────────────────────────────────────
-# CONSTANTES
-# ────────────────────────────────────────────────────────────────────
-
-APP_VERSION: str = "1.9.6"
-CONFIG_FILE: str = "config.json"  # Será redefinido abaixo em UTILITÁRIOS DE CAMINHO
-PLAYER_PADRAO: str = "mpv" if _eh_windows() else "smplayer"
-BACKEND_PORT: int = 5897
-BACKEND_URL: str = f"http://127.0.0.1:{BACKEND_PORT}"
-
-# ── Atualização automática (GitHub Releases) ──
-# O NavePro consulta o release mais recente em
-# https://github.com/{GITHUB_REPO}/releases/latest e, se houver versão
-# nova, oferece baixar o AppImage para ~/Downloads com instruções de
-# substituição do arquivo antigo.
-GITHUB_USER: str = "edes-neves"
-GITHUB_REPO: str = "NavePro"
-RELEASES_API_URL: str = (
-    f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
+from navepro.core.tema import _cor_clara, _OPCOES_COR_TK, _OPCOES_TEXTO
+from navepro.core.paths import (
+    _caminho_recurso,
+    _aplicar_icone_janela,
+    CONFIG_FILE,
+    DB_PATH,
+    UPLOAD_FOLDER,
+    DIR_BASE,
+    DB_EMBUTIDO,
+    UPLOADS_EMBUTIDO,
+    ANUNCIOS_FILE,
+    SERVICOS_FILE,
 )
-SEGUNDOS_PARA_VERIFICAR_ATUALIZACAO: int = 20
-
-EXTENSOES_VIDEO: frozenset = frozenset({'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm'})
-EXTENSOES_AUDIO: frozenset = frozenset({'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'})
-EXTENSOES_TEXTO: frozenset = frozenset({'.txt', '.pdf', '.doc', '.docx', '.md'})
-EXTENSOES_TODAS: frozenset = EXTENSOES_VIDEO | EXTENSOES_AUDIO | EXTENSOES_TEXTO
-
-SQLITE_TIMEOUT: int = 10
-CACHE_TTL_SEGUNDOS: int = 60
-CACHE_LRU_MAXSIZE: int = 256
+from navepro.core.atualizacao import (
+    _versao_nova,
+    _buscar_release_latest,
+    _procurar_asset_instalador,
+    _pasta_downloads,
+)
+from navepro.core.textos import (
+    detectar_tipo_arquivo,
+    remover_acentos,
+    normalizar_texto,
+)
+from navepro.config import (
+    APP_VERSION,
+    PLAYER_PADRAO,
+    BACKEND_PORT,
+    BACKEND_URL,
+    SEGUNDOS_PARA_VERIFICAR_ATUALIZACAO,
+    EXTENSOES_VIDEO,
+    EXTENSOES_AUDIO,
+    SQLITE_TIMEOUT,
+    CACHE_TTL_SEGUNDOS,
+    CACHE_LRU_MAXSIZE,
+    SUFIXOS_IMAGEM,
+    MAPA_ESTADOS,
+)
 
 
 # ────────────────────────────────────────────────────────────────────
 # TEMAS DA INTERFACE (painel do administrador / monitor 1)
+# (movido para navepro/core/tema.py — ver "IMPORTS INTERNOS" no topo)
 # ────────────────────────────────────────────────────────────────────
-# O tema ESCURO atual permanece intacto e é o padrão. O tema CLARO é
-# uma opção extra: as cores escuras hardcoded na interface são convertidas
-# em tempo de execução pela tabela abaixo, sem alterar nenhuma cor do
-# código existente. As cores de projeção/relógio do TELÃO NÃO são tocadas.
-#
-# Mapa: cor ESCURA atual -> cor equivalente no tema CLARO.
-MAPA_COR_CLARA: dict[str, str] = {
-    # Fundos
-    '#0d1117': '#f6f8fa',   # fundo principal da janela
-    '#161b22': '#ffffff',   # cards/containers
-    '#21262d': '#ffffff',   # entradas/botões neutros/lista
-    '#1c2128': '#f6f8fa',   # linha alternada (par) da lista
-    '#30363d': '#d0d7de',   # bordas/separadores/hover neutro
-    # Roxos (accent)
-    '#6e40c9': '#8250df',
-    '#8b5cf6': '#8250df',
-    '#8957e5': '#8250df',
-    '#a371f7': '#8250df',
-    '#a78bfa': '#8250df',
-    # Verdes (sucesso)
-    '#238636': '#1a7f37',
-    '#2ea043': '#2ea043',
-    '#3fb950': '#2ea043',
-    # Azuis (info)
-    '#1f6feb': '#0969da',
-    '#388bfd': '#388bfd',
-    '#58a6ff': '#0969da',
-    # Vermelhos (perigo)
-    '#da3633': '#cf222e',
-    '#f85149': '#f85149',
-    # Textos fixos
-    '#c9d1d9': '#1f2328',   # texto normal
-    '#8b949e': '#656d76',   # texto secundário/muted
-}
-
-_MAPA_COR_CLARA_UP: dict[str, str] = {
-    chave.upper(): valor for chave, valor in MAPA_COR_CLARA.items()
-}
-
-# Cores fortes do tema claro (mantêm texto branco por cima)
-_CORES_FORTES_CLARO: frozenset = frozenset({
-    '#8250df', '#6e40c9',                                              # roxos
-    '#1a7f37', '#2ea043', '#238636', '#2ea043',                        # verdes
-    '#0969da', '#388bfd', '#1f6feb', '#58a6ff',                        # azuis
-    '#cf222e', '#da3633', '#f85149',                                   # vermelhos
-})
-
-# Fundos claros (texto branco fica ilegível em cima)
-_FUNDOS_CLAROS: frozenset = frozenset({
-    '#ffffff', '#f6f8fa', '#eaeef2',
-})
-
-# Opções de cor do Tk que o tema pode recolorir por widget
-_OPCOES_COR_TK: tuple[str, ...] = (
-    'background', 'foreground',
-    'activebackground', 'activeforeground',
-    'highlightbackground', 'highlightcolor',
-    'selectcolor', 'insertbackground',
-    'selectbackground', 'selectforeground',
-    'troughcolor', 'arrowcolor',
-)
-
-# Opções que representam TEXTO (precisam decidir a cor com base no fundo)
-_OPCOES_TEXTO: frozenset = frozenset({
-    'foreground', 'activeforeground', 'arrowcolor',
-    'insertbackground', 'selectforeground',
-})
-
-
-def _cor_clara(cor: Optional[str], bg_final: Optional[str] = None) -> str:
-    """Devolve a equivalente CLARA da cor ESCURA `cor` (ou ela mesma).
-
-    Amarelos e brancos dependem do contexto: sobre um fundo forte
-    (roxo/verde/azul/vermelho) mantêm branco; sobre fundo claro viram
-    um tom escuro legível.
-    """
-    if not cor:
-        return '#000000'
-    mapa = _MAPA_COR_CLARA_UP
-    if cor.upper() in mapa:
-        return mapa[cor.upper()]
-    if cor in ('#f0c040', '#F5BE08'):
-        if bg_final in _CORES_FORTES_CLARO:
-            return '#ffffff'
-        return '#24292f'
-    if cor in ('#ffffff', '#FFFFFF'):
-        if bg_final in _FUNDOS_CLAROS:
-            return '#1f2328'
-        return '#ffffff'
-    return cor
-
-
-# ────────────────────────────────────────────────────────────────────
-# UTILITÁRIOS DE CAMINHO
-# ────────────────────────────────────────────────────────────────────
-
-
-def _caminho_base() -> str:
-    """Diretório do executável/script (compatível PyInstaller)."""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-
-def _caminho_recurso(nome: str) -> str:
-    """Caminho de recurso embutido (PyInstaller) ou local (dev)."""
-    if getattr(sys, 'frozen', False):
-        return os.path.join(sys._MEIPASS, nome)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), nome)
-
-
-def _aplicar_icone_janela(janela) -> None:
-    """Define o ícone da janela: XBM no Linux, ICO no Windows."""
-    try:
-        if _eh_windows():
-            ico = _caminho_recurso("Icon.ico")
-            if os.path.exists(ico):
-                janela.wm_iconbitmap(ico)
-        else:
-            xbm = _caminho_recurso("Icon.xbm")
-            if os.path.exists(xbm):
-                janela.wm_iconbitmap("@" + xbm)
-    except Exception:
-        pass
-
-
-def _obter_dados_usuario() -> str:
-    """Diretório persistente do usuário (~/.navepro)."""
-    data_dir = os.path.join(os.path.expanduser("~"), ".navepro")
-    os.makedirs(data_dir, exist_ok=True)
-    return data_dir
-
-
-DATA_USER_DIR: str = _obter_dados_usuario()
-CONFIG_FILE: str = os.path.join(DATA_USER_DIR, "config.json")
-DB_PATH: str = os.path.join(DATA_USER_DIR, "midia.db")
-UPLOAD_FOLDER: str = os.path.join(DATA_USER_DIR, "uploads")
-DIR_BASE: str = _caminho_base()
-DB_EMBUTIDO: str = _caminho_recurso("midia.db")
-UPLOADS_EMBUTIDO: str = _caminho_recurso("uploads")
-ANUNCIOS_FILE: str = os.path.join(DATA_USER_DIR, "anuncios.json")
-SERVICOS_FILE: str = os.path.join(DATA_USER_DIR, "servicos.json")
-
-# Extensões de imagem aceitas como "slide" nos anúncios
-SUFIXOS_IMAGEM: frozenset = frozenset({'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'})
-
-
-# ────────────────────────────────────────────────────────────────────
-# ATUALIZAÇÃO AUTOMÁTICA
-# ────────────────────────────────────────────────────────────────────
-
-
-def _versao_tuple(versao: str) -> tuple:
-    """Converte '1.8.0'/'v1.9.1' em tupla numérica para comparação."""
-    partes: list[int] = []
-    for p in re.split(r'\D+', versao):
-        if p:
-            try:
-                partes.append(int(p))
-            except ValueError:
-                partes.append(0)
-    return tuple(partes) or (0,)
-
-
-def _versao_nova(remota: str, local: str = APP_VERSION) -> bool:
-    """True se a versão remota (GitHub) for maior que a instalada."""
-    return _versao_tuple(remota) > _versao_tuple(local)
-
-
-def _buscar_release_latest(timeout: int = 10) -> Optional[dict]:
-    """Consulta o release mais recente na API do GitHub (thread-safe).
-
-    Retorna dict com 'tag_name', 'name', 'body' e 'assets' (lista de
-    assets do release, cada um com 'name' e 'browser_download_url').
-    """
-    try:
-        req = urllib.request.Request(
-            RELEASES_API_URL, headers={
-                "User-Agent": f"NavePro/{APP_VERSION}",
-                "Accept": "application/vnd.github+json",
-            }
-        )
-        with _baixar(req, timeout=timeout) as resp:
-            dados = json.loads(resp.read().decode('utf-8'))
-        if not isinstance(dados, dict) or not dados.get('tag_name'):
-            return None
-        return dados
-    except Exception as e:
-        print(f"⚠️  Verificação de atualização falhou: {e}")
-        return None
-
-
-def _procurar_asset_instalador(release: dict) -> Optional[dict]:
-    """Encontra o instalador da plataforma atual.
-
-    Windows procura o primeiro asset '.exe'; Linux o primeiro '.AppImage'.
-    """
-    sufixo = ".exe" if _eh_windows() else ".appimage"
-    for asset in release.get('assets', []) or []:
-        nome = str(asset.get('name', '')).lower()
-        if nome.endswith(sufixo):
-            return asset
-    return None
-
-
-def _pasta_downloads() -> str:
-    """Retorna ~/Downloads (ou ~ como fallback) para salvar o instalador."""
-    downloads = os.path.join(os.path.expanduser("~"), "Downloads")
-    if not os.path.isdir(downloads):
-        downloads = os.path.expanduser("~")
-    return downloads
-
-
-# ────────────────────────────────────────────────────────────────────
-# UTILITÁRIOS DE TEXTO
-# ────────────────────────────────────────────────────────────────────
-
-
-def detectar_tipo_arquivo(caminho: str) -> Optional[str]:
-    """Detecta o tipo de mídia pela extensão."""
-    ext = os.path.splitext(caminho)[1].lower()
-    if ext in EXTENSOES_VIDEO:
-        return 'video'
-    if ext in EXTENSOES_AUDIO:
-        return 'audio'
-    if ext in EXTENSOES_TEXTO:
-        return 'texto'
-    return None
-
-
-# Regex compilada para remoção de acentos (O(n), sem laço Python)
-_PATTERN_ACENTOS: re.Pattern = re.compile(
-    '[áàãâäéèêëíìîïóòõôöúùûüçñÁÀÃÂÄÉÈÊËÍÌÎÏÓÒÕÔÖÚÙÛÜÇÑ]'
-)
-# Cache LRU para remover_acentos (evita normalizações repetidas)
-_ACENTOS_CACHE: OrderedDict[str, str] = OrderedDict()
-_ACENTOS_CACHE_LOCK = threading.Lock()
-_ACENTOS_CACHE_MAX: int = 1024
-
-_MAPA_ACENTOS: dict[str, str] = {
-    'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a',
-    'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-    'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-    'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o',
-    'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
-    'ç': 'c', 'ñ': 'n',
-    'Á': 'A', 'À': 'A', 'Ã': 'A', 'Â': 'A', 'Ä': 'A',
-    'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
-    'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
-    'Ó': 'O', 'Ò': 'O', 'Õ': 'O', 'Ô': 'O', 'Ö': 'O',
-    'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
-    'Ç': 'C', 'Ñ': 'N',
-}
-
-def _replace_acentos(match: re.Match) -> str:
-    """Callback para substituir acento no regex."""
-    char = match.group(0)
-    return _MAPA_ACENTOS.get(char, char)
-
-
-def remover_acentos(texto: str) -> str:
-    """Remove acentos usando regex compilada com callback e cache LRU."""
-    if not texto:
-        return texto
-    # Cache check (thread-safe via lock)
-    with _ACENTOS_CACHE_LOCK:
-        cached = _ACENTOS_CACHE.get(texto)
-        if cached is not None:
-            return cached
-    texto = unicodedata.normalize('NFC', texto)
-    resultado = _PATTERN_ACENTOS.sub(_replace_acentos, texto)
-    # Cache write (LRU via OrderedDict.move_to_end)
-    with _ACENTOS_CACHE_LOCK:
-        if len(_ACENTOS_CACHE) >= _ACENTOS_CACHE_MAX:
-            _ACENTOS_CACHE.popitem(last=False)
-        _ACENTOS_CACHE[texto] = resultado
-        _ACENTOS_CACHE.move_to_end(texto)
-    return resultado
-
-
-def normalizar_texto(texto: str) -> str:
-    """Normaliza: minúsculas, sem acentos, sem espaços extras."""
-    return re.sub(r'\s+', ' ', remover_acentos(str(texto or '').strip())).casefold()
 
 # ────────────────────────────────────────────────────────────────────
 # BANCO DE DADOS – GERENCIADOR COM CACHE E CONEXÃO PERSISTENTE
@@ -1486,17 +1112,6 @@ class ServidorAsyncHTTP:
 
     def start(self) -> None:
         self.iniciar()
-MAPA_ESTADOS: dict[str, str] = {
-    'AC': 'Acre', 'AL': 'Alagoas', 'AP': 'Amapá', 'AM': 'Amazonas',
-    'BA': 'Bahia', 'CE': 'Ceará', 'DF': 'Distrito Federal',
-    'ES': 'Espírito Santo', 'GO': 'Goiás', 'MA': 'Maranhão',
-    'MT': 'Mato Grosso', 'MS': 'Mato Grosso do Sul', 'MG': 'Minas Gerais',
-    'PA': 'Pará', 'PB': 'Paraíba', 'PR': 'Paraná', 'PE': 'Pernambuco',
-    'PI': 'Piauí', 'RJ': 'Rio de Janeiro', 'RN': 'Rio Grande do Norte',
-    'RS': 'Rio Grande do Sul', 'RO': 'Rondônia', 'RR': 'Roraima',
-    'SC': 'Santa Catarina', 'SP': 'São Paulo', 'SE': 'Sergipe',
-    'TO': 'Tocantins',
-}
 
 
 def _estado_para_nome(estado: str) -> str:

@@ -14,14 +14,18 @@ qualquer lugar.
 
 ## Passo a passo (recomendado — versão automática)
 
-O `build.sh` cuida de tudo o que há abaixo e ainda **grava a versão no
-NavePro.py** (`APP_VERSION`) para o AppImage sempre mostrar a mesma versão
-do seu release no GitHub:
+O `build.sh` cuida de tudo o que há abaixo e **nomeia o AppImage com a versão**
+passada. O `APP_VERSION` que o app exibe/compara fica em `navepro/config.py`:
+o `publicar.sh` o atualiza (sed) antes de chamar o `build.sh`, mantendo o
+binário sempre com a mesma versão do release no GitHub:
 
 ```bash
-PYTHON_BIN=.venv/bin/python ./build.sh 1.9.0
-./NavePro-1.9.0.AppImage        # testar
+PYTHON_BIN=.venv/bin/python ./build.sh 1.9.0        # gera NavePro-1.9.0.AppImage
+./NavePro-1.9.0.AppImage                            # testar
 ```
+
+> Para publicar uma versão nova, prefira `./publicar.sh 1.9.0`: ele grava o
+> `APP_VERSION` em `navepro/config.py`, roda o `build.sh` e cria o release.
 
 A versão também pode vir de `VERSION=1.9.0 ./build.sh` ou do tag git
 mais próximo (`./build.sh`, ex.: `v1.9.0` → 1.9.0).
@@ -29,7 +33,7 @@ mais próximo (`./build.sh`, ex.: `v1.9.0` → 1.9.0).
 > ⚠️ **Sempre passe a mesma versão do release que vai criar.** Se o nº do
 > release no GitHub for maior que o `APP_VERSION` gravado no binário,
 > o app vai achar que está desatualizado (e vai oferecer "atualizar"
-> baixando a si mesmo). Use o `build.sh`, que evita isso.
+> baixando a si mesmo). Use o `publicar.sh`, que evita isso.
 
 ## Passo a passo (manual)
 
@@ -76,9 +80,8 @@ mais próximo (`./build.sh`, ex.: `v1.9.0` → 1.9.0).
 ## Para publicar uma versão nova no GitHub (Release)
 
 ```bash
-./build.sh 1.9.0                                            # AppImage já com a versão 1.9.0
-gh release create v1.9.0 NavePro-1.9.0.AppImage \
-    --title "NavePro 1.9.0" --notes "Novidades desta versão..."
+./publicar.sh 1.9.0     # grava APP_VERSION em navepro/config.py, gera o AppImage,
+                        # faz commit/tag/push e cria o release com o binário anexado
 ```
 
 O app em execução detecta o `v1.9.0`, avisa o usuário e baixa
@@ -87,7 +90,8 @@ O app em execução detecta o `v1.9.0`, avisa o usuário e baixa
 ## Observações
 
 - `python NavePro.py` (código-fonte) é a forma de desenvolvimento; o
-  AppImage é apenas o pacote de distribuição.
+  AppImage é apenas o pacote de distribuição. A infraestrutura vive em
+  `navepro/` (módulos importados pelo `NavePro.py`).
 - A cada mudança no código: gere um novo AppImage com `build.sh` (o binário
   embute o fonte), **atualizando a versão**.
 - O ícone `Icon.xbm` é embutido dentro do binário (usado como ícone das

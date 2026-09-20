@@ -6,7 +6,7 @@
 #       ./publicar.sh 1.9.4 -y       (sem pedir confirmação)
 #
 # Faz, em sequência:
-#   1. Atualiza APP_VERSION em NavePro.py para <versão>
+#   1. Atualiza APP_VERSION em navepro/config.py para <versão>
 #   2. ./build.sh <versão>            → gera NavePro-<versão>.AppImage
 #   3. git commit (todas as mudanças)
 #   4. git tag v<versão>
@@ -75,7 +75,7 @@ echo "AppImage: $APPIMAGE"
 echo "Anterior: ${PREV:-nenhuma tag anterior}"
 echo
 echo "📋 Será feito:"
-echo "  1. Atualizar APP_VERSION → $VERSION em NavePro.py"
+echo "  1. Atualizar APP_VERSION → $VERSION em navepro/config.py"
 echo "  2. ./build.sh $VERSION"
 echo "  3. git commit (todas as mudanças pendentes)"
 echo "  4. git tag $TAG"
@@ -91,9 +91,9 @@ fi
 # ────────────────────────────────────────────────────────────────────
 # 1. Versão no fonte
 # ────────────────────────────────────────────────────────────────────
-sed -i "s/^\(APP_VERSION: str = \"\)[^\"]*/\1$VERSION/" NavePro.py
-grep -q "^APP_VERSION: str = \"$VERSION\"" NavePro.py \
-  || { echo "❌ Não consegui atualizar APP_VERSION em NavePro.py."; exit 1; }
+sed -i "s/^\(APP_VERSION: str = \"\)[^\"]*/\1$VERSION/" navepro/config.py
+grep -q "^APP_VERSION: str = \"$VERSION\"" navepro/config.py \
+  || { echo "❌ Não consegui atualizar APP_VERSION em navepro/config.py."; exit 1; }
 echo "✅ APP_VERSION = $VERSION"
 
 # ────────────────────────────────────────────────────────────────────

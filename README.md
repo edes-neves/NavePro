@@ -42,17 +42,23 @@ O NavePro consulta o repositório **`edes-neves/NavePro`** no GitHub:
 
 ### Como publicar uma versão nova
 
-1. Gere o AppImage novo **passando a versão** — o `build.sh` atualiza o `APP_VERSION` no `NavePro.py` e nomeia o arquivo com a versão:
+1. **Publique com a versão** — o `publicar.sh` grava o `APP_VERSION` em `navepro/config.py`, chama o `./build.sh <versão>` (gera o `NavePro-<versão>.AppImage` já nomeado com a versão) e faz commit, tag, push e release:
 
    ```bash
-   ./build.sh 1.9.1                 # gera NavePro-1.9.1.AppImage com versão 1.9.1 gravada
+   ./publicar.sh 1.9.1              # grava APP_VERSION, gera o AppImage e publica o release
    ./NavePro-1.9.1.AppImage         # teste
    ```
 
-   > ⚠️ **Não pule a versão**: se criar um release `v1.9.1` com um AppImage ainda em `1.9.0`, o binário se achará desatualizado e oferecerá "atualizar" baixando a si mesmo. O `./build.sh <versão>` previne isso (grava e confere o `APP_VERSION`).
+   Se quiser **apenas gerar** o AppImage (sem publicar), rode o `build.sh` diretamente:
 
-2. Faça commit das mudanças e crie um **tag** na versão (ex.: `v1.9.0`).
-3. Crie o release no GitHub anexando o AppImage. Exemplo com a CLI `gh`:
+   ```bash
+   ./build.sh 1.9.1                 # gera NavePro-1.9.1.AppImage usando a versão passada
+   ./NavePro-1.9.1.AppImage         # teste
+   ```
+
+   > ⚠️ **Não pule a versão**: se criar um release `v1.9.1` com um AppImage ainda em `1.9.0`, o binário se achará desatualizado e oferecerá "atualizar" baixando a si mesmo. O `./publicar.sh <versão>` previne isso (grava e confere o `APP_VERSION` em `navepro/config.py`).
+
+2. Se preferir publicar **manualmente** (o `publicar.sh` já faz tudo): commite as mudanças, crie um **tag** na versão (ex.: `v1.9.0`) e crie o release no GitHub anexando o AppImage:
 
    ```bash
    gh release create v1.9.1 NavePro-1.9.1-AMD.AppImage --title "NavePro 1.9.1" --notes "O que mudou nesta versão..."
@@ -223,7 +229,8 @@ ARCH=x86_64 appimagetool AppDir NavePro-1.9.1-AMD.AppImage
 > (conda) quebrava as fontes: o Tk 9.0 não resolve "Arial" → Liberation Sans
 > e caía para a fonte bitmap `fixed` (minúscula + quadradinhos). O binário
 > PyInstaller garante o **Tk 8.6** dentro do AppImage.
-> **Edite sempre `NavePro.py` na raiz** e repita o build;
+> **Edite sempre `NavePro.py` na raiz** (e os módulos de infraestrutura em
+> `navepro/`, se aplicável) e repita o build;
 > `AppDir/usr/bin/NavePro.py` não é mais usado (virou o binário).
 
 ### Gerar Flatpak
@@ -261,6 +268,9 @@ repositório.
 
 ```
 NavePro.py            # Aplicativo principal (interface + projeção + importadores)
+navepro/              # Infraestrutura reutilizável (config, caminhos, temas, textos, atualização)
+  config.py           # APP_VERSION e constantes de configuração
+NavePro.spec          # (gerado pelo PyInstaller)
 README.md             # Este documento
 LICENSE               # GPLv3
 requirements.txt      # Dependências (runtime + pyinstaller)
