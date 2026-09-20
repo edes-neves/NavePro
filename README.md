@@ -218,7 +218,7 @@ Ou, manualmente:
 ```bash
 /usr/sbin/python -m PyInstaller --noconfirm --clean --onefile \
     --name NavePro --hidden-import "PIL._tkinter_finder" \
-    --add-data "Icon.xbm:." --add-data "Icon.png:." NavePro.py   # gera dist/NavePro
+    --add-data "img/Icon.xbm:img/" --add-data "img/Icon.png:img/" NavePro.py   # gera dist/NavePro
 cp dist/NavePro AppDir/usr/bin/NavePro && chmod +x AppDir/usr/bin/NavePro
 ARCH=x86_64 appimagetool AppDir NavePro-1.9.1-AMD.AppImage
 ./NavePro-1.9.1-AMD.AppImage
@@ -283,7 +283,7 @@ HASD/                 # Hinário (OpenLyrics XML)
 AppDir/               # Estrutura do AppImage (AppRun, .desktop, ícones)
 flatpak/              # Manifesto Flatpak + .desktop + metainfo + wrapper + repositório
 .github/workflows/    # CI/CD: build Flatpak multi-arquitetura (x86_64 + aarch64)
-img/, Icon*.ico/png/xbm  # Ícones do app
+img/                    # Ícones do app (Icon.png, Icon.xbm, Icon.ico…)
 .gitignore            # Arquivos locais/artefatos de build ignorados
 ```
 

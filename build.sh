@@ -67,8 +67,8 @@ echo "📦 Empacotando com PyInstaller..."
 "$PYTHON_BIN" -m PyInstaller --noconfirm --clean --onefile \
     --name "$APP_NAME" \
     --hidden-import "PIL._tkinter_finder" \
-    --add-data "Icon.xbm:." \
-    --add-data "Icon.png:." \
+    --add-data "img/Icon.xbm:img/" \
+    --add-data "img/Icon.png:img/" \
     "$APP_NAME.py"
 echo "✅ Binário gerado: dist/$APP_NAME"
 

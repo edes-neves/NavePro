@@ -31,9 +31,6 @@
 /config.json
 /tempCodeRunnerFile.py
 
-# Cópia redundante de Icon.png (o app carrega o da raiz)
-/img/Icon.png
-
 # Script auxiliar com token GitHub embutido (não versionar)
 /check-flathub.sh
 
