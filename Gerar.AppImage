@@ -43,13 +43,14 @@ mais próximo (`./build.sh`, ex.: `v1.9.0` → 1.9.0).
    ```bash
    /usr/sbin/python -m PyInstaller --noconfirm --clean --onefile \
        --name NavePro --hidden-import "PIL._tkinter_finder" \
-       --add-data "Icon.xbm:." --add-data "Icon.png:." NavePro.py
+       --add-data "img/Icon.xbm:img/" --add-data "img/Icon.png:img/" NavePro.py
    ```
    Gera `dist/NavePro` (binário único, ~51 MB).
 
    > `PIL._tkinter_finder` é necessário para o `ImageTk` (logo) funcionar no
    > modo empacotado; sem ele o PyInstaller não o coleta e o logo não aparece.
-   > `Icon.png` precisa ser empacotado (logo) além de `Icon.xbm` (ícone da janela).
+   > `Icon.png` precisa ser empacotado (logo) além de `Icon.xbm` (ícone da janela);
+   > ambos ficam em `img/` e são adicionados como dados em `img/`.
 
    > Para conferir qual Tk o python usa: `python -c "import tkinter; print(tkinter.TkVersion)"`.
    > Se for 9.0, o AppImage terá fontes minúsculas/quadradinhos — use um com Tk 8.6.
@@ -94,5 +95,5 @@ O app em execução detecta o `v1.9.0`, avisa o usuário e baixa
   `navepro/` (módulos importados pelo `NavePro.py`).
 - A cada mudança no código: gere um novo AppImage com `build.sh` (o binário
   embute o fonte), **atualizando a versão**.
-- O ícone `Icon.xbm` é embutido dentro do binário (usado como ícone das
+- O ícone `img/Icon.xbm` é embutido dentro do binário (usado como ícone das
   janelas do Tk).

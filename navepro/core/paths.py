@@ -2,7 +2,7 @@
 
 A raiz do projeto (onde fica o monolito NavePro.py) é derivada da
 localização deste arquivo: navepro/core/... sobe 3 níveis até a raiz.
-Os recursos de dev (Icon.png, Icon.xbm, configuração, DB embutido,
+Os recursos de dev (img/Icon.png, img/Icon.xbm, configuração, DB embutido,
 uploads) continuam resolvidos em relação à raiz, como antes.
 """
 
@@ -34,11 +34,11 @@ def _aplicar_icone_janela(janela) -> None:
     """Define o ícone da janela: XBM no Linux, ICO no Windows."""
     try:
         if _eh_windows():
-            ico = _caminho_recurso("Icon.ico")
+            ico = _caminho_recurso(os.path.join("img", "Icon.ico"))
             if os.path.exists(ico):
                 janela.wm_iconbitmap(ico)
         else:
-            xbm = _caminho_recurso("Icon.xbm")
+            xbm = _caminho_recurso(os.path.join("img", "Icon.xbm"))
             if os.path.exists(xbm):
                 janela.wm_iconbitmap("@" + xbm)
     except Exception:
