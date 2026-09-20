@@ -7,7 +7,7 @@ navepro.core.ambiente para detectar o sistema operacional.
 
 from navepro.core.ambiente import _eh_windows
 
-APP_VERSION: str = "1.9.6"
+APP_VERSION: str = "1.9.7"
 PLAYER_PADRAO: str = "mpv" if _eh_windows() else "smplayer"
 BACKEND_PORT: int = 5897
 BACKEND_URL: str = f"http://127.0.0.1:{BACKEND_PORT}"

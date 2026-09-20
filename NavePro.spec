@@ -5,7 +5,7 @@ a = Analysis(
     ['NavePro.py'],
     pathex=[],
     binaries=[],
-    datas=[('Icon.xbm', '.'), ('Icon.png', '.')],
+    datas=[('img/Icon.xbm', 'img'), ('img/Icon.png', 'img')],
     hiddenimports=['PIL._tkinter_finder'],
     hookspath=[],
     hooksconfig={},
