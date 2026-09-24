@@ -4455,16 +4455,10 @@ class AppInterface:
         try:
             monitors = get_monitors_config()
             if monitors:
-                # Usa o monitor CONFIGURADO pelo operador (config "monitor",
-                # 1-based, padrão 2) em vez de sempre o primeiro da lista.
-                # Evita abrir no monitor pequeno (ex.: DVI-D-1 640×480).
-                try:
-                    _mon_idx = int(float(
-                        self.carregar_config().get("monitor", 1) or 2))
-                except Exception:
-                    _mon_idx = 2
-                _mon_idx = max(1, min(len(monitors), _mon_idx)) - 1
-                m = monitors[_mon_idx]
+                # Painel do operador abre SEMPRE no monitor 1 (o primeiro da
+                # lista), conforme o README. O telão usa a config "monitor"
+                # (padrão 2) em TelaoWindow/MediaPlayer.
+                m = monitors[0]
                 # Salva geometria do monitor para restaurar depois
                 self._monitor_geo = (m.width, m.height, m.x, m.y)
                 self.root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
