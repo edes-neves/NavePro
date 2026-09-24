@@ -1542,11 +1542,16 @@ class TelaoWindow:
         self.root.bind("<Escape>", self._ao_pressionar_esc)
         self.root.bind("<Control-q>", self.fechar)
         self.root.bind("<F11>", self._alternar_fullscreen)
+        # Passador de slides (controle remoto): durante uma projeção em
+        # slides, setas, AvPag/RetPag, espaço, F5 e BackSpace navegam. Fora
+        # de projeção não faz nada.
+        self.root.bind("<KeyPress>", self._navegar_slides_controle)
 
         self.rodando = True
         self.mostrando_relogio = True
         self.mostrando_letra = False
         self._em_slides = False
+        self._modo_extra: Optional[str] = None
         self._mostrando_imagem = False
         self._mostrando_imagem_com_texto = False
         self._imagem_item = None
@@ -2036,6 +2041,7 @@ class TelaoWindow:
         self.mostrando_letra = True
         self._em_slides = False
         self.mostrando_relogio = False
+        self._modo_extra = None
 
         # Exibe a janela e aplica o fundo/opacidade configurados
         if not self._is_visible:
@@ -2206,6 +2212,7 @@ class TelaoWindow:
         self._em_slides = True
         self.mostrando_letra = True
         self.mostrando_relogio = False
+        self._modo_extra = None
 
         # Exibe a janela e aplica o fundo/opacidade configurados
         if not self._is_visible:
@@ -2257,6 +2264,7 @@ class TelaoWindow:
 
         self.mostrando_letra = True
         self._em_slides = False
+        self._modo_extra = None
         self._mostrando_imagem = True
         self._mostrando_imagem_com_texto = False
         self.mostrando_relogio = False
@@ -2415,6 +2423,7 @@ class TelaoWindow:
 
         self.mostrando_letra = True
         self._em_slides = False
+        self._modo_extra = None
         self._mostrando_imagem = True
         self._mostrando_imagem_com_texto = True
         self._imagem_escala = 1.0
@@ -2658,6 +2667,27 @@ class TelaoWindow:
             return False
         return self._mostrar_slide(self._slide_index - 1)
 
+    def _navegar_slides_controle(self, event: object = None) -> Optional[str]:
+        """Navega os slides a partir do passador de slides (controle remoto).
+
+        Interpreta as teclas comuns desses aparelhos (setas, AvPag/RetPag,
+        espaço, F5, BackSpace) como avançar/voltar slide. Só age durante uma
+        projeção em slides; caso contrário, deixa a tecla seguir seu fluxo
+        normal (Esc, F11, Ctrl+Q etc. continuam intactos).
+        """
+        if not getattr(self, "_em_slides", False):
+            return None
+        keysym = str(getattr(event, 'keysym', '') or '').lower()
+        if keysym in ('right', 'down', 'next', 'page_next', 'page_down',
+                      'space', 'f5'):
+            self.slide_proximo()
+            return "break"
+        if keysym in ('left', 'up', 'prior', 'page_prior', 'page_up',
+                      'backspace'):
+            self.slide_anterior()
+            return "break"
+        return None
+
     def _ao_pressionar_esc(self, event: object = None) -> Optional[str]:
         """Esc durante projeção encerra a projeção e volta o relógio ao telão.
 
@@ -2672,6 +2702,7 @@ class TelaoWindow:
     def _retornar_ao_relogio(self) -> None:
         """Retorna relógio + temperatura ao telão ao fim da projeção."""
         self._proj_timer = None
+        self._modo_extra = None
         if not getattr(self, "mostrando_letra", False):
             return
         self.mostrando_letra = False
@@ -2770,6 +2801,174 @@ class TelaoWindow:
             self._current_temp = temperatura
         # update_idletasks é mais leve que update()
         self.root.update_idletasks()
+
+    # ── Cronômetro e contagem regressiva (projeção dos medidores) ──
+
+    def _tam_digital(self, altura_px: int, fator: float) -> int:
+        """Calcula o tamanho em pt da fonte Digital-7 para o medidor.
+
+        A proporção linha/base da Digital-7 é medida com uma fonte de
+        referência e a escala é cravada para ~40% da altura da tela
+        (ajustável via fator), como acontece com o relógio.
+        """
+        ref = tkfont.Font(family="Digital-7", size=100)
+        px_por_pt = ref.metrics("linespace") / 100.0
+        if px_por_pt <= 0:
+            px_por_pt = 1.0
+        alvo = max(60, int(altura_px * 0.40 * fator))
+        size = max(40, min(620, int(alvo / px_por_pt)))
+        fonte = tkfont.Font(family="Digital-7", size=size)
+        real = fonte.metrics("linespace")
+        if real > 0 and abs(real - alvo) > 2:
+            size = max(40, min(620, int(size * alvo / real)))
+        return size
+
+    def _projetar_medidor(self, cfg: dict, modo: str,
+                          subtitulo: str = "", tempo: str = "00:00") -> None:
+        """Inicia/atualiza a projeção de um medidor (cronômetro/contagem).
+
+        Reusa o ciclo de vida das projeções: enquanto ativo, mostrando_
+        letra fica True e Esc ou parar_projecao() restauram o relógio.
+        Usa a mesma fonte Digital-7, cores, fundo e transparência do
+        relógio ("fundo_opaco" => opaco, senão 0.55).
+        """
+        if not self._raiz_viva():
+            return
+
+        # Cancela retorno automático anterior (re-projeção)
+        if getattr(self, "_proj_timer", None) is not None:
+            try:
+                self.root.after_cancel(self._proj_timer)
+            except tk.TclError:
+                pass
+            self._proj_timer = None
+
+        self._temp_salvo = self._current_temp
+        self._limpar_camada_imagem()
+        self.mostrando_letra = True
+        self._em_slides = False
+        self.mostrando_relogio = False
+
+        if not self._is_visible:
+            self.root.deiconify()
+            self._is_visible = True
+
+        # Transparência igual à do relógio (opaco se fundo_opaco)
+        alpha = 1.0 if cfg.get("fundo_opaco") else self._alpha_relogio()
+        if self._current_alpha != alpha:
+            self.root.attributes('-alpha', alpha)
+            self._current_alpha = alpha
+
+        # Fundo (cor lisa; imagem de fundo não é usada nos medidores)
+        cor_fundo = cfg.get("cor_fundo", "#000000")
+        if getattr(self, "_fundo_imagem_item", None) is not None:
+            try:
+                self.canvas.delete(self._fundo_imagem_item)
+            except tk.TclError:
+                pass
+            self._fundo_imagem_item = None
+        self._fundo_imagem_to_tk = None
+        self._fundo_imagem_caminho = ""
+        self.root.configure(bg=cor_fundo)
+        self.main_frame.configure(bg=cor_fundo)
+        self.canvas.configure(bg=cor_fundo)
+        self.root.lift()
+
+        w = self.canvas.winfo_width() or self._monitor.width
+        h = self.canvas.winfo_height() or self._monitor.height
+        if w < 100 or h < 100:
+            w, h = self._monitor.width, self._monitor.height
+
+        try:
+            fator = float(cfg.get("fator_hora", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            fator = 1.0
+        tam = self._tam_digital(h, fator)
+        cor = cfg.get("cor_hora", "#F5BE08")
+        cor_sub = cfg.get("cor_temp", cor)
+
+        self.canvas.itemconfig(
+            self.overlay_text,
+            text=tempo, font=("Digital-7", tam, "normal"),
+            fill=cor, width=0, justify="center", state="normal",
+        )
+        self._current_text = tempo
+        if subtitulo:
+            if modo == "contagem":
+                # Nome/frase da contagem regressiva: fonte/tamanho/negrito/
+                # maiúsculas/quebra de linha são configuráveis e valem só
+                # para o subtítulo. Guarda o cfg p/ as atualizações seguintes.
+                self._sub_cfg_medidor = dict(cfg)
+                fam_sub = str(cfg.get("fonte_sub", "Arial") or "Arial")
+                try:
+                    fator_sub = float(cfg.get("fator_sub", 0.30) or 0.30)
+                except (TypeError, ValueError):
+                    fator_sub = 0.30
+                peso_sub = ("bold"
+                            if str(cfg.get("peso_sub", "bold")) != "normal"
+                            else "normal")
+                tam_sub = max(12, int(tam * fator_sub))
+                tam_sub = min(tam_sub, 320)
+                texto_sub = subtitulo
+                if cfg.get("maiusculas_sub"):
+                    texto_sub = subtitulo.upper()
+                wrapl = int(w * 0.9) if cfg.get("quebrar_sub") else 0
+                self.canvas.itemconfig(
+                    self.temp_text,
+                    text=texto_sub, font=(fam_sub, tam_sub, peso_sub),
+                    fill=cor_sub, width=0, justify="center", state="normal",
+                    wraplength=wrapl,
+                )
+            else:
+                # Cronômetro (sem subtítulo): mantém o comportamento anterior.
+                tam_sub = max(18, int(tam * 0.30))
+                tam_sub = min(tam_sub, 160)
+                self.canvas.itemconfig(
+                    self.temp_text,
+                    text=subtitulo, font=("Digital-7", tam_sub, "normal"),
+                    fill=cor_sub, width=0, justify="center", state="normal",
+                    wraplength=0,
+                )
+            self._current_temp = subtitulo
+            self.canvas.coords(self.overlay_text, w // 2, int(h * 0.42))
+            self.canvas.coords(self.temp_text, w // 2, int(h * 0.63))
+        else:
+            self.canvas.itemconfig(self.temp_text, text="", state="hidden")
+            self._current_temp = ""
+            self.canvas.coords(self.overlay_text, w // 2, h // 2)
+        self.canvas.itemconfig(self.ref_text, text="", state="hidden")
+        self._modo_extra = modo
+        self.root.update_idletasks()
+
+    def _atualizar_medidor(self, tempo: str, subtitulo: str = "") -> None:
+        """Atualiza o número e o subtítulo do medidor sem redesenhar o layout."""
+        if not self._raiz_viva():
+            return
+        try:
+            self.canvas.itemconfig(self.overlay_text, text=tempo)
+            self._current_text = tempo
+            if subtitulo:
+                texto = subtitulo
+                scfg = getattr(self, "_sub_cfg_medidor", None)
+                if scfg and scfg.get("maiusculas_sub"):
+                    texto = subtitulo.upper()
+                self.canvas.itemconfig(self.temp_text, text=texto)
+                self._current_temp = subtitulo
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
+
+    def encerrar_medidor(self) -> None:
+        """Encerra o medidor ativo e volta o relógio + temperatura ao telão."""
+        self._modo_extra = None
+        self._sub_cfg_medidor = None
+        if getattr(self, "mostrando_letra", False):
+            self.parar_projecao()
+        else:
+            if not self._is_visible:
+                self.root.deiconify()
+                self._is_visible = True
+            self.root.lift()
 
 # ────────────────────────────────────────────────────────────────────
 # PLAYER DE MÍDIA (mantido)
@@ -4319,6 +4518,16 @@ class AppInterface:
         # Aplica configuração de aparência do relógio/temperatura
         self.player.telao.configurar_relogio(self.config_data.get("relogio", {}))
 
+        # Estado dos medidores (cronômetro / contagem regressiva)
+        self._crono = {
+            "rodando": False, "pausado": False,
+            "inicio": 0.0, "acumulado": 0.0, "timer_id": None,
+        }
+        self._contagem = {
+            "rodando": False, "pausado": False,
+            "fim": 0.0, "restante": 0.0, "total": 0.0, "timer_id": None,
+        }
+
         # Quando o telão for fechado (Esc/Ctrl+Q) e recriado pelo player,
         # reaplica a aparência configurada e volta a mostrar a hora inicial.
         def _reaplicar_telao_recriado(novo_telao) -> None:
@@ -4425,7 +4634,17 @@ class AppInterface:
         self._focus_timer = None
 
     def _on_space(self, event: object = None) -> str:
-        """Espaço = Play/Pause (exceto quando digitando no campo de busca)."""
+        """Espaço = Play/Pause (exceto quando digitando no campo de busca).
+
+        Durante uma projeção em slides, o espaço avança o slide (comportamento
+        padrão do passador de slides); fora disso, segue exatamente como antes.
+        """
+        player = getattr(self, 'player', None)
+        if player is not None:
+            telao = getattr(player, 'telao', None)
+            if telao is not None and getattr(telao, '_em_slides', False):
+                telao.slide_proximo()
+                return "break"
         focused = self.root.focus_get()
         if focused == self.entry_busca:
             conteudo = self.entry_busca.get().strip()
@@ -4738,7 +4957,28 @@ class AppInterface:
             self.player.telao.configurar_relogio(cfg)
 
     def abrir_config_relogio_dialogo(self) -> None:
-        """Abre a janela de configuração do relógio/temperatura no telão."""
+        """Abre a janela de configuração do relógio, cronômetro e contagem regressiva.
+
+        Abas:
+          - 🕐 Relógio: aparência do relógio/temperatura (manutenção da
+            funcionalidade original).
+          - ⏱ Cronômetro: projeta um cronômetro digital no telão (Digital-7),
+            com as mesmas cores/fundo/transparência do relógio, e controles
+            Iniciar/Parar/Continuar/Encerrar no monitor do operador.
+          - ⏳ Contagem regressiva: projeta nome/frase + tempo contando para
+            baixo, com controles Iniciar/Parar/Continuar/Encerrar.
+        """
+        lista_cores = [
+            ("Amarelo", "#F5BE08"), ("Branco", "#FFFFFF"),
+            ("Vermelho", "#FF5555"), ("Azul", "#58A6FF"),
+            ("Verde", "#3FB950"), ("Roxo", "#D2A8FF"),
+            ("Ciano", "#00E5FF"), ("Laranja", "#FF9800")]
+        cores_fundo = [
+            ("Preto", "#000000"), ("Cinza escuro", "#1a1a2e"),
+            ("Azul escuro", "#0d1b2a"), ("Verde escuro", "#0a1f0a"),
+            ("Vinho", "#2d0a0a")]
+
+        # ── Configurações carregadas (relógio | cronômetro | contagem) ──
         cfg_atual = dict(getattr(self.player.telao, "_relogio_cfg", {}))
         cfg_atual.setdefault("cor_hora", "#F5BE08")
         cfg_atual.setdefault("cor_temp", "#F5BE08")
@@ -4749,9 +4989,28 @@ class AppInterface:
         cfg_atual.setdefault("fundo_opaco", False)
         cfg_atual.setdefault("fundo_imagem", "")
 
+        cfg_crono = dict(self.config_data.get("cronometro", {}))
+        cfg_crono.setdefault("cor_hora", "#F5BE08")
+        cfg_crono.setdefault("cor_temp", "#F5BE08")
+        cfg_crono.setdefault("cor_fundo", "#000000")
+        cfg_crono.setdefault("fator_hora", 1.0)
+        cfg_crono.setdefault("fundo_opaco", False)
+
+        cfg_cont = dict(self.config_data.get("contagem", {}))
+        cfg_cont.setdefault("cor_hora", "#F5BE08")
+        cfg_cont.setdefault("cor_temp", "#F5BE08")
+        cfg_cont.setdefault("cor_fundo", "#000000")
+        cfg_cont.setdefault("fator_hora", 1.0)
+        cfg_cont.setdefault("fundo_opaco", False)
+        cfg_cont.setdefault("fonte_sub", "Arial")
+        cfg_cont.setdefault("fator_sub", 0.30)
+        cfg_cont.setdefault("peso_sub", "bold")
+        cfg_cont.setdefault("maiusculas_sub", False)
+        cfg_cont.setdefault("quebrar_sub", False)
+
         cfg_win = tk.Toplevel(self.root)
-        cfg_win.title("⚙️ Configura Relógio")
-        cfg_win.geometry("620x740")
+        cfg_win.title("⚙️ Configura Relógio / Cronômetro / Contagem")
+        cfg_win.geometry("680x880")
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(self.root)
         cfg_win.after(50, cfg_win.grab_set)
@@ -4759,74 +5018,98 @@ class AppInterface:
         c_main = tk.Frame(cfg_win, bg='#0d1117')
         c_main.pack(fill='both', expand=True, padx=15, pady=15)
 
-        tk.Label(c_main, text="⚙️ Configura Relógio",
-                 font=("Arial", 15, "bold"), fg='#f0c040', bg='#0d1117'
-                 ).pack(pady=(0, 12))
+        tk.Label(c_main, text="⚙️ Configura Relógio / Cronômetro / Contagem",
+                 font=("Arial", 14, "bold"), fg='#f0c040', bg='#0d1117'
+                 ).pack(pady=(0, 10))
 
-        lista_cores = [
-            ("Amarelo", "#F5BE08"), ("Branco", "#FFFFFF"),
-            ("Vermelho", "#FF5555"), ("Azul", "#58A6FF"),
-            ("Verde", "#3FB950"), ("Roxo", "#D2A8FF"),
-            ("Ciano", "#00E5FF"), ("Laranja", "#FF9800")]
+        try:
+            _estilo = ttk.Style(cfg_win)
+            _estilo.theme_use("clam")
+            _estilo.configure("Medidor.TNotebook", background='#0d1117',
+                              borderwidth=0, tabmargins=[4, 4, 4, 0])
+            _estilo.configure("Medidor.TNotebook.Tab", background='#21262d',
+                              foreground='#c9d1d9', padding=[12, 7],
+                              font=("Arial", 11, "bold"))
+            _estilo.map("Medidor.TNotebook.Tab",
+                        background=[('selected', '#6e40c9')],
+                        foreground=[('selected', '#ffffff')])
+            _estilo.configure("Medidor.TCombobox",
+                              fieldbackground='#21262d', background='#21262d',
+                              foreground='#c9d1d9', arrowcolor='#f0c040',
+                              font=("Arial", 10))
+            _estilo.map("Medidor.TCombobox",
+                        fieldbackground=[('readonly', '#21262d')],
+                        foreground=[('readonly', '#c9d1d9')])
+        except tk.TclError:
+            pass
+        notebook = ttk.Notebook(c_main, style="Medidor.TNotebook")
+        notebook.pack(fill='both', expand=True)
 
-        # ── Cor do relógio ──
-        tk.Label(c_main, text="Cor do relógio:", font=("Arial", 11, "bold"),
-                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
-        var_cor_hora = tk.StringVar(value=str(cfg_atual["cor_hora"]))
-        cor_hora_frame = tk.Frame(c_main, bg='#0d1117')
-        cor_hora_frame.pack(fill='x', pady=(0, 8))
-        for nome, codigo in lista_cores:
-            tk.Radiobutton(
-                cor_hora_frame, text=nome, value=codigo, variable=var_cor_hora,
-                bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
-                activebackground='#0d1117', activeforeground='#f0c040',
-                font=("Arial", 10)).pack(side='left', padx=2)
+        # ── Helper para linha de cores por Radios ──
+        def _linha_cores(parent, titulo, var) -> None:
+            tk.Label(parent, text=titulo, font=("Arial", 11, "bold"),
+                     fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+            frame = tk.Frame(parent, bg='#0d1117')
+            frame.pack(fill='x', pady=(0, 8))
+            for nome, codigo in lista_cores:
+                tk.Radiobutton(
+                    frame, text=nome, value=codigo, variable=var,
+                    bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                    activebackground='#0d1117', activeforeground='#f0c040',
+                    font=("Arial", 10)).pack(side='left', padx=2)
 
-        # ── Cor da temperatura ──
-        tk.Label(c_main, text="Cor da temperatura:", font=("Arial", 11, "bold"),
-                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
-        var_cor_temp = tk.StringVar(value=str(cfg_atual["cor_temp"]))
-        cor_temp_frame = tk.Frame(c_main, bg='#0d1117')
-        cor_temp_frame.pack(fill='x', pady=(0, 8))
-        for nome, codigo in lista_cores:
-            tk.Radiobutton(
-                cor_temp_frame, text=nome, value=codigo, variable=var_cor_temp,
-                bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
-                activebackground='#0d1117', activeforeground='#f0c040',
-                font=("Arial", 10)).pack(side='left', padx=2)
+        def _linha_fundo(parent) -> None:
+            tk.Label(parent, text="Cor de fundo:", font=("Arial", 11, "bold"),
+                     fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+            frame = tk.Frame(parent, bg='#0d1117')
+            frame.pack(fill='x', pady=(0, 8))
+            for nome, codigo in cores_fundo:
+                tk.Radiobutton(
+                    frame, text=nome, value=codigo,
+                    variable=parent.var_cor_fundo,
+                    bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                    activebackground='#0d1117', activeforeground='#f0c040',
+                    font=("Arial", 10)).pack(side='left', padx=2)
 
-        # ── Cor de fundo ──
-        tk.Label(c_main, text="Cor de fundo:", font=("Arial", 11, "bold"),
-                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
-        var_cor_fundo = tk.StringVar(value=str(cfg_atual["cor_fundo"]))
-        cor_fundo_frame = tk.Frame(c_main, bg='#0d1117')
-        cor_fundo_frame.pack(fill='x', pady=(0, 8))
-        cores_fundo = [
-            ("Preto", "#000000"), ("Cinza escuro", "#1a1a2e"),
-            ("Azul escuro", "#0d1b2a"), ("Verde escuro", "#0a1f0a"),
-            ("Vinho", "#2d0a0a")]
-        for nome, codigo in cores_fundo:
-            tk.Radiobutton(
-                cor_fundo_frame, text=nome, value=codigo, variable=var_cor_fundo,
-                bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
-                activebackground='#0d1117', activeforeground='#f0c040',
-                font=("Arial", 10)).pack(side='left', padx=2)
+        def _escala_tamanho(parent, titulo, var) -> None:
+            tk.Label(parent, text=titulo, font=("Arial", 11, "bold"),
+                     fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
+            tk.Scale(parent, from_=0.3, to=2.0, resolution=0.1,
+                     orient="horizontal", variable=var, bg='#0d1117',
+                     fg='#c9d1d9', troughcolor='#21262d', highlightthickness=0,
+                     font=("Arial", 10)).pack(fill='x', pady=(0, 8))
 
-        # ── Fundo opaco (sem transparência) ──
-        var_fundo_opaco = tk.BooleanVar(value=bool(cfg_atual["fundo_opaco"]))
-        tk.Checkbutton(
-            c_main, text="Fundo opaco (sem transparência)", variable=var_fundo_opaco,
-            bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
-            activebackground='#0d1117', activeforeground='#f0c040',
-            font=("Arial", 11, "bold")).pack(
-                anchor='w', pady=(0, 8))
+        def _check_opaco(parent, var) -> None:
+            tk.Checkbutton(
+                parent, text="Fundo opaco (sem transparência)",
+                variable=var, bg='#0d1117', fg='#c9d1d9',
+                selectcolor='#0d1117', activebackground='#0d1117',
+                activeforeground='#f0c040', font=("Arial", 11, "bold")
+                ).pack(anchor='w', pady=(0, 8))
+
+        # ═══════════════════════ Tab 🕐 Relógio ═══════════════════════
+        tab_relogio = tk.Frame(notebook, bg='#0d1117')
+        notebook.add(tab_relogio, text="🕐 Relógio")
+
+        tab_relogio.var_cor_hora = tk.StringVar(value=str(cfg_atual["cor_hora"]))
+        tab_relogio.var_cor_temp = tk.StringVar(value=str(cfg_atual["cor_temp"]))
+        tab_relogio.var_cor_fundo = tk.StringVar(value=str(cfg_atual["cor_fundo"]))
+        tab_relogio.var_fator_hora = tk.DoubleVar(value=float(cfg_atual["fator_hora"]))
+        tab_relogio.var_fator_temp = tk.DoubleVar(value=float(cfg_atual["fator_temp"]))
+        tab_relogio.var_espacamento = tk.DoubleVar(value=float(cfg_atual["espacamento"]))
+        tab_relogio.var_fundo_opaco = tk.BooleanVar(value=bool(cfg_atual["fundo_opaco"]))
+
+        _linha_cores(tab_relogio, "Cor do relógio:", tab_relogio.var_cor_hora)
+        _linha_cores(tab_relogio, "Cor da temperatura:", tab_relogio.var_cor_temp)
+        _linha_fundo(tab_relogio)
+        _check_opaco(tab_relogio, tab_relogio.var_fundo_opaco)
 
         # ── Imagem de fundo (opcional) ──
-        tk.Label(c_main, text="Imagem de fundo (opcional):",
-                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117', anchor='w'
-                 ).pack(fill='x')
-        linha_imagem = tk.Frame(c_main, bg='#0d1117')
-        linha_imagem.pack(fill='x', pady=(0, 12))
+        tk.Label(tab_relogio, text="Imagem de fundo (opcional):",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        linha_imagem = tk.Frame(tab_relogio, bg='#0d1117')
+        linha_imagem.pack(fill='x', pady=(0, 8))
         var_fundo_imagem = tk.StringVar(value=str(cfg_atual["fundo_imagem"]))
         entry_imagem = tk.Entry(
             linha_imagem, textvariable=var_fundo_imagem, font=("Arial", 10),
@@ -4851,52 +5134,314 @@ class AppInterface:
                   command=lambda: var_fundo_imagem.set(""), cursor='hand2',
                   padx=8, pady=2).pack(side='left')
 
-        # ── Tamanho do relógio ──
-        tk.Label(c_main, text="Tamanho do relógio:", font=("Arial", 11, "bold"),
-                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
-        var_fator_hora = tk.DoubleVar(value=float(cfg_atual["fator_hora"]))
-        tk.Scale(c_main, from_=0.3, to=2.0, resolution=0.1, orient="horizontal",
-                 variable=var_fator_hora, bg='#0d1117', fg='#c9d1d9',
-                 troughcolor='#21262d', highlightthickness=0,
-                 font=("Arial", 10)).pack(fill='x', pady=(0, 8))
-
-        # ── Tamanho da temperatura ──
-        tk.Label(c_main, text="Tamanho da temperatura:", font=("Arial", 11, "bold"),
-                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
-        var_fator_temp = tk.DoubleVar(value=float(cfg_atual["fator_temp"]))
-        tk.Scale(c_main, from_=0.3, to=2.0, resolution=0.1, orient="horizontal",
-                 variable=var_fator_temp, bg='#0d1117', fg='#c9d1d9',
-                 troughcolor='#21262d', highlightthickness=0,
-                 font=("Arial", 10)).pack(fill='x', pady=(0, 8))
+        _escala_tamanho(tab_relogio, "Tamanho do relógio:",
+                        tab_relogio.var_fator_hora)
+        _escala_tamanho(tab_relogio, "Tamanho da temperatura:",
+                        tab_relogio.var_fator_temp)
 
         # ── Espaçamento ──
-        tk.Label(c_main, text="Espaçamento (hora ↔ temperatura):",
-                 font=("Arial", 11, "bold"),
-                 fg='#f0c040', bg='#0d1117', anchor='w').pack(fill='x')
-        var_espacamento = tk.DoubleVar(value=float(cfg_atual["espacamento"]))
-        tk.Scale(c_main, from_=0.0, to=3.0, resolution=0.05, orient="horizontal",
-                 variable=var_espacamento, bg='#0d1117', fg='#c9d1d9',
-                 troughcolor='#21262d', highlightthickness=0,
-                 font=("Arial", 10)).pack(fill='x', pady=(0, 12))
+        tk.Label(tab_relogio, text="Espaçamento (hora ↔ temperatura):",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        tk.Scale(tab_relogio, from_=0.0, to=3.0, resolution=0.05,
+                 orient="horizontal", variable=tab_relogio.var_espacamento,
+                 bg='#0d1117', fg='#c9d1d9', troughcolor='#21262d',
+                 highlightthickness=0, font=("Arial", 10)
+                 ).pack(fill='x', pady=(0, 8))
 
         def _salvar_cfg_relogio():
             novo = {
-                "cor_hora": var_cor_hora.get(),
-                "cor_temp": var_cor_temp.get(),
-                "cor_fundo": var_cor_fundo.get(),
-                "fator_hora": float(var_fator_hora.get()),
-                "fator_temp": float(var_fator_temp.get()),
-                "espacamento": float(var_espacamento.get()),
-                "fundo_opaco": bool(var_fundo_opaco.get()),
+                "cor_hora": tab_relogio.var_cor_hora.get(),
+                "cor_temp": tab_relogio.var_cor_temp.get(),
+                "cor_fundo": tab_relogio.var_cor_fundo.get(),
+                "fator_hora": float(tab_relogio.var_fator_hora.get()),
+                "fator_temp": float(tab_relogio.var_fator_temp.get()),
+                "espacamento": float(tab_relogio.var_espacamento.get()),
+                "fundo_opaco": bool(tab_relogio.var_fundo_opaco.get()),
                 "fundo_imagem": var_fundo_imagem.get().strip(),
             }
             self.salvar_config_relogio(novo)
             cfg_win.destroy()
 
-        tk.Button(c_main, text="💾 Salvar", font=("Arial", 12, "bold"),
+        tk.Button(tab_relogio, text="💾 Salvar", font=("Arial", 12, "bold"),
                   bg='#238636', fg='white', activebackground='#2ea043',
                   command=_salvar_cfg_relogio, cursor='hand2', padx=20, pady=5
-                  ).pack(pady=4)
+                  ).pack(pady=(4, 6))
+
+        # ══════════════════════ Tab ⏱ Cronômetro ══════════════════════
+        tab_crono = tk.Frame(notebook, bg='#0d1117')
+        notebook.add(tab_crono, text="⏱ Cronômetro")
+
+        tab_crono.var_cor_hora = tk.StringVar(value=str(cfg_crono["cor_hora"]))
+        tab_crono.var_cor_temp = tk.StringVar(value=str(cfg_crono["cor_temp"]))
+        tab_crono.var_cor_fundo = tk.StringVar(value=str(cfg_crono["cor_fundo"]))
+        tab_crono.var_fator_hora = tk.DoubleVar(value=float(cfg_crono["fator_hora"]))
+        tab_crono.var_fundo_opaco = tk.BooleanVar(value=bool(cfg_crono["fundo_opaco"]))
+
+        _linha_cores(tab_crono, "Cor do cronômetro:",
+                     tab_crono.var_cor_hora)
+        _linha_fundo(tab_crono)
+        _check_opaco(tab_crono, tab_crono.var_fundo_opaco)
+        _escala_tamanho(tab_crono, "Tamanho do cronômetro:",
+                        tab_crono.var_fator_hora)
+
+        lbl_crono = tk.Label(tab_crono, text="00:00.00",
+                             font=("Digital-7", 44, "normal"),
+                             fg=tab_crono.var_cor_hora.get(), bg='#0d1117')
+        lbl_crono.pack(pady=(4, 2))
+
+        linha_crono = tk.Frame(tab_crono, bg='#0d1117')
+        linha_crono.pack(fill='x', pady=6)
+
+        def _salvar_cfg_cronometro():
+            novo = {
+                "cor_hora": tab_crono.var_cor_hora.get(),
+                "cor_temp": tab_crono.var_cor_temp.get(),
+                "cor_fundo": tab_crono.var_cor_fundo.get(),
+                "fator_hora": float(tab_crono.var_fator_hora.get()),
+                "fundo_opaco": bool(tab_crono.var_fundo_opaco.get()),
+            }
+            self._salvar_config_medidor("cronometro", novo)
+            self.status_label.config(text="✅ Configuração do cronômetro salva")
+
+        tk.Button(linha_crono, text="💾 Salvar", font=("Arial", 11, "bold"),
+                  bg='#238636', fg='white', activebackground='#2ea043',
+                  command=_salvar_cfg_cronometro, cursor='hand2',
+                  padx=12, pady=4).pack(side='left', padx=3)
+
+        linha_crono_ops = tk.Frame(tab_crono, bg='#0d1117')
+        linha_crono_ops.pack(fill='x', pady=6)
+
+        btn_crono_projetar = tk.Button(
+            linha_crono_ops, text="🖥️ Projetar Cronômetro",
+            font=("Arial", 11, "bold"), bg='#6e40c9', fg='white',
+            activebackground='#8957e5', command=lambda: self.cronometro_projetar(lbl_crono),
+            cursor='hand2', padx=10, pady=5)
+        btn_crono_projetar.pack(side='left', padx=3)
+
+        btn_crono_iniciar = tk.Button(
+            linha_crono_ops, text="▶ Iniciar", font=("Arial", 11, "bold"),
+            bg='#238636', fg='white', activebackground='#2ea043',
+            command=lambda: self.cronometro_iniciar(lbl_crono),
+            cursor='hand2', padx=10, pady=5)
+        btn_crono_iniciar.pack(side='left', padx=3)
+
+        btn_crono_parar = tk.Button(
+            linha_crono_ops, text="⏸ Parar", font=("Arial", 11, "bold"),
+            bg='#9e6a03', fg='white', activebackground='#c77b04',
+            command=self.cronometro_parar, cursor='hand2', padx=10, pady=5)
+        btn_crono_parar.pack(side='left', padx=3)
+
+        btn_crono_continuar = tk.Button(
+            linha_crono_ops, text="▶ Continuar", font=("Arial", 11, "bold"),
+            bg='#1f6feb', fg='white', activebackground='#388bfd',
+            command=self.cronometro_continuar, cursor='hand2', padx=10, pady=5)
+        btn_crono_continuar.pack(side='left', padx=3)
+
+        btn_crono_encerrar = tk.Button(
+            linha_crono_ops, text="✖ Encerrar", font=("Arial", 11, "bold"),
+            bg='#da3633', fg='white', activebackground='#f85149',
+            command=self.cronometro_encerrar, cursor='hand2', padx=10, pady=5)
+        btn_crono_encerrar.pack(side='left', padx=3)
+
+        tk.Label(tab_crono, text="Projeta no telão (monitor 2) um cronômetro em Digital-7, "
+                                 "centralizado; os controles ficam aqui no monitor do operador.",
+                 font=("Arial", 9), fg='#8b949e', bg='#0d1117', justify='left',
+                 wraplength=620).pack(pady=(4, 0))
+
+        self._crono_btns = {"botoes": {
+            "iniciar": btn_crono_iniciar,
+            "parar": btn_crono_parar,
+            "continuar": btn_crono_continuar,
+        }}
+        self._marcar_botoes_crono()
+
+        # ════════════════ Tab ⏳ Contagem regressiva ══════════════════
+        tab_cont = tk.Frame(notebook, bg='#0d1117')
+        notebook.add(tab_cont, text="⏳ Contagem regressiva")
+
+        tab_cont.var_cor_hora = tk.StringVar(value=str(cfg_cont["cor_hora"]))
+        tab_cont.var_cor_temp = tk.StringVar(value=str(cfg_cont["cor_temp"]))
+        tab_cont.var_cor_fundo = tk.StringVar(value=str(cfg_cont["cor_fundo"]))
+        tab_cont.var_fator_hora = tk.DoubleVar(value=float(cfg_cont["fator_hora"]))
+        tab_cont.var_fundo_opaco = tk.BooleanVar(value=bool(cfg_cont["fundo_opaco"]))
+        tab_cont.var_fonte_sub = tk.StringVar(value=str(cfg_cont["fonte_sub"]))
+        tab_cont.var_fator_sub = tk.DoubleVar(value=float(cfg_cont["fator_sub"]))
+        tab_cont.var_peso_sub = tk.BooleanVar(
+            value=str(cfg_cont["peso_sub"]).lower() != "normal")
+        tab_cont.var_maiusculas_sub = tk.BooleanVar(
+            value=bool(cfg_cont["maiusculas_sub"]))
+        tab_cont.var_quebrar_sub = tk.BooleanVar(
+            value=bool(cfg_cont["quebrar_sub"]))
+
+        # ── Nome / frase e tempo ──
+        tk.Label(tab_cont, text="Nome / frase (exibido no telão):",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        entry_titulo = tk.Entry(
+            tab_cont, font=("Arial", 11), bg='#21262d', fg='#c9d1d9',
+            insertbackground='#f0c040', bd=0, highlightthickness=0)
+        entry_titulo.pack(fill='x', ipady=3, pady=(0, 8))
+
+        # ── Opções do nome / frase (só afetam o texto, NÃO os números) ──
+        tk.Label(tab_cont,
+                 text="Opções do nome / frase (não afetam o número):",
+                 font=("Arial", 11, "bold"), fg='#58a6ff', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+
+        tk.Label(tab_cont, text="Fonte:",
+                 font=("Arial", 10, "bold"), fg='#c9d1d9', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        try:
+            _fontes_sistema = sorted(tkfont.families(self.root))
+        except Exception:
+            _fontes_sistema = ["Arial", "Helvetica", "Times", "Courier"]
+        if cfg_cont["fonte_sub"] not in _fontes_sistema:
+            _fontes_sistema.insert(0, str(cfg_cont["fonte_sub"]))
+        ttk.Combobox(
+            tab_cont, style="Medidor.TCombobox", values=_fontes_sistema,
+            textvariable=tab_cont.var_fonte_sub
+        ).pack(fill='x', pady=(0, 6))
+
+        tk.Label(tab_cont,
+                 text="Tamanho (proporção ao tamanho do número):",
+                 font=("Arial", 10, "bold"), fg='#c9d1d9', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        tk.Scale(tab_cont, from_=0.10, to=1.00, resolution=0.01,
+                 orient="horizontal", variable=tab_cont.var_fator_sub,
+                 bg='#0d1117', fg='#c9d1d9', troughcolor='#21262d',
+                 highlightthickness=0, font=("Arial", 9)
+                 ).pack(fill='x', pady=(0, 6))
+
+        linha_opts_sub = tk.Frame(tab_cont, bg='#0d1117')
+        linha_opts_sub.pack(fill='x', pady=(0, 8))
+        tk.Checkbutton(linha_opts_sub, text="Negrito",
+                       variable=tab_cont.var_peso_sub, bg='#0d1117',
+                       fg='#c9d1d9', selectcolor='#0d1117',
+                       activebackground='#0d1117',
+                       activeforeground='#f0c040', font=("Arial", 10)
+                       ).pack(side='left', padx=(0, 14))
+        tk.Checkbutton(linha_opts_sub, text="LETRAS MAIÚSCULAS",
+                       variable=tab_cont.var_maiusculas_sub, bg='#0d1117',
+                       fg='#c9d1d9', selectcolor='#0d1117',
+                       activebackground='#0d1117',
+                       activeforeground='#f0c040', font=("Arial", 10)
+                       ).pack(side='left', padx=(0, 14))
+        tk.Checkbutton(linha_opts_sub, text="Quebrar linha longa",
+                       variable=tab_cont.var_quebrar_sub, bg='#0d1117',
+                       fg='#c9d1d9', selectcolor='#0d1117',
+                       activebackground='#0d1117',
+                       activeforeground='#f0c040', font=("Arial", 10)
+                       ).pack(side='left')
+
+        tk.Label(tab_cont, text="Tempo (minutos, ex.: 5  →  ou  MM:SS, ex.: 2:30):",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        entry_tempo = tk.Entry(
+            tab_cont, font=("Arial", 14, "bold"), bg='#21262d', fg='#f0c040',
+            insertbackground='#f0c040', bd=0, highlightthickness=0, justify='center')
+        entry_tempo.pack(fill='x', ipady=3, pady=(0, 8))
+
+        _linha_cores(tab_cont, "Cor do número:",
+                     tab_cont.var_cor_hora)
+        _linha_cores(tab_cont, "Cor do nome/frase:",
+                     tab_cont.var_cor_temp)
+        _linha_fundo(tab_cont)
+        _check_opaco(tab_cont, tab_cont.var_fundo_opaco)
+        _escala_tamanho(tab_cont, "Tamanho do número:",
+                        tab_cont.var_fator_hora)
+
+        lbl_cont = tk.Label(tab_cont, text="00:00",
+                            font=("Digital-7", 44, "normal"),
+                            fg=tab_cont.var_cor_hora.get(), bg='#0d1117')
+        lbl_cont.pack(pady=(4, 2))
+
+        linha_cont = tk.Frame(tab_cont, bg='#0d1117')
+        linha_cont.pack(fill='x', pady=6)
+
+        def _salvar_cfg_contagem():
+            novo = {
+                "cor_hora": tab_cont.var_cor_hora.get(),
+                "cor_temp": tab_cont.var_cor_temp.get(),
+                "cor_fundo": tab_cont.var_cor_fundo.get(),
+                "fator_hora": float(tab_cont.var_fator_hora.get()),
+                "fundo_opaco": bool(tab_cont.var_fundo_opaco.get()),
+                "fonte_sub": tab_cont.var_fonte_sub.get().strip() or "Arial",
+                "fator_sub": float(tab_cont.var_fator_sub.get()),
+                "peso_sub": "bold" if tab_cont.var_peso_sub.get() else "normal",
+                "maiusculas_sub": bool(tab_cont.var_maiusculas_sub.get()),
+                "quebrar_sub": bool(tab_cont.var_quebrar_sub.get()),
+            }
+            self._salvar_config_medidor("contagem", novo)
+            self.status_label.config(text="✅ Configuração da contagem salva")
+
+        tk.Button(linha_cont, text="💾 Salvar", font=("Arial", 11, "bold"),
+                  bg='#238636', fg='white', activebackground='#2ea043',
+                  command=_salvar_cfg_contagem, cursor='hand2',
+                  padx=12, pady=4).pack(side='left', padx=3)
+
+        linha_cont_ops = tk.Frame(tab_cont, bg='#0d1117')
+        linha_cont_ops.pack(fill='x', pady=6)
+
+        def _contagem_projetar():
+            self.contagem_projetar(entry_titulo.get().strip(), entry_tempo.get(), lbl_cont)
+
+        def _contagem_iniciar():
+            total = self._parsear_tempo_contagem(entry_tempo.get())
+            if total is None:
+                tkinter.messagebox.showerror(
+                    "Tempo inválido",
+                    "Informe o tempo da contagem regressiva (ex.: 5 minutos " +
+                    "ou 2:30).",
+                    parent=cfg_win)
+                return
+            self.contagem_iniciar(total, entry_titulo.get().strip() or "Contagem",
+                                  lbl_cont)
+
+        btn_cont_projetar = tk.Button(
+            linha_cont_ops, text="🖥️ Projetar", font=("Arial", 11, "bold"),
+            bg='#6e40c9', fg='white', activebackground='#8957e5',
+            command=_contagem_projetar, cursor='hand2', padx=10, pady=5)
+        btn_cont_projetar.pack(side='left', padx=3)
+
+        btn_cont_iniciar = tk.Button(
+            linha_cont_ops, text="▶ Iniciar", font=("Arial", 11, "bold"),
+            bg='#238636', fg='white', activebackground='#2ea043',
+            command=_contagem_iniciar, cursor='hand2', padx=10, pady=5)
+        btn_cont_iniciar.pack(side='left', padx=3)
+
+        btn_cont_parar = tk.Button(
+            linha_cont_ops, text="⏸ Parar", font=("Arial", 11, "bold"),
+            bg='#9e6a03', fg='white', activebackground='#c77b04',
+            command=self.contagem_parar, cursor='hand2', padx=10, pady=5)
+        btn_cont_parar.pack(side='left', padx=3)
+
+        btn_cont_continuar = tk.Button(
+            linha_cont_ops, text="▶ Continuar", font=("Arial", 11, "bold"),
+            bg='#1f6feb', fg='white', activebackground='#388bfd',
+            command=self.contagem_continuar, cursor='hand2', padx=10, pady=5)
+        btn_cont_continuar.pack(side='left', padx=3)
+
+        btn_cont_encerrar = tk.Button(
+            linha_cont_ops, text="✖ Encerrar", font=("Arial", 11, "bold"),
+            bg='#da3633', fg='white', activebackground='#f85149',
+            command=self.contagem_encerrar, cursor='hand2', padx=10, pady=5)
+        btn_cont_encerrar.pack(side='left', padx=3)
+
+        tk.Label(tab_cont, text="Projeta no telão (monitor 2) o nome/frase e o tempo "
+                                "da contagem regressiva, centralizados. As opções "
+                                "de fonte, tamanho, negrito, maiúsculas e quebra "
+                                "de linha valem apenas para o nome/frase; o número "
+                                "é sempre em Digital-7.",
+                 font=("Arial", 9), fg='#8b949e', bg='#0d1117', justify='left',
+                 wraplength=620).pack(pady=(4, 0))
+
+        self._contagem_btns = {"botoes": {
+            "iniciar": btn_cont_iniciar,
+            "parar": btn_cont_parar,
+            "continuar": btn_cont_continuar,
+        }}
+        self._marcar_botoes_contagem()
 
     def _temperatura_valida(self, temp: Optional[str] = None) -> bool:
         """Verifica se a string de temperatura é válida para exibição."""
@@ -5091,6 +5636,19 @@ class AppInterface:
                                  accelerator="Ctrl+Q")
         menubar.add_cascade(label="Arquivo", menu=menu_arquivo)
 
+        # ── Configurações (entre Arquivo e Editar) ──
+        menu_config = tk.Menu(menubar, tearoff=0, bg='#21262d', fg='#c9d1d9',
+                              activebackground='#6e40c9', activeforeground='#f0c040',
+                              font=("Arial", 10))
+        menu_config.add_command(label="Configurar Relógio / Cronômetro / Contagem",
+                                command=self.abrir_config_relogio_dialogo)
+        menu_config.add_command(label="Configurar Projeção",
+                                command=self.abrir_config_projecao_dialogo)
+        menu_config.add_separator()
+        menu_config.add_command(label="Gerenciar Banco",
+                                command=self.abrir_gerenciador)
+        menubar.add_cascade(label="Configurações", menu=menu_config)
+
         # ── Editar (placeholder) ──
         menu_editar = tk.Menu(menubar, tearoff=0, bg='#21262d', fg='#c9d1d9',
                               activebackground='#6e40c9', activeforeground='#f0c040',
@@ -5105,6 +5663,20 @@ class AppInterface:
         menu_editar.add_command(label="Ordem de Serviço",
                                 command=self.janela_ordem_servico)
         menubar.add_cascade(label="Editar", menu=menu_editar)
+
+        # ── Exibir (após Editar) ──
+        menu_exibir = tk.Menu(menubar, tearoff=0, bg='#21262d', fg='#c9d1d9',
+                              activebackground='#6e40c9', activeforeground='#f0c040',
+                              font=("Arial", 10))
+        menu_exibir.add_command(label="Hinos / Letras",
+                                command=self.janela_hinos)
+        menu_exibir.add_command(label="Bíblia",
+                                command=self.janela_biblia)
+        menu_exibir.add_command(label="Ordem de Serviço",
+                                command=self.janela_ordem_servico)
+        menu_exibir.add_command(label="Anúncios",
+                                command=self.janela_anuncios)
+        menubar.add_cascade(label="Exibir", menu=menu_exibir)
 
         # ── Visualizar ──
         menu_visualizar = tk.Menu(menubar, tearoff=0, bg='#21262d', fg='#c9d1d9',
@@ -5128,6 +5700,13 @@ class AppInterface:
         menu_ajuda = tk.Menu(menubar, tearoff=0, bg='#21262d', fg='#c9d1d9',
                              activebackground='#6e40c9', activeforeground='#f0c040',
                              font=("Arial", 10))
+        menu_ajuda.add_command(label="Compartilhar ideias",
+                               command=lambda: self._abrir_email(
+                                   "Compartilhar ideias sobre o NavePro"))
+        menu_ajuda.add_command(label="Relatar um problema",
+                               command=lambda: self._abrir_email(
+                                   "Relatar um problema no NavePro"))
+        menu_ajuda.add_separator()
         menu_ajuda.add_command(label="Verificar atualizações…",
                                command=lambda: self.verificar_atualizacao(manual=True))
         menu_ajuda.add_separator()
@@ -5135,10 +5714,48 @@ class AppInterface:
         menubar.add_cascade(label="Ajuda", menu=menu_ajuda)
 
         # Guarda referências para recolorir os menus ao trocar o tema
-        self._menus = [menubar, menu_arquivo, menu_editar,
-                       menu_visualizar, menu_ajuda]
+        self._menus = [menubar, menu_arquivo, menu_config, menu_editar,
+                       menu_exibir, menu_visualizar, menu_ajuda]
 
         self.root.config(menu=menubar)
+
+    def _abrir_email(self, assunto: str) -> None:
+        """Abre o cliente de e-mail padrão do sistema apontando para o NavePro.
+
+        Usa um link mailto: para nevestecnologias@gmail.com, com o assunto
+        informado. No Linux, tenta primeiro um cliente de e-mail dedicado
+        (Thunderbird, Evolution, etc.) para não cair no navegador; se nenhum
+        estiver instalado, delega ao manipulador padrão via `xdg-open`.
+        Se algo falhar, apenas registra o erro no console.
+        """
+        destino = "nevestecnologias@gmail.com"
+        url = f"mailto:{destino}?subject={urllib.parse.quote(assunto)}"
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(url)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", url], start_new_session=True)
+            else:
+                cliente = self._encontrar_cliente_email()
+                if cliente:
+                    subprocess.Popen([cliente, url], start_new_session=True)
+                else:
+                    subprocess.Popen(
+                        ["xdg-open", url], start_new_session=True,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print(f"⚠️ Não foi possível abrir o e-mail: {e}")
+
+    @staticmethod
+    def _encontrar_cliente_email() -> str | None:
+        """Procura no PATH um cliente de e-mail dedicado já instalado."""
+        import shutil
+        for cliente in ("thunderbird", "evolution", "geary",
+                        "claws-mail", "mailspring", "kmail"):
+            binario = shutil.which(cliente)
+            if binario:
+                return binario
+        return None
 
     def _toggle_repetir(self) -> None:
         """Alterna o estado do checkbox Repetir."""
@@ -5867,15 +6484,15 @@ class AppInterface:
         btn_gerenciar.pack(side='right', padx=5)
         _criar_tooltip(btn_gerenciar, "Gerenciar Banco")
 
-        # Botão Configura Relógio (barra de controles)
+        # Botão Configurações (barra de controles)
         btn_config_relogio = tk.Button(
-            controls_frame, text="🕐", font=("Arial", 16),
+            controls_frame, text="⚙️", font=("Arial", 16),
             bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
             command=self.abrir_config_relogio_dialogo, cursor='hand2',
             bd=0, highlightthickness=0, padx=14, pady=6
         )
         btn_config_relogio.pack(side='right', padx=5)
-        _criar_tooltip(btn_config_relogio, "Configura Relógio")
+        _criar_tooltip(btn_config_relogio, "Configurações")
 
     # ── Lista de resultados (com cache para evitar redesenho e centralização) ────
 
@@ -6139,6 +6756,372 @@ class AppInterface:
             return f"{h:02d}:{m:02d}:{s:02d}"
         return f"{m:02d}:{s:02d}"
 
+    @staticmethod
+    def _formatar_cronometro(segundos: float) -> str:
+        """Formata segundos com centésimos: MM:SS.cc (HH:MM:SS.cc se >= 1h)."""
+        cs = max(0, int(round(segundos * 100)))
+        h, r = divmod(cs, 360000)
+        m, s = divmod(r, 6000)
+        s, c = divmod(s, 100)
+        if h:
+            return f"{h:02d}:{m:02d}:{s:02d}.{c:02d}"
+        return f"{m:02d}:{s:02d}.{c:02d}"
+
+    # ── Cronômetro e contagem regressiva (controles do operador) ─────
+
+    def _salvar_config_medidor(self, chave: str, cfg: dict) -> None:
+        """Persiste a configuração de um medidor e aplica cores/transparência."""
+        self.config_data[chave] = cfg
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(self.config_data, f, indent=2)
+        except Exception as e:
+            print(f"Erro ao salvar config de {chave}: {e}")
+
+    def _projetar_medidor_seguro(self, chave: str, modo: str,
+                                 subtitulo: str = "", tempo: str = "00:00") -> None:
+        """Projeta um medidor no telão; recria o telão se necessário."""
+        telao = self.player._garantir_telao()
+        cfg = self.config_data.get(chave, {})
+        telao._projetar_medidor(cfg, modo, subtitulo=subtitulo, tempo=tempo)
+
+    def cronometro_iniciar(self, label: Optional[tk.Label] = None) -> None:
+        """Inicia (ou continua) o cronômetro e garante a projeção no telão.
+
+        Se não estiver rodando do zero, zera o acúmulo. Se estiver pausado,
+        apenas retoma. O label (do operador) recebe o tempo a cada tick.
+        """
+        c = self._crono
+        telao = self.player._garantir_telao()
+
+        if getattr(telao, "_modo_extra", None) != "cronometro":
+            tempo_inicial = self._formatar_cronometro(c["acumulado"]) if c["pausado"] else "00:00.00"
+            telao._projetar_medidor(
+                self.config_data.get("cronometro", {}),
+                "cronometro", tempo=tempo_inicial,
+            )
+        if c["rodando"] and not c["pausado"]:
+            return
+        if c["pausado"]:
+            c["pausado"] = False
+        else:
+            c["acumulado"] = 0.0
+        c["inicio"] = time.time()
+        c["rodando"] = True
+        c["label"] = label
+        if c["timer_id"] is None:
+            c["timer_id"] = self.root.after(50, self._loop_cronometro)
+        self._atualizar_label_medidor(label, "00:00.00")
+        self._marcar_botoes_crono()
+
+    def _loop_cronometro(self) -> None:
+        c = self._crono
+        if not c["rodando"] or c["pausado"]:
+            return
+        total = c["acumulado"] + (time.time() - c["inicio"])
+        texto = self._formatar_cronometro(total)
+        telao = self.player.telao
+        if telao and getattr(telao, "_modo_extra", None) == "cronometro" \
+                and telao._raiz_viva():
+            telao._atualizar_medidor(texto)
+        lbl = c.get("label")
+        if lbl is not None:
+            try:
+                if lbl.winfo_exists():
+                    lbl.config(text=texto)
+            except tk.TclError:
+                c["label"] = None
+        c["timer_id"] = self.root.after(50, self._loop_cronometro)
+
+    def cronometro_parar(self) -> None:
+        """Pausa o cronômetro (mantendo o tempo na tela)."""
+        c = self._crono
+        if c["rodando"] and not c["pausado"]:
+            c["acumulado"] += time.time() - c["inicio"]
+        c["pausado"] = True
+        if c["timer_id"] is not None:
+            try:
+                self.root.after_cancel(c["timer_id"])
+            except (tk.TclError, ValueError):
+                pass
+            c["timer_id"] = None
+        self._marcar_botoes_crono()
+
+    def cronometro_continuar(self) -> None:
+        """Continua o cronômetro de onde parou."""
+        c = self._crono
+        if not c["rodando"]:
+            return
+        if c["pausado"]:
+            c["inicio"] = time.time()
+            c["pausado"] = False
+            if c["timer_id"] is None:
+                c["timer_id"] = self.root.after(50, self._loop_cronometro)
+            self._marcar_botoes_crono()
+
+    def cronometro_encerrar(self) -> None:
+        """Para e zera o cronômetro e remove a projeção do telão."""
+        self.cronometro_parar()
+        c = self._crono
+        c["rodando"] = False
+        c["acumulado"] = 0.0
+        c["timer_id"] = None
+        try:
+            if self.player.telao and self.player.telao._raiz_viva():
+                if getattr(self.player.telao, "_modo_extra", None) == "cronometro":
+                    self.player.telao.encerrar_medidor()
+        except Exception:
+            pass
+        lbl = c.get("label")
+        if lbl is not None:
+            try:
+                if lbl.winfo_exists():
+                    lbl.config(text="00:00.00")
+            except tk.TclError:
+                pass
+        self._marcar_botoes_crono()
+
+    @staticmethod
+    def _parsear_tempo_contagem(texto: str) -> Optional[int]:
+        """Converte entrada do operador para segundos.
+
+        Aceita "MM:SS" ou apenas minutos (número). Ex.: "5" => 300s,
+        "2:30" => 150s. Retorna None se inválido ou <= 0.
+        """
+        if not texto:
+            return None
+        texto = texto.strip().replace(",", ".")
+        if ":" in texto:
+            partes = texto.split(":")
+            if len(partes) == 2:
+                try:
+                    mm = float(partes[0] or 0)
+                    ss = float(partes[1] or 0)
+                    total = int(mm) * 60 + int(ss)
+                    return total if total > 0 else None
+                except ValueError:
+                    return None
+            return None
+        try:
+            valor = float(texto)
+        except ValueError:
+            return None
+        total = int(valor * 60)
+        return total if total > 0 else None
+
+    def contagem_iniciar(self, total_seg: int, titulo: str,
+                         label: Optional[tk.Label] = None) -> None:
+        """Inicia (ou continua) a contagem regressiva no telão."""
+        c = self._contagem
+        telao = self.player._garantir_telao()
+        if total_seg is None or total_seg <= 0:
+            return
+
+        if getattr(telao, "_modo_extra", None) != "contagem":
+            tempo_inicial = self._formatar_tempo(c["restante"] or total_seg)
+            telao._projetar_medidor(
+                self.config_data.get("contagem", {}),
+                "contagem", subtitulo=titulo, tempo=tempo_inicial,
+            )
+        if c["rodando"] and not c["pausado"]:
+            return
+        c["total"] = float(total_seg)
+        if c["pausado"]:
+            c["fim"] = time.time() + c["restante"]
+            c["pausado"] = False
+        else:
+            c["restante"] = float(total_seg)
+            c["fim"] = time.time() + float(total_seg)
+        c["rodando"] = True
+        c["titulo"] = titulo
+        c["label"] = label
+        if c["timer_id"] is None:
+            c["timer_id"] = self.root.after(200, self._loop_contagem)
+        self._atualizar_label_medidor(label, self._formatar_tempo(total_seg))
+        self._marcar_botoes_contagem()
+
+    def _loop_contagem(self) -> None:
+        c = self._contagem
+        if not c["rodando"] or c["pausado"]:
+            return
+        restante = c["fim"] - time.time()
+        if restante <= 0:
+            restante = 0.0
+            titulo = c.get("titulo", "")
+            telao = self.player.telao
+            if telao and getattr(telao, "_modo_extra", None) == "contagem" \
+                    and telao._raiz_viva():
+                telao._atualizar_medidor("00:00", subtitulo=titulo)
+            lbl = c.get("label")
+            if lbl is not None:
+                try:
+                    if lbl.winfo_exists():
+                        lbl.config(text="00:00")
+                except tk.TclError:
+                    c["label"] = None
+            c["rodando"] = False
+            c["pausado"] = True
+            c["timer_id"] = None
+            self._marcar_botoes_contagem()
+            return
+        c["restante"] = restante
+        texto = self._formatar_tempo(restante)
+        telao = self.player.telao
+        if telao and getattr(telao, "_modo_extra", None) == "contagem" \
+                and telao._raiz_viva():
+            telao._atualizar_medidor(texto)
+        lbl = c.get("label")
+        if lbl is not None:
+            try:
+                if lbl.winfo_exists():
+                    lbl.config(text=texto)
+            except tk.TclError:
+                c["label"] = None
+        c["timer_id"] = self.root.after(200, self._loop_contagem)
+
+    def contagem_parar(self) -> None:
+        """Pausa a contagem regressiva."""
+        c = self._contagem
+        if c["rodando"] and not c["pausado"]:
+            c["restante"] = max(0.0, c["fim"] - time.time())
+        c["pausado"] = True
+        if c["timer_id"] is not None:
+            try:
+                self.root.after_cancel(c["timer_id"])
+            except (tk.TclError, ValueError):
+                pass
+            c["timer_id"] = None
+        self._marcar_botoes_contagem()
+
+    def contagem_continuar(self) -> None:
+        """Continua a contagem regressiva de onde parou."""
+        c = self._contagem
+        if not c["rodando"]:
+            return
+        if c["pausado"]:
+            c["fim"] = time.time() + c["restante"]
+            c["pausado"] = False
+            if c["timer_id"] is None:
+                c["timer_id"] = self.root.after(200, self._loop_contagem)
+            self._marcar_botoes_contagem()
+
+    def contagem_encerrar(self) -> None:
+        """Para e zera a contagem e remove a projeção do telão."""
+        self.contagem_parar()
+        c = self._contagem
+        c["rodando"] = False
+        c["restante"] = 0.0
+        c["total"] = 0.0
+        c["timer_id"] = None
+        try:
+            if self.player.telao and self.player.telao._raiz_viva():
+                if getattr(self.player.telao, "_modo_extra", None) == "contagem":
+                    self.player.telao.encerrar_medidor()
+        except Exception:
+            pass
+        lbl = c.get("label")
+        if lbl is not None:
+            try:
+                if lbl.winfo_exists():
+                    lbl.config(text="--:--")
+            except tk.TclError:
+                pass
+        self._marcar_botoes_contagem()
+
+    def _atualizar_label_medidor(self, label, texto: str) -> None:
+        if label is None:
+            return
+        try:
+            if label.winfo_exists():
+                label.config(text=texto)
+        except tk.TclError:
+            pass
+
+    def _marcar_botoes_crono(self) -> None:
+        c = self._crono
+        btns = (getattr(self, "_crono_btns", None) or {}).get("botoes")
+        if not btns:
+            return
+        try:
+            rodando = bool(c["rodando"]) and not c["pausado"]
+            btns.get("iniciar").config(state="disabled" if rodando else "normal")
+            btns.get("parar").config(state="normal" if c["rodando"] and rodando else "disabled")
+            continuar = btns.get("continuar")
+            if continuar:
+                continuar.config(state="normal" if (c["rodando"] and c["pausado"]) else "disabled")
+        except tk.TclError:
+            self._crono_btns = {"botoes": {}}
+
+    def _marcar_botoes_contagem(self) -> None:
+        c = self._contagem
+        btns = (getattr(self, "_contagem_btns", None) or {}).get("botoes")
+        if not btns:
+            return
+        try:
+            rodando = bool(c["rodando"]) and not c["pausado"]
+            btns.get("iniciar").config(state="disabled" if rodando else "normal")
+            btns.get("parar").config(state="normal" if (c["rodando"] and rodando) else "disabled")
+            continuar = btns.get("continuar")
+            if continuar:
+                continuar.config(state="normal" if (c["rodando"] and c["pausado"]) else "disabled")
+        except tk.TclError:
+            self._contagem_btns = {"botoes": {}}
+
+    def cronometro_projetar(self, label: Optional[tk.Label] = None) -> None:
+        """Reaplica a projeção do cronômetro no telão SEM interromper a contagem.
+
+        Usado principalmente após alterar as cores/fundo no "💾 Salvar":
+        o tempo em andamento (ou pausado) é preservado.
+        """
+        c = self._crono
+        c["label"] = label
+        if c["rodando"] and not c["pausado"]:
+            tempo_atual = self._formatar_cronometro(
+                c["acumulado"] + time.time() - c["inicio"])
+        else:
+            tempo_atual = self._formatar_cronometro(c["acumulado"])
+        # Não cancela o loop: a contagem continua rodando normalmente.
+        self._projetar_medidor_seguro("cronometro", "cronometro",
+                                      tempo=tempo_atual)
+        self._atualizar_label_medidor(label, tempo_atual)
+        self._marcar_botoes_crono()
+
+    def contagem_projetar(self, titulo: str, tempo_texto: str,
+                          label: Optional[tk.Label] = None) -> Optional[int]:
+        """Reaplica a projeção da contagem regressiva SEM interromper a contagem.
+
+        Usado principalmente após alterar as cores/fundo no "💾 Salvar":
+        o tempo restante em andamento (ou pausado) é preservado. Quando
+        ociosa, usa o tempo digitado como valor inicial.
+        Retorna o total em segundos (ou None se o tempo for inválido).
+        """
+        total_digitado = self._parsear_tempo_contagem(tempo_texto)
+        c = self._contagem
+        c["label"] = label
+        if titulo:
+            c["titulo"] = titulo
+        titulo_final = c.get("titulo", titulo)
+        if c["rodando"] and not c["pausado"]:
+            tempo_atual = self._formatar_tempo(
+                max(0.0, c["fim"] - time.time()))
+        elif c["pausado"]:
+            tempo_atual = self._formatar_tempo(c["restante"])
+        else:
+            if total_digitado is None:
+                return None
+            c["restante"] = 0.0
+            c["total"] = float(total_digitado)
+            c["rodando"] = False
+            c["pausado"] = False
+            tempo_atual = self._formatar_tempo(total_digitado)
+        # Não cancela o loop: a contagem continua rodando normalmente.
+        self._projetar_medidor_seguro(
+            "contagem", "contagem", subtitulo=titulo_final,
+            tempo=tempo_atual)
+        self._atualizar_label_medidor(label, tempo_atual)
+        self._marcar_botoes_contagem()
+        return total_digitado
+
     def parar(self) -> None:
         """Para a reprodução."""
         self._parar_pulse()
@@ -6189,7 +7172,6 @@ class AppInterface:
         janela.geometry("800x900")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        janela.after(50, janela.grab_set)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -6779,7 +7761,6 @@ class AppInterface:
         janela.geometry("950x750")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        janela.after(50, janela.grab_set)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -7336,7 +8317,6 @@ class AppInterface:
         janela.geometry("950x700")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        janela.after(50, janela.grab_set)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -7953,6 +8933,41 @@ class AppInterface:
         self.root.bind("<Right>", _slide_proximo)
         self.root.bind("<Down>", _slide_proximo)
         self.root.bind("<Escape>", _parar_projecao)
+
+        # Passador de slides (controle remoto): AvPag/RetPag, espaço, F5 e
+        # BackSpace também navegam os slides projetados (além das setas).
+        # Se o foco estiver num campo de texto, as teclas seguem normais.
+        def _foco_em_campo_texto() -> bool:
+            foco = janela.focus_get() or self.root.focus_get()
+            if foco is None:
+                return False
+            try:
+                return foco.winfo_class() in (
+                    "Entry", "TEntry", "Text", "Spinbox", "TCombobox")
+            except tk.TclError:
+                return False
+
+        def _navegar_passador(event: object = None):
+            telao = self.player.telao
+            if not getattr(telao, "_em_slides", False):
+                return None
+            if _foco_em_campo_texto():
+                return None
+            keysym = str(getattr(event, 'keysym', '') or '').lower()
+            if keysym in ('next', 'page_next', 'page_down', 'space', 'f5'):
+                if telao.slide_proximo():
+                    _atualizar_indicador_slide()
+                return "break"
+            if keysym in ('prior', 'page_prior', 'page_up', 'backspace'):
+                if telao.slide_anterior():
+                    _atualizar_indicador_slide()
+                return "break"
+            return None
+
+        for _seq in ("<Next>", "<Prior>", "<F5>", "<BackSpace>", "<space>"):
+            janela.bind(_seq, _navegar_passador)
+        for _seq in ("<Next>", "<Prior>", "<F5>", "<BackSpace>"):
+            self.root.bind(_seq, _navegar_passador)
 
         def _montar_slides_anuncio(anuncio: dict) -> list:
             """Monta os slides de um anúncio respeitando o texto digitado:
@@ -9209,7 +10224,6 @@ class AppInterface:
         janela.geometry("950x700")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        janela.after(50, janela.grab_set)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -10020,14 +11034,17 @@ class AppInterface:
         """
         _migrar_servicos_do_banco()
         _sincronizar_uploads_midia()
-        _SERVICO_PROXIMO_ITEM.clear()
+        # O ponteiro de execução (_SERVICO_PROXIMO_ITEM) NÃO é limpo aqui:
+        # ele persiste enquanto a janela principal estiver aberta, então ao
+        # reabrir "Ordem de Serviço" a reprodução continua de onde parou.
+        # Só volta do primeiro item quando o aplicativo é fechado/reaberto
+        # (o dict é recriado vazio ao reiniciar o processo).
         dados = _carregar_servicos_json()
         janela = tk.Toplevel(self.root)
         janela.title("📋 Ordem de Serviço")
         janela.geometry("1100x750")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        janela.after(50, janela.grab_set)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -10153,6 +11170,80 @@ class AppInterface:
             _editar_item_selecionado()
 
         tree.bind("<Double-1>", _on_tree_double_click)
+
+        # ── Menu de contexto (clique direito): apagar item ──
+        _menu_ctx_aberto = {"menu": None}
+
+        def _fechar_menu_contexto(event=None):
+            """Fecha o menu de contexto caso esteja aberto (clique fora dele)."""
+            m = _menu_ctx_aberto["menu"]
+            if m is not None:
+                _menu_ctx_aberto["menu"] = None
+                try:
+                    m.unpost()
+                except tk.TclError:
+                    pass
+
+        def _apagar_item_contexto():
+            _fechar_menu_contexto()
+            sel = tree.selection()
+            if not sel:
+                return
+            serv = _servico_atual()
+            if not serv:
+                return
+            item_id = int(sel[0])
+            it = next((x for x in (serv.get("itens") or [])
+                       if x.get("id") == item_id), None)
+            if it is None:
+                return
+            titulo = (it.get("titulo_custom") or "").strip() or f"Item {item_id}"
+            if not tkinter.messagebox.askyesno(
+                    "Confirmar", f"Remover o item \"{titulo}\"?", parent=janela):
+                return
+            serv["itens"] = [x for x in serv.get("itens", [])
+                             if x.get("id") != item_id]
+            if not _salvar_servicos_json(dados):
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar a remoção em servicos.json.",
+                    parent=janela)
+                return
+            _carregar_itens()
+
+        def _menu_contexto_item(event):
+            _fechar_menu_contexto()
+            if tree.identify_region(event.x, event.y) in ("heading", "separator"):
+                return "break"
+            item_id = tree.identify_row(event.y)
+            if not item_id:
+                return "break"
+            tree.selection_set(item_id)
+            tree.focus(item_id)
+            menu_ctx = tk.Menu(janela, tearoff=0, bg='#21262d', fg='#c9d1d9',
+                               activebackground='#6e40c9',
+                               activeforeground='#ffffff', font=("Arial", 10))
+            menu_ctx.add_command(label="🗑️ Apagar Item",
+                                 command=_apagar_item_contexto)
+            _menu_ctx_aberto["menu"] = menu_ctx
+            try:
+                menu_ctx.tk_popup(event.x_root, event.y_root, 0)
+            finally:
+                _fechar_menu_contexto()
+                try:
+                    menu_ctx.grab_release()
+                except tk.TclError:
+                    pass
+            return "break"
+
+        tree.bind("<Button-3>", _menu_contexto_item)
+
+        # Clicar em qualquer outro lugar da janela (ou rolar/teclar Esc) fecha
+        # o menu de contexto se ele estiver aberto. O bind na janela propaga
+        # para os widgets internos, cobrindo toda a área da janela.
+        for _evento in ("<ButtonPress-1>", "<ButtonPress-2>",
+                        "<ButtonPress-3>", "<MouseWheel>"):
+            janela.bind(_evento, _fechar_menu_contexto)
+        janela.bind("<Escape>", _fechar_menu_contexto)
 
         def _carregar_itens():
             for item in tree.get_children():
@@ -10893,27 +11984,6 @@ class AppInterface:
                 return
             _abrir_editor_item(it)
 
-        def _remover_item():
-            sel = tree.selection()
-            if not sel:
-                tkinter.messagebox.showwarning("Seleção", "Selecione um item.", parent=janela)
-                return
-            if not tkinter.messagebox.askyesno("Confirmar",
-                    f"Remover {len(sel)} item(ns)?", parent=janela):
-                return
-            serv = _servico_atual()
-            if not serv:
-                return
-            ids_remover = {int(i) for i in sel}
-            serv["itens"] = [it for it in serv.get("itens", [])
-                             if it.get("id") not in ids_remover]
-            if not _salvar_servicos_json(dados):
-                tkinter.messagebox.showwarning(
-                    "⚠️", "Não foi possível salvar a remoção em servicos.json.",
-                    parent=janela)
-                return
-            _carregar_itens()
-
         def _mover_item(direcao: int):
             """Move item para cima (-1) ou baixo (+1)."""
             sel = tree.selection()
@@ -11124,14 +12194,6 @@ class AppInterface:
         tk.Button(btn_frame, text="➕ Ad. Item", font=("Arial", 11, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
                   command=lambda: _abrir_editor_item(), cursor='hand2', padx=12, pady=4
-                  ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="✏️ Editar Item", font=("Arial", 11, "bold"),
-                  bg='#1f6feb', fg='white', activebackground='#388bfd',
-                  command=_editar_item_selecionado, cursor='hand2', padx=12, pady=4
-                  ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="🗑️ Remover", font=("Arial", 11, "bold"),
-                  bg='#da3633', fg='white', activebackground='#f85149',
-                  command=_remover_item, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
         tk.Button(btn_frame, text="⬆️", font=("Arial", 11, "bold"),
                   bg='#21262d', fg='#f0c040', activebackground='#30363d',
