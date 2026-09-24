@@ -7010,32 +7010,34 @@ class AppInterface:
 
     def contagem_iniciar(self, total_seg: int, titulo: str,
                          label: Optional[tk.Label] = None) -> None:
-        """Inicia (ou continua) a contagem regressiva no telão."""
+        """Inicia a contagem regressiva do zero, no tempo digitado.
+
+        Sempre reinicia a contagem, mesmo que haja uma em andamento,
+        pausada ou já encerrada: cancela o loop anterior, zera o resto
+        e reprojeta o telão com o novo total. Para retomar uma contagem
+        pausada, use contagem_continuar().
+        """
         c = self._contagem
-        telao = self.player._garantir_telao()
         if total_seg is None or total_seg <= 0:
             return
 
-        if getattr(telao, "_modo_extra", None) != "contagem":
-            tempo_inicial = self._formatar_tempo(c["restante"] or total_seg)
-            telao._projetar_medidor(
-                self.config_data.get("contagem", {}),
-                "contagem", subtitulo=titulo, tempo=tempo_inicial,
-            )
-        if c["rodando"] and not c["pausado"]:
-            return
+        if c["timer_id"] is not None:
+            try:
+                self.root.after_cancel(c["timer_id"])
+            except (tk.TclError, ValueError):
+                pass
+            c["timer_id"] = None
         c["total"] = float(total_seg)
-        if c["pausado"]:
-            c["fim"] = time.time() + c["restante"]
-            c["pausado"] = False
-        else:
-            c["restante"] = float(total_seg)
-            c["fim"] = time.time() + float(total_seg)
+        c["restante"] = float(total_seg)
+        c["fim"] = time.time() + float(total_seg)
         c["rodando"] = True
+        c["pausado"] = False
         c["titulo"] = titulo
         c["label"] = label
-        if c["timer_id"] is None:
-            c["timer_id"] = self.root.after(200, self._loop_contagem)
+        self._projetar_medidor_seguro(
+            "contagem", "contagem", subtitulo=titulo,
+            tempo=self._formatar_tempo(total_seg))
+        c["timer_id"] = self.root.after(200, self._loop_contagem)
         self._atualizar_label_medidor(label, self._formatar_tempo(total_seg))
         self._marcar_botoes_contagem()
 
@@ -7109,6 +7111,7 @@ class AppInterface:
         self.contagem_parar()
         c = self._contagem
         c["rodando"] = False
+        c["pausado"] = False
         c["restante"] = 0.0
         c["total"] = 0.0
         c["timer_id"] = None
