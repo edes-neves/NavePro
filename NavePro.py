@@ -1642,12 +1642,14 @@ class TelaoWindow:
         cx = largura // 2
         h_hora = _linespace(tam_hora)
         h_temp = _linespace(tam_temp)
-        # O meio do espaço entre a hora e a temperatura coincide com o
-        # centro vertical da tela: a hora fica acima e a temperatura abaixo,
-        # ambas com o mesmo afastamento do centro.
-        meio_gap = altura // 2
-        cy_hora = meio_gap - gap // 2 - h_hora // 2
-        cy_temp = meio_gap + gap // 2 + h_temp // 2
+        # Centraliza o conjunto hora + temperatura como um bloco único:
+        # sobra a mesma folga acima da hora e abaixo da temperatura
+        # (a altura da hora difere da temperatura, então o meio do espaço
+        # entre elas NÃO coincide com o centro vertical da tela).
+        total = h_hora + gap + h_temp
+        topo = max(0, (altura - total) // 2)
+        cy_hora = topo + h_hora // 2
+        cy_temp = topo + h_hora + gap + h_temp // 2
 
         mudou = (
             cx != self._cx or cy_hora != self._cy_hora or
@@ -2916,9 +2918,11 @@ class TelaoWindow:
                 self.canvas.itemconfig(
                     self.temp_text,
                     text=texto_sub, font=(fam_sub, tam_sub, peso_sub),
-                    fill=cor_sub, width=0, justify="center", state="normal",
-                    wraplength=wrapl,
+                    fill=cor_sub, width=wrapl, justify="center", state="normal",
                 )
+                self._current_temp = subtitulo
+                self._posicionar_medidor_contagem(
+                    w, h, cfg, tam, fam_sub, tam_sub, peso_sub)
             else:
                 # Cronômetro (sem subtítulo): mantém o comportamento anterior.
                 tam_sub = max(18, int(tam * 0.30))
@@ -2927,11 +2931,10 @@ class TelaoWindow:
                     self.temp_text,
                     text=subtitulo, font=("Digital-7", tam_sub, "normal"),
                     fill=cor_sub, width=0, justify="center", state="normal",
-                    wraplength=0,
                 )
-            self._current_temp = subtitulo
-            self.canvas.coords(self.overlay_text, w // 2, int(h * 0.42))
-            self.canvas.coords(self.temp_text, w // 2, int(h * 0.63))
+                self._current_temp = subtitulo
+                self.canvas.coords(self.overlay_text, w // 2, int(h * 0.42))
+                self.canvas.coords(self.temp_text, w // 2, int(h * 0.63))
         else:
             self.canvas.itemconfig(self.temp_text, text="", state="hidden")
             self._current_temp = ""
@@ -2939,6 +2942,73 @@ class TelaoWindow:
         self.canvas.itemconfig(self.ref_text, text="", state="hidden")
         self._modo_extra = modo
         self.root.update_idletasks()
+
+    def _posicionar_medidor_contagem(self, w: int, h: int, cfg: dict,
+                                     tam: int, fam_sub: str, tam_sub: int,
+                                     peso_sub: str) -> None:
+        """Posiciona o nome/frase da contagem acima ou abaixo do número.
+
+        O número fica centralizado na vertical da tela (h/2), como no
+        cronômetro. Usa as alturas reais (bbox) do número e do nome/frase
+        para garantir que nunca se sobreponham: o afastamento entre a borda
+        do número e a borda do nome/frase é proporcional à altura da tela
+        ("dist_sub", padrão 0.05) e a posição ("posicao_sub") escolhe acima
+        ou abaixo do número.
+        """
+        cy_num = h // 2
+        posicao = str(cfg.get("posicao_sub", "abaixo") or "abaixo")
+        try:
+            dist = float(cfg.get("dist_sub", 0.05) or 0.05)
+        except (TypeError, ValueError):
+            dist = 0.05
+        dist = max(0.0, min(dist, 0.75))
+        gap = int(h * dist) + 1
+
+        try:
+            self.root.update_idletasks()
+            b_num = self.canvas.bbox(self.overlay_text)
+            b_sub = self.canvas.bbox(self.temp_text)
+        except tk.TclError:
+            b_num = b_sub = None
+        if b_num is not None and len(b_num) == 4 and b_num[3] > b_num[1]:
+            h_num = b_num[3] - b_num[1]
+        else:
+            h_num = tkfont.Font(family="Digital-7", size=tam).metrics("linespace")
+        if b_sub is not None and len(b_sub) == 4 and b_sub[3] > b_sub[1]:
+            h_sub = b_sub[3] - b_sub[1]
+        else:
+            h_sub = tkfont.Font(family=fam_sub, size=tam_sub,
+                                weight=peso_sub).metrics("linespace")
+
+        if posicao == "acima":
+            cy_sub = cy_num - h_num // 2 - gap - h_sub // 2
+        else:
+            cy_sub = cy_num + h_num // 2 + gap + h_sub // 2
+
+        margem = 10
+        if h_sub > 0:
+            if posicao == "acima":
+                topo_ok = margem + h_sub // 2
+                if cy_sub < topo_ok:
+                    # Não cabe acima com o número centralizado: encosta o
+                    # nome/frase no topo e desce o número para abrir espaço.
+                    cy_sub = topo_ok
+                    cy_num = cy_sub + h_num // 2 + gap + h_sub // 2
+                    if cy_num > h - margem - h_num // 2:
+                        cy_num = h - margem - h_num // 2
+                        cy_sub = cy_num - h_num // 2 - gap - h_sub // 2
+            else:
+                base_ok = h - margem - h_sub // 2
+                if cy_sub > base_ok:
+                    # Não cabe abaixo com o número centralizado: encosta o
+                    # nome/frase na base e sobe o número para abrir espaço.
+                    cy_sub = base_ok
+                    cy_num = cy_sub - h_num // 2 - gap - h_sub // 2
+                    if cy_num < margem + h_num // 2:
+                        cy_num = margem + h_num // 2
+                        cy_sub = cy_num + h_num // 2 + gap + h_sub // 2
+        self.canvas.coords(self.overlay_text, w // 2, cy_num)
+        self.canvas.coords(self.temp_text, w // 2, cy_sub)
 
     def _atualizar_medidor(self, tempo: str, subtitulo: str = "") -> None:
         """Atualiza o número e o subtítulo do medidor sem redesenhar o layout."""
@@ -5001,10 +5071,12 @@ class AppInterface:
         cfg_cont.setdefault("peso_sub", "bold")
         cfg_cont.setdefault("maiusculas_sub", False)
         cfg_cont.setdefault("quebrar_sub", False)
+        cfg_cont.setdefault("posicao_sub", "abaixo")
+        cfg_cont.setdefault("dist_sub", 0.05)
 
         cfg_win = tk.Toplevel(self.root)
         cfg_win.title("⚙️ Configura Relógio / Cronômetro / Contagem")
-        cfg_win.geometry("680x880")
+        cfg_win.geometry("680x980")
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(self.root)
         cfg_win.after(50, cfg_win.grab_set)
@@ -5267,6 +5339,10 @@ class AppInterface:
             value=bool(cfg_cont["maiusculas_sub"]))
         tab_cont.var_quebrar_sub = tk.BooleanVar(
             value=bool(cfg_cont["quebrar_sub"]))
+        tab_cont.var_posicao_sub = tk.StringVar(
+            value=str(cfg_cont.get("posicao_sub", "abaixo")))
+        tab_cont.var_dist_sub = tk.DoubleVar(
+            value=float(cfg_cont.get("dist_sub", 0.05)))
 
         # ── Nome / frase e tempo ──
         tk.Label(tab_cont, text="Nome / frase (exibido no telão):",
@@ -5328,6 +5404,33 @@ class AppInterface:
                        activeforeground='#f0c040', font=("Arial", 10)
                        ).pack(side='left')
 
+        tk.Label(tab_cont, text="Posição do nome / frase:",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        linha_pos_sub = tk.Frame(tab_cont, bg='#0d1117')
+        linha_pos_sub.pack(fill='x', pady=(0, 6))
+        tk.Radiobutton(linha_pos_sub, text="Abaixo do número",
+                       value="abaixo", variable=tab_cont.var_posicao_sub,
+                       bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                       activebackground='#0d1117',
+                       activeforeground='#f0c040',
+                       font=("Arial", 10)).pack(side='left', padx=(0, 14))
+        tk.Radiobutton(linha_pos_sub, text="Acima do número",
+                       value="acima", variable=tab_cont.var_posicao_sub,
+                       bg='#0d1117', fg='#c9d1d9', selectcolor='#0d1117',
+                       activebackground='#0d1117',
+                       activeforeground='#f0c040',
+                       font=("Arial", 10)).pack(side='left')
+
+        tk.Label(tab_cont, text="Distância do nome/frase até o número:",
+                 font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        tk.Scale(tab_cont, from_=0.0, to=0.55, resolution=0.01,
+                 orient="horizontal", variable=tab_cont.var_dist_sub,
+                 bg='#0d1117', fg='#c9d1d9', troughcolor='#21262d',
+                 highlightthickness=0, font=("Arial", 9)
+                 ).pack(fill='x', pady=(0, 6))
+
         tk.Label(tab_cont, text="Tempo (minutos, ex.: 5  →  ou  MM:SS, ex.: 2:30):",
                  font=("Arial", 11, "bold"), fg='#f0c040', bg='#0d1117',
                  anchor='w').pack(fill='x')
@@ -5365,6 +5468,8 @@ class AppInterface:
                 "peso_sub": "bold" if tab_cont.var_peso_sub.get() else "normal",
                 "maiusculas_sub": bool(tab_cont.var_maiusculas_sub.get()),
                 "quebrar_sub": bool(tab_cont.var_quebrar_sub.get()),
+                "posicao_sub": tab_cont.var_posicao_sub.get(),
+                "dist_sub": float(tab_cont.var_dist_sub.get()),
             }
             self._salvar_config_medidor("contagem", novo)
             self.status_label.config(text="✅ Configuração da contagem salva")
