@@ -5494,7 +5494,7 @@ class AppInterface:
                     "ou 2:30).",
                     parent=cfg_win)
                 return
-            self.contagem_iniciar(total, entry_titulo.get().strip() or "Contagem",
+            self.contagem_iniciar(total, entry_titulo.get().strip(),
                                   lbl_cont)
 
         btn_cont_projetar = tk.Button(
@@ -7194,15 +7194,15 @@ class AppInterface:
 
         Usado principalmente após alterar as cores/fundo no "💾 Salvar":
         o tempo restante em andamento (ou pausado) é preservado. Quando
-        ociosa, usa o tempo digitado como valor inicial.
+        ociosa, usa o tempo digitado como valor inicial. Se o nome/frase
+        estiver vazio, o texto some do telão (só os números continuam).
         Retorna o total em segundos (ou None se o tempo for inválido).
         """
         total_digitado = self._parsear_tempo_contagem(tempo_texto)
         c = self._contagem
         c["label"] = label
-        if titulo:
-            c["titulo"] = titulo
-        titulo_final = c.get("titulo", titulo)
+        c["titulo"] = titulo or ""
+        titulo_final = c["titulo"]
         if c["rodando"] and not c["pausado"]:
             tempo_atual = self._formatar_tempo(
                 max(0.0, c["fim"] - time.time()))
