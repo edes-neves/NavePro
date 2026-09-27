@@ -11131,8 +11131,9 @@ class AppInterface:
         """Abre a janela de planejamento de ordem de serviço.
 
         As ordens são salvas em ~/.navepro/servicos.json (nunca importam
-        vídeo/slides). Oferece criar, editar e excluir serviços, além de
-        arrastar e soltar os itens para reordená-los.
+        vídeo/slides). Oferece criar e editar serviços, excluir itens (botão
+        da barra ou botão direito na lista) e arrastar e soltar os itens
+        para reordená-los.
         """
         _migrar_servicos_do_banco()
         _sincronizar_uploads_midia()
@@ -11232,6 +11233,22 @@ class AppInterface:
         style.map('Treeview', background=[('selected', '#6e40c9')],
                   foreground=[('selected', '#ffffff')])
 
+        # Escolha do operador na lista de itens: vale UMA única vez no
+        # próximo clique em "Executar Serviço". Só é registrada por gestos
+        # reais do operador na lista (clique do mouse), nunca pelo destaque
+        # automático da reprodução nem por alterações internas da seleção
+        # (reordenar, editar, recarregar a lista).
+        _item_escolhido: Dict[str, Optional[int]] = {"id": None}
+
+        def _registrar_escolha(row_iid: Optional[str]):
+            """Grava o item escolhido pelo operador na lista (uso único)."""
+            if not row_iid:
+                return
+            try:
+                _item_escolhido["id"] = int(row_iid)
+            except (TypeError, ValueError):
+                pass
+
         # ── Drag & drop para reordenar itens dentro da tree ──
         _drag_state: Dict[str, Optional[str]] = {"origem": None}
 
@@ -11241,6 +11258,7 @@ class AppInterface:
             item = tree.identify_row(event.y)
             if not item:
                 return
+            _registrar_escolha(item)
             _drag_state["origem"] = item
 
         def _on_tree_button_release(event):
@@ -11319,6 +11337,7 @@ class AppInterface:
             item_id = tree.identify_row(event.y)
             if not item_id:
                 return "break"
+            _registrar_escolha(item_id)
             tree.selection_set(item_id)
             tree.focus(item_id)
             menu_ctx = tk.Menu(janela, tearoff=0, bg='#21262d', fg='#c9d1d9',
@@ -11327,14 +11346,7 @@ class AppInterface:
             menu_ctx.add_command(label="🗑️ Apagar Item",
                                  command=_apagar_item_contexto)
             _menu_ctx_aberto["menu"] = menu_ctx
-            try:
-                menu_ctx.tk_popup(event.x_root, event.y_root, 0)
-            finally:
-                _fechar_menu_contexto()
-                try:
-                    menu_ctx.grab_release()
-                except tk.TclError:
-                    pass
+            menu_ctx.tk_popup(event.x_root, event.y_root, 0)
             return "break"
 
         tree.bind("<Button-3>", _menu_contexto_item)
@@ -11435,29 +11447,6 @@ class AppInterface:
                 return
             _carregar_servicos()
             _on_servico_select()
-
-        def _excluir_servico():
-            serv = _servico_atual()
-            if not serv:
-                tkinter.messagebox.showwarning("Seleção", "Selecione um serviço.", parent=janela)
-                return
-            n_itens = len(list(serv.get("itens") or []))
-            if not tkinter.messagebox.askyesno(
-                    "Confirmar",
-                    f"Excluir o serviço '{serv.get('nome', '')}' "
-                    f"com {n_itens} item(ns)?", parent=janela):
-                return
-            sid = serv.get("id")
-            dados["servicos"] = [s for s in dados["servicos"] if s.get("id") != sid]
-            if not _salvar_servicos_json(dados):
-                tkinter.messagebox.showwarning(
-                    "⚠️", "Não foi possível salvar a exclusão em servicos.json.",
-                    parent=janela)
-                return
-            servico_selecionado_id[0] = None
-            _carregar_servicos()
-            if combo_servico['values']:
-                _on_servico_select()
 
         def _abrir_editor_item(item_edit: Optional[Dict] = None):
             """Abre a janela para adicionar (item_edit=None) ou editar um item."""
@@ -11812,7 +11801,7 @@ class AppInterface:
                 value=(item_edit or {}).get("caminho_arquivo") or "")
 
             arquivo_frame = tk.Frame(add_main, bg='#0d1117')
-            tk.Label(arquivo_frame, text="Arquivo (vídeo/áudio/PowerPoint/Impress):",
+            tk.Label(arquivo_frame, text="Arquivo (vídeo/áudio/PowerPoint/Impress/PDF):",
                      fg='#8b949e', bg='#0d1117',
                      font=("Arial", 9)).pack(anchor='w')
             arquivo_row = tk.Frame(arquivo_frame, bg='#0d1117')
@@ -11831,12 +11820,18 @@ class AppInterface:
                     ".flv", ".mp3", ".wav", ".ogg", ".oga", ".m4a", ".flac",
                     ".aac", ".wma", ".ppt", ".pptx", ".pps", ".ppsx", ".odp",
                 )
+                _titulo_busca = "Selecionar vídeo, áudio ou apresentação"
+                if tipo_var.get() == "sermao":
+                    # Sermão também aceita PDF (aberto no visualizador do
+                    # sistema, como a apresentação).
+                    _sufixos = _sufixos + (".pdf",)
+                    _titulo_busca = "Selecionar vídeo, áudio, apresentação ou PDF"
                 # Usa o seletor do próprio aplicativo (inicia no home do
                 # usuário, esconde os "." ocultos e não "pisca" como o
                 # diálogo nativo do Tk/GTK).
                 escolhidos = _escolher_arquivos_usuario(
                     parent=add_win,
-                    titulo="Selecionar vídeo, áudio ou apresentação",
+                    titulo=_titulo_busca,
                     pasta_inicial=os.path.expanduser("~"),
                     sufixos=_sufixos)
                 if not escolhidos:
@@ -11865,6 +11860,40 @@ class AppInterface:
                       ).pack(side='left', padx=(3, 0))
             arquivo_frame.pack_forget()
 
+            # O sistema posiciona esta janela uma única vez, na abertura, no
+            # meio superior da tela. Quando a geometria é reaplicada só com o
+            # tamanho — o que acontece ao trocar o tipo do item —, o Tk
+            # reenvia a posição antiga e a janela salta para o canto superior
+            # esquerdo. Guardamos a posição de abertura e a reaplicamos em
+            # todos os redimensionamentos, descontando o deslocamento fixo da
+            # moldura que o gerenciador de janelas acrescenta ao pedido.
+            _geo_add_win: Dict[str, Any] = {"abertura": None, "pedido": None}
+
+            def _aplicar_geometria(tamanho: str) -> None:
+                """Redimensiona a janela do editor sem mudar a posição."""
+                try:
+                    if not add_win.winfo_viewable():
+                        # ainda não mapeada: o sistema posiciona ao abrir
+                        add_win.geometry(tamanho)
+                        return
+                    real = (add_win.winfo_rootx(), add_win.winfo_rooty())
+                    if _geo_add_win["abertura"] is None:
+                        _geo_add_win["abertura"] = real
+                    pedido = _geo_add_win["pedido"]
+                    if pedido is None:
+                        pedido = real
+                    else:
+                        # o pedido anterior foi obedecido com um deslocamento
+                        # fixo da moldura: recalcula o pedido que devolve a
+                        # janela exatamente ao lugar de abertura
+                        abertura = _geo_add_win["abertura"]
+                        pedido = (abertura[0] + pedido[0] - real[0],
+                                  abertura[1] + pedido[1] - real[1])
+                    _geo_add_win["pedido"] = pedido
+                    add_win.geometry(f"{tamanho}+{pedido[0]}+{pedido[1]}")
+                except tk.TclError:
+                    pass
+
             def _atualizar_paineis():
                 t = tipo_var.get()
                 if t in ("video", "audio", "sermao"):
@@ -11883,13 +11912,10 @@ class AppInterface:
                     anuncio_frame.pack(fill='x', pady=(2, 0))
                 else:
                     anuncio_frame.pack_forget()
-                try:
-                    add_win.geometry("700x540" if t == "versiculo"
-                                     else "700x540" if t == "hino"
-                                     else "700x450" if t == "anuncio"
-                                     else "700x380")
-                except tk.TclError:
-                    pass
+                _aplicar_geometria("700x540" if t == "versiculo"
+                                   else "700x540" if t == "hino"
+                                   else "700x450" if t == "anuncio"
+                                   else "700x380")
 
             tipo_var.trace_add("write", lambda *a: _atualizar_paineis())
             _atualizar_paineis()
@@ -12119,7 +12145,11 @@ class AppInterface:
         def _executar_servico():
             """Reproduz APENAS o próximo item da lista e para.
 
-            A cada clique em "Executar Serviço" avança um item, independente
+            A escolha do operador vale uma única vez: se ele selecionou um
+            item na lista, a próxima reprodução começa nele e o botão passa a
+            avançar item a item até o fim da lista, voltando ao primeiro ao
+            terminar — a escolha anterior é esquecida. Sem seleção, segue o
+            mesmo avanço item a item, do começo ao fim. independente
             do tipo (hino/vídeo/áudio/texto): reproduz/projeta só ele e fica
             aguardando o próximo clique. Não altera a playlist nem a opção de
             repetição da janela principal — o estado anterior é restaurado
@@ -12134,6 +12164,16 @@ class AppInterface:
                 return
             chave = serv.get("id") or serv.get("nome") or "?"
             prox = _SERVICO_PROXIMO_ITEM.get(chave)
+            # Consome a escolha do operador (uma única vez). A partir daqui a
+            # seleção da lista é ignorada: o botão só avança item a item e, ao
+            # terminar, volta ao primeiro — nunca mais volta ao item escolhido.
+            escolhido = _item_escolhido["id"]
+            _item_escolhido["id"] = None
+            if escolhido is not None:
+                idx_escolhido = next((i for i, it in enumerate(itens)
+                                      if it.get("id") == escolhido), None)
+                if idx_escolhido is not None:
+                    prox = idx_escolhido
             if prox is None or prox < 0 or prox >= len(itens):
                 prox = 0
             item = itens[prox]
@@ -12141,7 +12181,8 @@ class AppInterface:
             titulo_item = (item.get('titulo_custom') or '').strip()
             letra = (item.get('letra_snapshot') or '').strip()
 
-            # Destaque do item em execução na lista da janela de serviço
+            # Destaque do item em execução na lista da janela de serviço.
+            # Não é escolha do operador: não registra nada em _item_escolhido.
             try:
                 tree.selection_set(str(item.get('id')))
                 tree.see(str(item.get('id')))
@@ -12175,14 +12216,19 @@ class AppInterface:
             if caminho_media and os.path.exists(caminho_media):
                 caminho = caminho_media
                 _ext = os.path.splitext(caminho)[1].lower()
-                if _ext in ('.ppt', '.pptx', '.pps', '.ppsx', '.odp'):
-                    # Apresentação (PowerPoint/Impress): abre em tela cheia no
-                    # aplicativo do sistema (LibreOffice --show ou o aplicativo
-                    # padrão), escondendo o telão enquanto estiver aberta.
+                if _ext in ('.ppt', '.pptx', '.pps', '.ppsx', '.odp', '.pdf'):
+                    # Apresentação (PowerPoint/Impress) ou PDF: abre no
+                    # aplicativo do sistema (LibreOffice --show para
+                    # apresentação, visualizador padrão para PDF), escondendo
+                    # o telão enquanto estiver aberta.
                     self.player._matar_processo()
                     self.player.telao.preparar_video()
                     if _eh_windows():
                         _cmd_apres = ['cmd', '/c', 'start', '', caminho]
+                    elif _ext == '.pdf':
+                        # PDF: visualizador padrão do sistema (o LibreOffice
+                        # em modo apresentação não serve para PDF).
+                        _cmd_apres = ['xdg-open', caminho]
                     else:
                         _cmd_apres = ['xdg-open', caminho]
                         for _so in ('libreoffice', 'soffice'):
@@ -12194,7 +12240,7 @@ class AppInterface:
                             _cmd_apres, start_new_session=True,
                             env=_ambiente_sem_appimage())
                     except Exception as e:
-                        print(f"❌ Erro ao abrir apresentação: {e}")
+                        print(f"❌ Erro ao abrir apresentação/PDF: {e}")
                         iniciado = False
                     else:
                         iniciado = True
@@ -12289,9 +12335,9 @@ class AppInterface:
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
                   command=_editar_servico, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="🗑️ Excluir Serviço", font=("Arial", 11, "bold"),
+        tk.Button(btn_frame, text="🗑️ Excluir Item", font=("Arial", 11, "bold"),
                   bg='#da3633', fg='white', activebackground='#f85149',
-                  command=_excluir_servico, cursor='hand2', padx=12, pady=4
+                  command=_apagar_item_contexto, cursor='hand2', padx=12, pady=4
                   ).pack(side='left', padx=3)
         tk.Button(btn_frame, text="➕ Ad. Item", font=("Arial", 11, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
