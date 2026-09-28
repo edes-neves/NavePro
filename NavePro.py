@@ -2590,9 +2590,16 @@ class TelaoWindow:
         cor_texto = (cfg or {}).get("cor", "#FFFFFF") or "#FFFFFF"
         cx, cy, cw, ch = self._texto_box
         escala = float(getattr(self, "_texto_escala", 1.0) or 1.0)
-        base_pct = 0.10 * escala
+        alt_tela = self.canvas.winfo_height() or 0
+        if alt_tela < 200:
+            # Canvas ainda sem tamanho (primeira projeção): usa o monitor.
+            alt_tela = int(getattr(self._monitor, "height", 0) or 0) or ch
+        # A caixa é guia de layout: a fonte vem do tamanho da caixa * a escala
+        # do A−/A+ e o bloco pode ocupar até 92% da altura do telão.
+        limite = int(alt_tela * 0.92)
         fonte_pil, linhas = _calcular_texto_em_caixa(
-            texto, cw, ch, base_pct=base_pct)
+            texto, cw, ch, base_pct=_PCT_FONTE_CAIXA * escala,
+            limite_alt=limite)
         familia = _fonte_familia_do_pil(fonte_pil)
         pt = max(8, min(300, int(fonte_pil.size)))
         passo = fonte_pil.size + max(1, fonte_pil.size // 5)
@@ -2606,10 +2613,16 @@ class TelaoWindow:
             justify="center",
             state="normal",
         )
-        # Centraliza vertical e horizontalmente na caixa.
-        topo = cy + (ch - passo * len(linhas)) // 2
+        # Centraliza vertical e horizontalmente na caixa, sem deixar o bloco
+        # sair do telão (a fonte maior pode passar da altura da caixa).
+        alt_bloco = passo * len(linhas)
+        topo = cy + (ch - alt_bloco) // 2
+        if topo < 0:
+            topo = 0
+        elif topo + alt_bloco > alt_tela:
+            topo = max(0, alt_tela - alt_bloco)
         centro_x = cx + cw // 2
-        centro_y = topo + (passo * len(linhas)) // 2
+        centro_y = topo + alt_bloco // 2
         self.canvas.coords(self.overlay_text, centro_x, centro_y)
         self._current_text = texto
         self._current_temp = ""
@@ -4064,31 +4077,63 @@ def _fonte_familia_do_pil(fonte) -> str:
         return "Helvetica"
 
 
+# Fração da ALTURA da caixa de texto que corresponde ao tamanho de fonte
+# "de projeto". A caixa do compositor foi desenhada para ~3 linhas de texto
+# preenchendo a caixa, ou seja 1/(3 * 1.2) ≈ 0.28. O valor antigo era 0.10,
+# que desenhava o anúncio com menos de um terço do tamanho pretendido (letra
+# miúda no telão) e ainda fazia o A−/A+ não ter efeito visível.
+_PCT_FONTE_CAIXA = 0.28
+
+
 def _calcular_texto_em_caixa(texto: str, caixa_larg: int, caixa_alt: int,
-                             base_pct: float = 0.10) -> tuple:
+                             base_pct: float = _PCT_FONTE_CAIXA,
+                             limite_alt: Optional[int] = None) -> tuple:
     """Calcula fonte + linhas para desenhar 'texto' dentro de uma caixa.
 
     Usado pelo editor de anúncio (prévia) e pelo telão de forma IDÊNTICA:
     a fonte é proporcional à ALTURA DA CAIXA (base_pct * caixa_alt) e as
-    linhas são quebradas na largura da caixa. Se o texto não couber
-    verticalmente, encolhe até caber (respeitando um mínimo legível).
+    linhas são quebradas na largura da caixa. Se o texto não couber em
+    'limite_alt', encolhe até caber (respeitando um mínimo legível).
+    'limite_alt' é a altura máxima do bloco de texto: os dois chamadores
+    passam a altura da tela, porque a caixa é um guia de layout (posição e
+    largura) e não deve espremer a letra — assim o A−/A+ muda a fonte de
+    verdade e o texto, centralizado na caixa, cresce para os dois lados.
     Retorna (fonte_pil, linhas).
     """
     desenho = _draw_pil_reciclavel()
     larg = max(60, caixa_larg)
     alt = max(60, caixa_alt)
+    limite = max(60, int(limite_alt)) if limite_alt else alt
     texto_fonte = (texto or "")
-    base = max(12, int(round(alt * (base_pct or 0.10))))
-    tamanhos = list(dict.fromkeys([base, 108, 88, 72, 60, 52, 44, 36, 30, 26, 22, 18, 14, 12]))
-    for tam in tamanhos:
-        tam = max(12, min(tam, 400))
+
+    def _medir(tam: int) -> tuple:
+        """(fonte, linhas, altura do bloco) para a fonte de tamanho 'tam'."""
         fonte = _carregar_fonte_pil(tam)
         linhas = _quebrar_linhas_medindo(desenho, texto_fonte, larg, fonte)
         tam_linha = fonte.size + max(1, fonte.size // 5)
-        if tam_linha * max(1, len(linhas)) <= alt:
-            return fonte, linhas
-    fonte = _carregar_fonte_pil(12)
-    return fonte, _quebrar_linhas_medindo(desenho, texto_fonte, larg, fonte)
+        return fonte, linhas, tam_linha * max(1, len(linhas))
+
+    base = max(12, min(400, int(round(alt * (base_pct or _PCT_FONTE_CAIXA)))))
+    # Procura o MAIOR tamanho que cabe em 'limite'. A lista de tamanhos fixos
+    # anterior fazia o A+/A− "empacar" num valor da lista (e às vezes até
+    # diminuir a fonte), então o operador não conseguia mexer no tamanho.
+    # Primeiro desce (pulando pelo tamanho estimado, para não ficar lento com
+    # texto longo) e depois sobe em passos pequenos até não caber mais: assim
+    # o resultado acompanha o A−/A+ e nunca diminui sozinho.
+    tam = base
+    fonte, linhas, bloco = _medir(tam)
+    while bloco > limite and tam > 12:
+        passo = max(1, int(tam * 0.03))
+        alvo = max(12, min(int(tam * limite / max(1, bloco)) - passo, tam - 1))
+        tam = alvo
+        fonte, linhas, bloco = _medir(tam)
+    while tam < base:
+        maior = min(base, tam + max(1, int(tam * 0.03)))
+        f2, l2, b2 = _medir(maior)
+        if b2 > limite:
+            break
+        tam, fonte, linhas = maior, f2, l2
+    return fonte, linhas
 
 
 def _caixa_texto_padrao(texto: str, area_larg: int, area_alt: int,
@@ -9605,12 +9650,21 @@ class AppInterface:
                     if not txt:
                         return
                     escala = float(tam_txt.get("s") or 1.0)
+                    limite = int(VH * 0.92)
                     fonte_pil, linhas = _calcular_texto_em_caixa(
-                        txt, tw, th, base_pct=0.10 * escala)
+                        txt, tw, th, base_pct=_PCT_FONTE_CAIXA * escala,
+                        limite_alt=limite)
                     familia = _fonte_familia_do_pil(fonte_pil)
                     passo = fonte_pil.size + max(1, fonte_pil.size // 5)
                     cx = px + pw // 2
-                    cy_txt = py + ph // 2 - (passo * len(linhas) * ESCALA) // 2
+                    # Mesmo travamento do telão: o bloco fica centralizado na
+                    # caixa, mas não sai do espaço virtual 1440x1080.
+                    alt_bloco = int(passo * len(linhas) * ESCALA)
+                    cy_txt = py + ph // 2 - alt_bloco // 2
+                    if cy_txt < 0:
+                        cy_txt = 0
+                    elif cy_txt + alt_bloco > CH:
+                        cy_txt = max(0, CH - alt_bloco)
                     for i, ln in enumerate(linhas):
                         if ln:
                             itens["t_txt_" + str(i)] = canvas.create_text(
