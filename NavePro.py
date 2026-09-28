@@ -8256,6 +8256,10 @@ class AppInterface:
                   bg='#8957e5', fg='white', activebackground='#a371f7',
                   command=lambda: _ajustar_fonte(0.8), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
+        tk.Button(nav_frame, text="🔃", font=("Arial", 11, "bold"),
+                  bg='#8957e5', fg='white', activebackground='#a371f7',
+                  command=lambda: _restaurar_fonte(), cursor='hand2', padx=10, pady=2
+                  ).pack(side='left', padx=2)
 
         label_slide = tk.Label(nav_frame, text="Sem projeção",
                                font=("Arial", 11, "bold"), fg='#8b949e', bg='#161b22')
@@ -8312,6 +8316,22 @@ class AppInterface:
                 cfg = telao._proj_cfg
             novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
             cfg["tamanho_pct"] = novo
+            telao._proj_cfg = cfg
+            if getattr(telao, "_em_slides", False) and telao._slides:
+                telao._mostrar_slide(telao._slide_index)
+            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
+                telao._desenhar_texto_no_canvas(telao._current_text)
+            self.salvar_config_projecao(dict(cfg))
+            _atualizar_indicador_slide()
+
+        def _restaurar_fonte():
+            """Volta a fonte da projeção ao padrão, desfazendo o A−/A+ manual."""
+            telao = self.player.telao
+            cfg = getattr(telao, "_proj_cfg", None)
+            if cfg is None:
+                telao.configurar_projecao()
+                cfg = telao._proj_cfg
+            cfg["tamanho_pct"] = 5.0
             telao._proj_cfg = cfg
             if getattr(telao, "_em_slides", False) and telao._slides:
                 telao._mostrar_slide(telao._slide_index)
@@ -8850,6 +8870,10 @@ class AppInterface:
                   bg='#8957e5', fg='white', activebackground='#a371f7',
                   command=lambda: _ajustar_fonte(0.8), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
+        tk.Button(nav_frame, text="🔃", font=("Arial", 11, "bold"),
+                  bg='#8957e5', fg='white', activebackground='#a371f7',
+                  command=lambda: _restaurar_fonte(), cursor='hand2', padx=10, pady=2
+                  ).pack(side='left', padx=2)
 
         tk.Label(nav_frame, text="🖼️ Imagem:",
                  font=("Arial", 11, "bold"), fg='#f0c040', bg='#161b22'
@@ -9003,6 +9027,30 @@ class AppInterface:
                 cfg = telao._proj_cfg
             novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
             cfg["tamanho_pct"] = novo
+            telao._proj_cfg = cfg
+            if getattr(telao, "_em_slides", False) and telao._slides:
+                telao._mostrar_slide(telao._slide_index)
+            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
+                telao._desenhar_texto_no_canvas(telao._current_text)
+            self.salvar_config_projecao(dict(cfg))
+            _atualizar_indicador_slide()
+
+        def _restaurar_fonte():
+            """Volta a fonte ao padrão, desfazendo o A−/A+ manual (ao vivo e salvo)."""
+            telao = self.player.telao
+            if getattr(telao, "_mostrando_imagem_com_texto", False):
+                texto = getattr(telao, "_current_text", "")
+                if texto:
+                    telao._texto_escala = 1.0
+                    telao._desenhar_texto_anuncio(texto)
+                    _persistir_escala_texto(1.0)
+                _atualizar_indicador_slide()
+                return
+            cfg = getattr(telao, "_proj_cfg", None)
+            if cfg is None:
+                telao.configurar_projecao()
+                cfg = telao._proj_cfg
+            cfg["tamanho_pct"] = 5.0
             telao._proj_cfg = cfg
             if getattr(telao, "_em_slides", False) and telao._slides:
                 telao._mostrar_slide(telao._slide_index)
@@ -11063,6 +11111,10 @@ class AppInterface:
                   bg='#8957e5', fg='white', activebackground='#a371f7',
                   command=lambda: _ajustar_fonte(0.8), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
+        tk.Button(nav_frame, text="🔃", font=("Arial", 11, "bold"),
+                  bg='#8957e5', fg='white', activebackground='#a371f7',
+                  command=lambda: _restaurar_fonte(), cursor='hand2', padx=10, pady=2
+                  ).pack(side='left', padx=2)
 
         label_slide = tk.Label(nav_frame, text="Sem projeção",
                                font=("Arial", 11, "bold"), fg='#8b949e', bg='#161b22')
@@ -11163,6 +11215,22 @@ class AppInterface:
                 cfg = telao._proj_cfg
             novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
             cfg["tamanho_pct"] = novo
+            telao._proj_cfg = cfg
+            if getattr(telao, "_em_slides", False) and telao._slides:
+                telao._mostrar_slide(telao._slide_index)
+            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
+                telao._desenhar_texto_no_canvas(telao._current_text)
+            self.salvar_config_projecao(dict(cfg))
+            _atualizar_indicador_slide()
+
+        def _restaurar_fonte():
+            """Volta a fonte da projeção ao padrão, desfazendo o A−/A+ manual."""
+            telao = self.player.telao
+            cfg = getattr(telao, "_proj_cfg", None)
+            if cfg is None:
+                telao.configurar_projecao()
+                cfg = telao._proj_cfg
+            cfg["tamanho_pct"] = 5.0
             telao._proj_cfg = cfg
             if getattr(telao, "_em_slides", False) and telao._slides:
                 telao._mostrar_slide(telao._slide_index)
