@@ -4545,20 +4545,28 @@ def _escolher_arquivos_usuario(
         titulo: str,
         pasta_inicial: Optional[str] = None,
         sufixos: Tuple[str, ...] = (".xml", ".txt", ".json"),
+        nome_para_salvar: str = "",
 ) -> Tuple[str, ...]:
     """Seletor de arquivos que inicia no diretório do usuário (~).
 
     Mostra apenas as pastas/arquivos do usuário — esconde tudo que começa
     com "." (ocultos do sistema) e filtra os arquivos pelos sufixos dados.
+
+    Com `nome_para_salvar` informado vira um "salvar como": mostra um campo
+    com o nome sugerido, o botão principal vira "💾 Salvar" e o retorno é um
+    único caminho. Nesse modo, duas cliques num arquivo existente apenas
+    colocam o nome dele no campo.
     """
     import os
     pasta = {"atual": os.path.abspath(os.path.expanduser(pasta_inicial or "~"))}
     escolhidos: List[str] = []
     _itens: List[Tuple[str, bool]] = []  # (caminho, é_pasta)
+    salvando = bool(nome_para_salvar)
+    ent_nome: Optional[tk.Entry] = None
 
     dial = tk.Toplevel(parent)
     dial.title(titulo)
-    dial.geometry("560x500")
+    dial.geometry("560x545" if salvando else "560x500")
     dial.configure(bg='#0d1117')
     if parent is not None:
         dial.transient(parent)
@@ -4600,7 +4608,34 @@ def _escolher_arquivos_usuario(
     listbox.configure(yscrollcommand=scroll.set)
     scroll.pack(side='right', fill='y')
 
+    def _validar_salvar() -> Optional[str]:
+        """Monta o caminho final ou None para manter o diálogo aberto."""
+        nome = ent_nome.get().strip() if ent_nome is not None else ""
+        if not nome:
+            tkinter.messagebox.showwarning(
+                "Salvar", "Escreva o nome do arquivo para salvar.", parent=dial)
+            return None
+        caminho = os.path.abspath(os.path.join(pasta["atual"], nome))
+        if os.path.isdir(caminho):
+            # Apontou para uma pasta: entra nela em vez de salvar.
+            _entrar(caminho)
+            return None
+        if os.path.exists(caminho) and not tkinter.messagebox.askyesno(
+                "Arquivo já existe",
+                f"Já existe um arquivo com esse nome:\n\n{caminho}\n\n"
+                "Quer sobrescrever?",
+                parent=dial):
+            return None
+        return caminho
+
     def _fechar_ok(*idxs: int) -> None:
+        if salvando:
+            caminho = _validar_salvar()
+            if caminho is None:
+                return
+            escolhidos[:] = [caminho]
+            dial.destroy()
+            return
         caminhos = [_itens[i][0] for i in idxs if not _itens[i][1]]
         escolhidos[:] = caminhos
         dial.destroy()
@@ -4612,6 +4647,10 @@ def _escolher_arquivos_usuario(
         caminho, is_dir = _itens[idx]
         if is_dir:
             _entrar(caminho)
+        elif salvando and ent_nome is not None:
+            ent_nome.delete(0, tk.END)
+            ent_nome.insert(0, os.path.basename(caminho))
+            ent_nome.icursor(tk.END)
         else:
             _fechar_ok(idx)
 
@@ -4627,10 +4666,27 @@ def _escolher_arquivos_usuario(
     dial.bind("<Return>", _ok)
     dial.bind("<Escape>", _cancelar)
 
+    # ── Nome do arquivo (modo "salvar como") ──
+    if salvando:
+        linha_nome = tk.Frame(dial, bg='#0d1117')
+        linha_nome.pack(fill='x', padx=6, pady=(2, 0))
+        tk.Label(linha_nome, text="Nome do arquivo:", font=("Arial", 10, "bold"),
+                 fg='#f0c040', bg='#0d1117').pack(side='left', padx=(4, 6))
+        ent_nome = tk.Entry(linha_nome, font=("Arial", 11), bg='#21262d',
+                            fg='#f0c040', insertbackground='#f0c040',
+                            bd=0, highlightthickness=0)
+        ent_nome.pack(side='left', fill='x', expand=True, padx=(0, 6), ipady=3)
+        ent_nome.insert(0, nome_para_salvar)
+        # O nome vem selecionado: é só digitar para trocar.
+        ent_nome.selection_range(0, tk.END)
+        ent_nome.focus_set()
+
     rodape = tk.Frame(dial, bg='#0d1117')
     rodape.pack(fill='x', padx=6, pady=6)
-    tk.Button(rodape, text="Importar", font=("Arial", 11, "bold"),
-              bg='#238636', fg='white', activebackground='#2ea043',
+    tk.Button(rodape, text=("💾 Salvar" if salvando else "Importar"),
+              font=("Arial", 11, "bold"),
+              bg=('#1f6feb' if salvando else '#238636'), fg='white',
+              activebackground=('#388bfd' if salvando else '#2ea043'),
               command=_ok).pack(side='right', padx=(4, 0))
     tk.Button(rodape, text="Cancelar", font=("Arial", 11, "bold"),
               bg='#da3633', fg='white', activebackground='#f85149',
@@ -5125,12 +5181,13 @@ class AppInterface:
         entry_imagem.pack(side='left', fill='x', expand=True, ipady=3)
 
         def _escolher_imagem_fundo():
-            escolhido = tkinter.filedialog.askopenfilename(
-                parent=cfg_win, title="Escolher imagem de fundo",
-                filetypes=[("Imagens", "*.png *.jpg *.jpeg *.bmp *.webp *.gif"),
-                           ("Todos os arquivos", "*.*")])
-            if escolhido:
-                var_fundo_imagem.set(escolhido)
+            # Seletor do próprio app (não o do sistema): só as pastas do
+            # usuário, sem as ocultas, e sem piscar ao abrir.
+            escolhidos = _escolher_arquivos_usuario(
+                cfg_win, "Escolher imagem de fundo",
+                sufixos=tuple(sorted(SUFIXOS_IMAGEM)))
+            if escolhidos:
+                var_fundo_imagem.set(escolhidos[0])
 
         tk.Button(linha_imagem, text="Procurar…", font=("Arial", 10, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
@@ -5350,12 +5407,11 @@ class AppInterface:
         entry_imagem.pack(side='left', fill='x', expand=True, ipady=3)
 
         def _escolher_imagem_fundo_relogio():
-            escolhido = tkinter.filedialog.askopenfilename(
-                parent=cfg_win, title="Escolher imagem de fundo",
-                filetypes=[("Imagens", "*.png *.jpg *.jpeg *.bmp *.webp *.gif"),
-                           ("Todos os arquivos", "*.*")])
-            if escolhido:
-                var_fundo_imagem.set(escolhido)
+            escolhidos = _escolher_arquivos_usuario(
+                cfg_win, "Escolher imagem de fundo",
+                sufixos=tuple(sorted(SUFIXOS_IMAGEM)))
+            if escolhidos:
+                var_fundo_imagem.set(escolhidos[0])
 
         tk.Button(linha_imagem, text="Procurar…", font=("Arial", 10, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
@@ -12800,18 +12856,17 @@ class AppInterface:
         def _exportar():
             if estado["ocupado"]:
                 return
-            destino = tkinter.filedialog.asksaveasfilename(
-                parent=janela,
-                title="Salvar transferência para levar a outro computador",
-                initialdir=os.path.expanduser("~"),
-                initialfile=_nome_arquivo_transferencia(
-                    prefixo="NavePro-Transferencia"),
-                defaultextension=EXTENSAO_TRANSFERENCIA,
-                filetypes=[
-                    ("Transferência do NavePro", f"*{EXTENSAO_TRANSFERENCIA}"),
-                    ("Todos os arquivos", "*.*")])
-            if not destino:
+            # Seletor do próprio app (e não o diálogo do sistema): mostra só as
+            # pastas do usuário, sem as ocultas, e não pisca ao abrir.
+            escolhidos = _escolher_arquivos_usuario(
+                janela, "Salvar transferência para levar a outro computador",
+                pasta_inicial=os.path.expanduser("~"),
+                sufixos=(EXTENSAO_TRANSFERENCIA, ".zip"),
+                nome_para_salvar=_nome_arquivo_transferencia(
+                    prefixo="NavePro-Transferencia"))
+            if not escolhidos:
                 return
+            destino = escolhidos[0]
             incluir = tkinter.messagebox.askyesno(
                 "📤 Incluir as mídias dos anúncios?",
                 "Incluir imagens, PDFs, áudio e vídeo usados nos anúncios?\n\n"
