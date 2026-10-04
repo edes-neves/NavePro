@@ -1303,15 +1303,18 @@ def obter_temperatura(cidade: str, estado: str) -> str:
 
 class MonitorInfo:
     """Informações de um monitor detectado."""
-    def __init__(self, x: int, y: int, w: int, h: int, name: str = "Monitor") -> None:
+    def __init__(self, x: int, y: int, w: int, h: int, name: str = "Monitor",
+                 primary: bool = False) -> None:
         self.x = x
         self.y = y
         self.width = w
         self.height = h
         self.name = name
+        self.primary = primary
 
     def __repr__(self) -> str:
-        return f"Monitor({self.name}: {self.width}x{self.height} em ({self.x},{self.y}))"
+        return (f"Monitor({self.name}: {self.width}x{self.height} em ({self.x},{self.y})"
+                f"{' [primário]' if self.primary else ''})")
 
 
 # Cache global de monitores com TTL
@@ -1336,7 +1339,9 @@ def get_monitors_config() -> List[MonitorInfo]:
             monitors = _get_monitors()
             if monitors:
                 result = [
-                    MonitorInfo(m.x, m.y, m.width, m.height, m.name or f"Monitor {i+1}")
+                    MonitorInfo(m.x, m.y, m.width, m.height,
+                                m.name or f"Monitor {i+1}",
+                                primary=getattr(m, 'is_primary', False))
                     for i, m in enumerate(monitors)
                 ]
                 _MONITORS_CACHE = (time.time(), result)
@@ -1361,6 +1366,7 @@ def get_monitors_config() -> List[MonitorInfo]:
             for line in result.stdout.split('\n'):
                 if ' connected' in line and '+' in line:
                     parts = line.split()
+                    primary = ' primary' in line
                     for p in parts:
                         if 'x' in p and '+' in p:
                             size_pos = p.split('+')
@@ -1369,10 +1375,11 @@ def get_monitors_config() -> List[MonitorInfo]:
                                 x, y = int(size_pos[1]), int(size_pos[2])
                                 w, h = int(size[0]), int(size[1])
                                 connected.append(
-                                    MonitorInfo(x, y, w, h, parts[0])
+                                    MonitorInfo(x, y, w, h, parts[0], primary=primary)
                                 )
                             break
             if connected:
+                connected.sort(key=lambda m: (m.x, m.y))
                 _MONITORS_CACHE = (time.time(), connected)
                 print(f"✅ xrandr: {len(connected)} monitor(es) detectado(s)")
                 return connected
@@ -1391,8 +1398,9 @@ def get_monitors_config() -> List[MonitorInfo]:
             half = screen_width // 2
             result = [
                 MonitorInfo(0, 0, half, screen_height, "Monitor 1"),
-                MonitorInfo(half, 0, half, screen_height, "Monitor 2"),
+                MonitorInfo(half, 0, screen_width - half, screen_height, "Monitor 2"),
             ]
+            result.sort(key=lambda m: (m.x, m.y))
         else:
             result = [MonitorInfo(0, 0, screen_width, screen_height, "Monitor 1")]
         _MONITORS_CACHE = (time.time(), result)
@@ -1406,6 +1414,7 @@ def get_monitors_config() -> List[MonitorInfo]:
         MonitorInfo(0, 0, 1920, 1080, "Monitor 1"),
         MonitorInfo(1920, 0, 1920, 1080, "Monitor 2"),
     ]
+    result.sort(key=lambda m: (m.x, m.y))
     _MONITORS_CACHE = (time.time(), result)
     return result
 
@@ -1451,7 +1460,7 @@ class TelaoWindow:
     - Fontes calculadas proporcionalmente à altura da tela (uma vez)
     """
 
-    def __init__(self, monitor_index: int = 2) -> None:
+    def __init__(self, monitor_index: int = None) -> None:
         self.root = tk.Tk(className="NavePro")
         self.root.title("TELÃO")
         _normalizar_escala_tk(self.root)
@@ -1460,14 +1469,19 @@ class TelaoWindow:
         monitors = get_monitors_config()
         print(f"🖥️ Monitores detectados: {len(monitors)}")
         for i, m in enumerate(monitors):
-            print(f"   Monitor {i+1}: {m.width}x{m.height} em ({m.x},{m.y})")
+            prim = " [primário]" if getattr(m, 'primary', False) else ""
+            print(f"   Monitor {i+1}: {m.width}x{m.height} em ({m.x},{m.y}){prim}")
 
-        if len(monitors) >= monitor_index:
-            monitor = monitors[monitor_index - 1]
-        elif len(monitors) > 1:
-            monitor = monitors[1]
-        else:
-            monitor = monitors[0]
+        # TelaoWindow (relogio/telão) abre SEMPRE no monitor que NÃO é
+        # o primário, conforme definido pelo SO. Se houver apenas um
+        # monitor, usa-o. Se houver múltiplos, escolhe o primeiro não primário.
+        monitor = None
+        if len(monitors) > 1:
+            nao_prim = [m for m in monitors if not getattr(m, 'primary', False)]
+            if nao_prim:
+                monitor = nao_prim[0]
+        if monitor is None:
+            monitor = monitors[0] if monitors else None
 
         # Cache de geometria privada (evita acessos repetidos)
         self._monitor = monitor
@@ -4576,10 +4590,12 @@ class AppInterface:
         try:
             monitors = get_monitors_config()
             if monitors:
-                # Painel do operador abre SEMPRE no monitor 1 (o primeiro da
-                # lista), conforme o README. O telão usa a config "monitor"
-                # (padrão 2) em TelaoWindow/MediaPlayer.
-                m = monitors[0]
+                # Painel do operador abre SEMPRE no monitor marcado como
+                # PRIMÁRIO pelo sistema operacional. Se nenhum estiver
+                # marcado como primário, usa o primeiro monitor detectado.
+                m = next((mon for mon in monitors if getattr(mon, 'primary', False)), None)
+                if m is None:
+                    m = monitors[0]
                 # Salva geometria do monitor para restaurar depois
                 self._monitor_geo = (m.width, m.height, m.x, m.y)
                 self.root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
@@ -4594,6 +4610,7 @@ class AppInterface:
         self.tema: str = self.config_data.get("tema", "escuro")
         if self.tema not in ("escuro", "claro"):
             self.tema = "escuro"
+        # Monitor do telão é determinado pelo primário do SO (não primário)
         self.monitor_index: int = self.config_data.get("monitor", 2)
         self.player_cmd: str = self.config_data.get("player", PLAYER_PADRAO)
         self.placeholder_busca: str = "Buscar hino... [BD]"
