@@ -28,18 +28,35 @@ Desenvolvido para Ubuntu (Python 3 + Tkinter), empacotado como AppImage.
 O NavePro consulta o repositório **`edes-neves/NavePro`** no GitHub:
 
 1. Ao iniciar, ~20s depois (e também pelo menu **Ajuda ▸ Verificar atualizações…**), o app consulta `https://api.github.com/repos/edes-neves/NavePro/releases/latest` em segundo plano (sem travar a interface).
-2. Se a versão do release for **maior** que a instalada, mostra o aviso com as novidades e pergunta se deseja baixar.
-3. Ao confirmar, baixa o `.AppImage` do release para **`~/Downloads`** com barra de progresso.
-4. Ao terminar, mostra as instruções de instalação e abre a pasta Downloads:
+2. Se a versão do release for **maior** que a instalada, mostra o aviso com as novidades e pergunta se deseja atualizar.
 
-   ```
-   1. Feche o NavePro.
-   2. Substitua o AppImage atual pelo baixado (mova-o para o mesmo lugar do antigo).
-   3. Dê permissão de execução se precisar: chmod +x "<novo arquivo>"
-   4. Abra o novo arquivo para rodar a versão atualizada.
-   ```
+O **passo 3 depende de como o NavePro foi instalado** — o app se detecta sozinho
+(`FLATPAK_ID`/`/.flatpak-info` = Flatpak, `APPIMAGE` = AppImage, Windows = `.exe`):
 
+| Instalação | O que acontece ao confirmar |
+|---|---|
+| **Flatpak** | Roda `flatpak update --user` **no sistema** (via `flatpak-spawn --host`). Não baixa nada. |
+| **AppImage** | Baixa o novo `.AppImage` do release para **`~/Downloads`** com barra de progresso. |
+| **Windows** | Baixa o novo `.exe` para **`~/Downloads`** com barra de progresso. |
+| Código-fonte (Linux) | Baixa o `.AppImage` como cópia para usar à vontade (o aviso diz que não substitui nada). |
+
+Instalação Flatpak (a mais comum no Linux), depois de confirmar:
+
+1. Abre uma janela com a **saída do `flatpak update` em tempo real** (o comando exato fica no alto, para copiar se precisar).
+2. Ao final, avisa que deu certo e pede para **fechar e abrir o NavePro** de novo — o Flatpak só troca os arquivos na próxima execução.
+3. Se o comando falhar, a janela mostra o erro e o comando para rodar no terminal. Instalar no **sistema** (e não no usuário) faz o app pedir confirmação de administrador; nesse caso o próprio Flatpak explica.
+
+> Os dois comandos abaixo são o que o app executa:
+> ```bash
+> flatpak-spawn --host flatpak update --user --assumeyes io.github.edesneves.NavePro
+> # ou, manualmente, fora do app:
+> flatpak update --user --assumeyes io.github.edesneves.NavePro
+> ```
+> O `--assumeyes` é importante: sem ele o Flatpak pergunta "Prosseguir com estas alterações? [Y/n]" e, como o app roda sem terminal, a resposta seria **não** e nada seria atualizado.
+>
 > A opção **Verificar atualizações…** (menu Ajuda) mostra uma mensagem mesmo quando já está atualizado ou quando o GitHub está inacessível.
+>
+> Quem instalou pelo Flatpak e quer atualizar na mão pode usar `flatpak update --appstream` para renovar os metadados do remote antes (é o que faz o `flatpak info` mostrar a versão certa).
 
 ### Como publicar uma versão nova
 
@@ -280,6 +297,35 @@ repositório.
 
 ---
 
+## Testes
+
+As suítes ficam em `tests/` e rodam **sem tela e sem servidor** — quando precisam
+de interface, recriam um `Tk` falso e extraem do `NavePro.py` só o trecho que
+está sendo testado (via `ast`). Assim dá para testar no CI e em máquina sem X.
+
+```bash
+python3 tests/test_logica.py          # uma suíte
+for f in tests/test_*.py; do python3 "$f" || echo "FALHOU: $f"; done   # todas
+```
+
+| Suíte | O que cobre |
+|---|---|
+| `test_logica.py` | Regras de texto, versículos, mídia e banco |
+| `test_gui.py` | Widgets e callbacks da interface (Tk falso) |
+| `test_gui_reload.py` | Carga automática da Bíblia: debounce de 500 ms, timer cancelado ao fechar a janela, recarga ignorada com a janela morta |
+| `test_projecao.py` | Projeção de versículo e de hino no telão |
+| `test_projecao_faixa.py` | Faixa de versículos (`9-16`): começa no 9, encerra no 16, rótulo `faixa 9-16`, e as entradas inválidas (`abc`, `9-3`, `1-`, `0`, faixa inexistente) |
+| `test_indicador.py` | Indicador de progresso |
+| `test_seletor.py` | Seletor de arquivos do app (filtros e pastas ocultas) |
+| `test_imagens.py` | Imagens de fundo e transferência entre janelas |
+| `test_atualizacao.py` | Detecção de instalação (Flatpak/AppImage/Windows), escolha do asset e comando do `flatpak update` |
+
+> Um detalhe que já custou tempo: o `after()` do Tk devolve o id do timer como
+> **`str`**. Num Tk falso, guardar o timer sob chave `int` faz o `after_cancel`
+> silenciosamente não encontrar nada — o debounce parece quebrado quando não está.
+
+---
+
 ## Estrutura do projeto
 
 ```
@@ -299,6 +345,7 @@ NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista
 HASD/                 # Hinário (OpenLyrics XML)
 AppDir/               # Estrutura do AppImage (AppRun, .desktop, ícones)
 flatpak/              # Manifesto Flatpak + .desktop + metainfo + wrapper + repositório
+tests/                # Suítes de teste headless (ver "Testes")
 .github/workflows/    # CI/CD: build Flatpak multi-arquitetura (x86_64 + aarch64)
 img/                    # Ícones do app (Icon.png, Icon.xbm, Icon.ico…)
 .gitignore            # Arquivos locais/artefatos de build ignorados
@@ -324,6 +371,14 @@ img/                    # Ícones do app (Icon.png, Icon.xbm, Icon.ico…)
 ---
 
 ## Histórico recente
+
+### 2.1.1
+
+- **Atualização corrigida para quem instalou como Flatpak**: o NavePro detecta que está dentro do Flatpak e roda `flatpak update --user` no sistema, em vez de baixar um `.AppImage` que não funcionaria. Era o defeito mais relatado — o app oferecia "baixar novo AppImage" para quem já tinha o Flatpak instalado.
+- **Janela de atualização do Flatpak** mostra a saída do comando em tempo real (com o comando exato no alto), avisa para reiniciar o app ao final e, se falhar, mostra o comando para rodar no terminal em vez de sumir com o erro.
+- **Textos por tipo de instalação**: a pergunta, o rótulo do arquivo e as instruções de instalação dizem a coisa certa para Flatpak, AppImage, Windows ou execução a partir do código-fonte (nesse caso avisa que o AppImage baixado é só uma cópia).
+- **Bíblias extras no Flatpak**: o manifesto passa a copiar `AS21.xml` e `biblia-em-txt.txt` da pasta `Biblias/`, alinhado com o repositório.
+- **Suítes de testes no repositório** (pasta `tests/`, antes só existiam na máquina de desenvolvimento): 9 suítes headless, documentação de como rodar e o que cada uma cobre.
 
 ### 2.1.0
 

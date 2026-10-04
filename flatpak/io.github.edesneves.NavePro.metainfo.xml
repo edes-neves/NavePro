@@ -40,6 +40,17 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.1" date="2026-10-04">
+      <description>
+        <ul>
+          <li>Atualização automática corrigida para quem instalou como Flatpak: o NavePro agora roda "flatpak update" no sistema em vez de baixar um AppImage que não poderia usar</li>
+          <li>A janela de atualização mostra a saída do Flatpak em tempo real e orienta a reiniciar o app ao final; se o comando falhar, mostra o comando para rodar no terminal</li>
+          <li>Os textos da atualização e as instruções de instalação distinguem Flatpak, AppImage e Windows</li>
+          <li>Bíblias extras agora entram no Flatpak a partir da pasta Biblias/</li>
+          <li>Suítes de testes no repositório (pasta tests/): forma de rodar e o que cada uma cobre</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-10-04">
       <description>
         <ul>
