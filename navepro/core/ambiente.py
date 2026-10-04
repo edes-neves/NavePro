@@ -37,3 +37,28 @@ def _eh_windows() -> bool:
 def _eh_linux() -> bool:
     """True se estivermos rodando no Linux."""
     return sys.platform.startswith('linux')
+
+
+def _eh_flatpak() -> bool:
+    """True se o NavePro estiver rodando DENTRO de um Flatpak.
+
+    Detecta pelos dois sinais que o runtime do Flatpak define: a variável
+    FLATPAK_ID e o /.flatpak-info na raiz. Importante para a atualização
+    automática: quem está instalado como Flatpak se atualiza com
+    `flatpak update`, e não substituindo um AppImage baixado.
+    """
+    if os.environ.get('FLATPAK_ID'):
+        return True
+    try:
+        return os.path.exists('/.flatpak-info')
+    except OSError:
+        return False
+
+
+def _eh_appimage() -> bool:
+    """True se o NavePro estiver rodando a partir de um AppImage.
+
+    O AppImage define APPIMAGE com o caminho do próprio arquivo, além de
+    APPDIR/OWD (removidos em _ambiente_sem_appimage ao lançar filhos).
+    """
+    return bool(os.environ.get('APPIMAGE'))

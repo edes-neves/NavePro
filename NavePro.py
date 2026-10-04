@@ -48,6 +48,7 @@ from navepro.core.ambiente import (
     _ambiente_sem_appimage,
     _eh_windows,
     _eh_linux,
+    _eh_appimage,
 )
 from navepro.core.ssl_context import (
     _ssl_context,
@@ -71,6 +72,10 @@ from navepro.core.atualizacao import (
     _buscar_release_latest,
     _procurar_asset_instalador,
     _pasta_downloads,
+    _formato_instalado,
+    _rotulo_instalador,
+    _comando_atualizacao_flatpak,
+    FORMATO_FLATPAK,
 )
 from navepro.core.textos import (
     detectar_tipo_arquivo,
@@ -6364,34 +6369,125 @@ class AppInterface:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _oferecer_atualizacao(self, release: dict) -> None:
-        """Pergunta se o usuário quer baixar a versão nova e baixa."""
+        """Pergunta se o usuário quer atualizar e leva ao caminho certo.
+
+        Flatpak não baixa arquivo: a atualização é `flatpak update`. AppImage
+        e Windows continuam baixando o instalador para ~/Downloads.
+        """
         versao = str(release.get('tag_name', '')).lstrip('vV')
         corpo = str(release.get('body') or '').strip()
         if len(corpo) > 400:
             corpo = corpo[:400].rstrip() + '…'
-        sufixo = ".exe" if _eh_windows() else ".AppImage"
-        mensagem = (
+        formato = _formato_instalado()
+        rotulo = _rotulo_instalador(formato)
+        pergunta = (
             f"NavePro {APP_VERSION} → {versao}\n\n"
             "Uma nova versão está disponível no GitHub.\n"
         )
         if corpo:
-            mensagem += f"\nNovidades:\n{corpo}\n"
-        mensagem += f"\nDeseja baixar o novo {sufixo} agora?"
+            pergunta += f"\nNovidades:\n{corpo}\n"
+        if formato == FORMATO_FLATPAK:
+            pergunta += (
+                "\nO NavePro está instalado como Flatpak, então a "
+                "atualização será feita\npelo próprio Flatpak "
+                "(sem baixar arquivo).\n\n"
+                "Deseja atualizar agora?"
+            )
+        else:
+            pergunta += f"\nDeseja baixar o novo {rotulo} agora?"
         if not tkinter.messagebox.askyesno(
-                "🔄 Atualização disponível", mensagem, parent=self.root):
+                "🔄 Atualização disponível", pergunta, parent=self.root):
+            return
+        if formato == FORMATO_FLATPAK:
+            self._atualizar_como_flatpak(versao)
             return
         asset = _procurar_asset_instalador(release)
         if asset is None:
             tkinter.messagebox.showwarning(
                 "Atualização",
-                f"O release não contém um arquivo {sufixo}.",
+                f"O release não contém um arquivo {rotulo}.",
                 parent=self.root)
             return
         self._baixar_atualizacao(
             versao,
             str(asset.get('browser_download_url', '')),
-            str(asset.get('name', f'NavePro-{versao}{sufixo}')),
+            str(asset.get('name', f'NavePro-{versao}{rotulo}')),
         )
+
+    def _atualizar_como_flatpak(self, versao: str) -> None:
+        """Roda `flatpak update` no host e mostra o resultado."""
+        comando = _comando_atualizacao_flatpak()
+        texto_cmd = ' '.join(comando[2:])
+
+        janela = tk.Toplevel(self.root)
+        janela.title("⬇️ Atualizando via Flatpak")
+        janela.geometry("560x300")
+        janela.configure(bg='#0d1117')
+        janela.transient(self.root)
+        janela.grab_set()
+
+        saida = tk.Text(janela, height=9, font=("monospace", 9),
+                        bg='#161b22', fg='#c9d1d9', bd=0,
+                        highlightthickness=0, wrap='word')
+        saida.pack(fill='both', expand=True, padx=10, pady=10)
+        saida.insert('end', f"$ {texto_cmd}\n\n")
+        saida.configure(state='disabled')
+
+        def _escrever(linha: str) -> None:
+            saida.configure(state='normal')
+            saida.insert('end', linha)
+            saida.see('end')
+            saida.configure(state='disabled')
+
+        def _worker() -> None:
+            codigo = -1
+            try:
+                proc = subprocess.run(
+                    comando, capture_output=True, text=True,
+                    stdin=subprocess.DEVNULL, timeout=600,
+                    env=_ambiente_sem_appimage(), cwd='/',
+                )
+                codigo = proc.returncode
+                linhas = [l for l in
+                          ((proc.stdout or '') + (proc.stderr or '')).splitlines()
+                          if l.strip()]
+                if not linhas:
+                    linhas = ["(sem saída)"]
+                for linha in linhas:
+                    self.root.after(0, lambda l=linha: _escrever(l + "\n"))
+            except Exception as e:
+                codigo = -1
+                self.root.after(
+                    0, lambda: _escrever(f"Falha ao executar: {e}\n"))
+            finally:
+                self.root.after(0, lambda: _finalizar(codigo))
+
+        def _finalizar(codigo: int) -> None:
+            janela.grab_release()
+            janela.destroy()
+            if codigo == 0:
+                tkinter.messagebox.showinfo(
+                    "✅ Atualização concluída",
+                    f"O NavePro foi atualizado para a versão {versao}.\n\n"
+                    "Feche e abra o NavePro para usar a versão nova.",
+                    parent=self.root)
+            else:
+                tkinter.messagebox.showerror(
+                    "Não foi possível atualizar",
+                    "O comando do Flatpak falhou.\n\n"
+                    "Rode no terminal:\n\n"
+                    f"  {texto_cmd}\n\n"
+                    "Se pedir senha de administrador, o NavePro está "
+                    "instalado no sistema (não no seu usuário) e a "
+                    "atualização precisa ser feita por um administrador.",
+                    parent=self.root)
+
+        tk.Button(janela, text="Fechar", font=("Arial", 11, "bold"),
+                  bg='#21262d', fg='#c9d1d9', activebackground='#30363d',
+                  command=lambda: (janela.grab_release(), janela.destroy()),
+                  cursor='hand2').pack(pady=(0, 10))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _baixar_atualizacao(self, versao: str, url: str,
                             nome_arquivo: str) -> None:
@@ -6464,7 +6560,8 @@ class AppInterface:
 
     def _instrucoes_troca_instalador(self, destino: str) -> None:
         """Mostra como substituir o instalador antigo pelo baixado e abre Downloads."""
-        if _eh_windows():
+        rotulo = _rotulo_instalador()
+        if rotulo == ".exe":
             msg = (
                 "O novo executável foi salvo em:\n\n"
                 f"  {destino}\n\n"
@@ -6487,6 +6584,12 @@ class AppInterface:
                 "     chmod +x \"<novo arquivo>\"\n"
                 "4. Abra o novo arquivo para rodar a versão atualizada."
             )
+            if not _eh_appimage():
+                msg += (
+                    "\n\nObs.: você está rodando o NavePro a partir do "
+                    "código-fonte,\n então o AppImage baixado é só uma "
+                    "cópia para usar\n à vontade — não substitui nada."
+                )
         tkinter.messagebox.showinfo("✅ Download concluído", msg,
                                     parent=self.root)
         try:
