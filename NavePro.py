@@ -4351,6 +4351,104 @@ def _migrar_servicos_do_banco() -> bool:
 _SERVICO_PROXIMO_ITEM: dict = {}
 
 
+def _analisar_faixa_versiculos(texto: str) -> tuple:
+    """Interpreta o campo "Versículo" do editor de item da Ordem de Serviço.
+
+    Aceita três formas:
+      - vazio  → capítulo inteiro (v_ini/v_fim = None)
+      - "5"    → um versículo
+      - "1-7"  → faixa inclusiva (permite espaços: "1 - 7")
+
+    Retorna (ok, msg_erro, v_ini, v_fim).
+    """
+    bruto = (texto or "").strip()
+    if not bruto:
+        return (True, "", None, None)
+    if bruto.isdigit():
+        v = int(bruto)
+        if v < 1:
+            return (False, "O versículo deve ser maior que zero.", None, None)
+        return (True, "", v, v)
+    partes = [p.strip() for p in bruto.split("-")]
+    if len(partes) != 2 or not (partes[0].isdigit() and partes[1].isdigit()):
+        return (False,
+                "O versículo deve ser um número (\"5\"), uma faixa "
+                "(\"1-7\") ou vazio para o capítulo inteiro.",
+                None, None)
+    ini, fim = int(partes[0]), int(partes[1])
+    if ini < 1 or fim < 1:
+        return (False, "O versículo deve ser maior que zero.", None, None)
+    if ini > fim:
+        return (False,
+                f"A faixa está invertida: \"{ini}-{fim}\". "
+                "Escreva do menor para o maior (ex.: \"1-7\").",
+                None, None)
+    return (True, "", ini, fim)
+
+
+def _faixa_versiculo_item(item: Dict) -> str:
+    """Texto do campo "Versículo" de um item já salvo (ex.: "1-7").
+
+    Devolve "" quando o item não tem faixa guardada — ou seja, quando é um
+    versículo único ou o capítulo inteiro (que continuam em um slide só).
+    """
+    pares = item.get("versiculos")
+    if not isinstance(pares, list) or len(pares) < 2:
+        return ""
+    numeros = []
+    for par in pares:
+        if isinstance(par, (list, tuple)) and par:
+            try:
+                numeros.append(int(par[0]))
+            except (TypeError, ValueError):
+                continue
+    if len(numeros) < 2:
+        return ""
+    ini, fim = numeros[0], numeros[-1]
+    if ini == fim:
+        return str(ini)
+    return f"{ini}-{fim}"
+
+
+def _slides_versiculo_item(item: Dict) -> List[tuple]:
+    """Slides de projeção de um item do tipo "versiculo".
+
+    Item com faixa (campo "1-7") vira um slide por versículo, navegável com
+    ◀/▶ no telão. Item de versículo único ou de capítulo inteiro — inclusive
+    os já salvos por versões anteriores — continua em um slide só, com o
+    texto do snapshot, exatamente como antes.
+    """
+    letra = (item.get('letra_snapshot') or '').strip()
+    titulo = (item.get('titulo_custom') or '').strip()
+    pares = item.get("versiculos")
+    if isinstance(pares, list) and len(pares) > 1:
+        # O título gerado traz a faixa ("João 3:1-7"); cada slide mostra o
+        # versículo específico ("João 3:1"). Título digitado à mão pelo
+        # operador não tem faixa: mostramos o número entre parênteses.
+        faixa_titulo = re.match(r"^(.*?):\d+\s*-\s*\d+$", titulo)
+        slides = []
+        for par in pares:
+            if not isinstance(par, (list, tuple)) or len(par) < 2:
+                continue
+            try:
+                numero = int(par[0])
+            except (TypeError, ValueError):
+                continue
+            texto = (par[1] or "").strip()
+            if not texto:
+                continue
+            if faixa_titulo:
+                ref = f"{faixa_titulo.group(1)}:{numero}"
+            elif titulo:
+                ref = f"{titulo} ({numero})"
+            else:
+                ref = str(numero)
+            slides.append((texto, ref))
+        if slides:
+            return slides
+    return [(letra, titulo)]
+
+
 def _reordenar_itens_servico(itens: List[Dict], id_origem: int, id_destino: int) -> List[Dict]:
     """Move o item id_origem para a posição de id_destino, preservando o resto.
 
@@ -11726,11 +11824,11 @@ class AppInterface:
                                   bd=0, highlightthickness=0)
             entry_bcap.pack(side='left', padx=(4, 10), ipady=2)
             tk.Label(_linha_cap_vers, text="Versículo"
-                     " (opcional, vazio = capítulo inteiro):",
+                     " (ex.: 5, 1-7 ou vazio = capítulo inteiro):",
                      fg='#c9d1d9', bg='#0d1117',
                      font=("Arial", 10)).pack(side='left')
             entry_bvers = tk.Entry(_linha_cap_vers, textvariable=biblia_vers_var,
-                                   width=5, font=("Arial", 10), bg='#21262d',
+                                   width=10, font=("Arial", 10), bg='#21262d',
                                    fg='#f0c040', insertbackground='#f0c040',
                                    bd=0, highlightthickness=0)
             entry_bvers.pack(side='left', padx=(4, 8), ipady=2)
@@ -11870,12 +11968,22 @@ class AppInterface:
                         biblia_versao_var.set(_rv_ed[0]["versao"])
                         biblia_livro_var.set(_rv_ed[0]["livro"])
                         biblia_cap_var.set(str(_rv_ed[0]["capitulo"]))
-                        biblia_vers_var.set(str(_rv_ed[0]["versiculo"]))
+                        # Item com faixa salva (ex.: "1-7") mostra a faixa
+                        # inteira no campo; os demais mostram o versículo só.
+                        biblia_vers_var.set(_faixa_versiculo_item(item_edit)
+                                            or str(_rv_ed[0]["versiculo"]))
 
             def _resolver_referencia_biblia():
                 """Resolve a referência do painel bíblico.
 
-                Retorna (ok, msg_erro, letra_snap, ref_display, ref_id).
+                O campo "Versículo" aceita um número ("5"), uma faixa
+                ("1-7") ou vazio (capítulo inteiro).
+
+                Retorna (ok, msg_erro, letra_snap, ref_display, ref_id,
+                versiculos). `versiculos` é a lista de [numero, texto] da
+                faixa, que faz o item ser projetado um versículo por slide;
+                fica vazia no versículo único e no capítulo inteiro, que
+                continuam projetando em um slide só (como antes).
                 """
                 versao = biblia_versao_var.get().strip()
                 livro = biblia_livro_var.get().strip()
@@ -11884,15 +11992,12 @@ class AppInterface:
                 if not (versao and livro and cap.isdigit()):
                     return (False,
                             "Selecione a versão, o livro e informe o capítulo.",
-                            "", "", None)
+                            "", "", None, [])
                 cap = int(cap)
-                if vers and not vers.isdigit():
-                    return (False,
-                            "O versículo deve ser um número (ou vazio"
-                            " = capítulo inteiro).", "", "", None)
-                if vers:
-                    v_ini = v_fim = int(vers)
-                else:
+                ok_faixa, msg_faixa, v_ini, v_fim = _analisar_faixa_versiculos(vers)
+                if not ok_faixa:
+                    return (False, msg_faixa, "", "", None, [])
+                if v_ini is None:
                     v_ini, v_fim = 1, 9999
                 rows = db_query(
                     "SELECT * FROM versiculos WHERE versao = ? AND livro = ? "
@@ -11903,16 +12008,26 @@ class AppInterface:
                     return (False,
                             "Nenhum versículo encontrado para "
                             f"{livro} {cap}:{vers or '*'} ({versao}).",
-                            "", "", None)
-                if vers:
+                            "", "", None, [])
+                # Um versículo só (ou faixa de um número): comportamento antigo.
+                if v_ini == v_fim:
                     r = rows[0]
                     return (True, "",
                             f"{livro} {cap}:{vers}\n\n{r['texto']}",
-                            f"{livro} {cap}:{vers}", r["id"])
+                            f"{livro} {cap}:{vers}", r["id"], [])
+                # Capítulo inteiro: um slide só, como sempre foi.
+                if v_ini == 1 and v_fim == 9999:
+                    partes = [f"{r['versiculo']}. {r['texto']}" for r in rows]
+                    return (True, "",
+                            f"{livro} {cap}\n\n" + "\n\n".join(partes),
+                            f"{livro} {cap}", rows[0]["id"], [])
+                # Faixa ("1-7"): um versículo por slide na projeção.
+                faixa_ref = f"{livro} {cap}:{v_ini}-{v_fim}"
                 partes = [f"{r['versiculo']}. {r['texto']}" for r in rows]
                 return (True, "",
-                        f"{livro} {cap}\n\n" + "\n\n".join(partes),
-                        f"{livro} {cap}", rows[0]["id"])
+                        f"{faixa_ref}\n\n" + "\n\n".join(partes),
+                        faixa_ref, rows[0]["id"],
+                        [[r['versiculo'], r['texto']] for r in rows])
 
             def _preview_biblia():
                 res = _resolver_referencia_biblia()
@@ -12134,6 +12249,7 @@ class AppInterface:
                 # já é usado como termo de busca (hino/mídia por número ou nome).
                 ref_id = None
                 letra_snap = ""
+                vers_salvos = []
                 _usou_titulo_como_busca = (not termo)
                 if not termo:
                     termo = titulo
@@ -12217,7 +12333,7 @@ class AppInterface:
                         tkinter.messagebox.showwarning("Bíblia", res[1],
                                                        parent=janela)
                         return
-                    _, _, letra_snap, ref_display, ref_id = res
+                    _, _, letra_snap, ref_display, ref_id, vers_salvos = res
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_display
                 elif termo.isdigit():
@@ -12241,6 +12357,7 @@ class AppInterface:
                         return
                     original = dict(itens[idx])
                     itens[idx] = dict(original)
+                    itens[idx].pop("versiculos", None)
                     itens[idx].update({
                         "tipo": tipo,
                         "referencia_id": ref_id,
@@ -12249,12 +12366,17 @@ class AppInterface:
                         "caminho_arquivo": caminho_arquivo,
                         "duracao_estimada_segundos": duracao,
                     })
+                    # Faixa de versículos: guarda os pares [número, texto] para
+                    # a projeção mostrar um versículo por slide. Sem faixa,
+                    # a chave é removida e o item volta a um slide só.
+                    if vers_salvos:
+                        itens[idx]["versiculos"] = vers_salvos
                     novo_id = item_id
                 else:
                     novo_id = dados["_proximo_id_item"]
                     dados["_proximo_id_item"] = novo_id + 1
                     original = None
-                    itens.append({
+                    novo_item = {
                         "id": novo_id,
                         "tipo": tipo,
                         "referencia_id": ref_id,
@@ -12262,7 +12384,10 @@ class AppInterface:
                         "letra_snapshot": letra_snap,
                         "caminho_arquivo": caminho_arquivo,
                         "duracao_estimada_segundos": duracao,
-                    })
+                    }
+                    if vers_salvos:
+                        novo_item["versiculos"] = vers_salvos
+                    itens.append(novo_item)
                 if not _salvar_servicos_json(dados):
                     if original is not None:
                         itens[idx] = original
@@ -12496,8 +12621,11 @@ class AppInterface:
                     if tipo == 'versiculo' and letra:
                         # Projeta como slide persistente (igual janela Bíblia):
                         # fica no telão até o operador parar (Esc/fechar).
+                        # Item com faixa (ex.: "1-7") sai um versículo por
+                        # slide, navegável com ◀/▶; versículo único e
+                        # capítulo inteiro seguem em um slide só.
                         self.player.telao.projetar_slides(
-                            [(letra, titulo_item or '')], indice_inicial=0)
+                            _slides_versiculo_item(item), indice_inicial=0)
                     else:
                         texto = letra or titulo_item
                         if texto:
