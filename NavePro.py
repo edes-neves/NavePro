@@ -10657,11 +10657,11 @@ class AppInterface:
                              insertbackground='#f0c040', bd=0, highlightthickness=0)
         entry_cap.pack(side='left', padx=2, ipady=2)
 
-        # Versículo (opcional, vazio = capítulo inteiro)
+        # Versículo (número = deste até o fim, "1-7" = faixa, vazio = capítulo)
         tk.Label(ref_frame, text="V:", fg='#c9d1d9', bg='#161b22',
                  font=("Arial", 10)).pack(side='left', padx=(5, 2))
         vers_var = tk.StringVar(value="16")
-        entry_vers = tk.Entry(ref_frame, textvariable=vers_var, width=4,
+        entry_vers = tk.Entry(ref_frame, textvariable=vers_var, width=7,
                               font=("Arial", 11), bg='#21262d', fg='#f0c040',
                               insertbackground='#f0c040', bd=0, highlightthickness=0)
         entry_vers.pack(side='left', padx=2, ipady=2)
@@ -10730,9 +10730,11 @@ class AppInterface:
             Mesmo efeito de buscar e clicar em "📺 Projetar", mas projetando
             exatamente o que a busca retornou ("Livro cap:vers. — texto").
             """
+            nonlocal _proj_faixa
             rows = _buscar_versiculos_texto()
             if rows:
                 _cap_numeros[:] = []
+                _proj_faixa = None
                 slides = [
                     (r['texto'], f"{r['livro']} {r['capitulo']}:{r['versiculo']}")
                     for r in rows]
@@ -10742,8 +10744,28 @@ class AppInterface:
 
         entry_busca_texto.bind("<Return>", lambda e: _buscar_e_projetar_biblia())
 
+        def _janela_viva() -> bool:
+            """True se a janela da Bíblia ainda existe (não foi fechada)."""
+            try:
+                return bool(janela.winfo_exists())
+            except tk.TclError:
+                return False
+
+        def _escrever_na_biblia(texto: str) -> None:
+            """Substitui o conteúdo da área de texto por `texto`."""
+            biblia_text.config(state='normal')
+            biblia_text.delete('1.0', tk.END)
+            biblia_text.tag_remove('verso_atual', '1.0', tk.END)
+            biblia_text.insert(tk.END, texto)
+            biblia_text.config(state='disabled')
+
         def _carregar_capitulo(foco: Optional[int] = None):
-            """Carrega o capítulo atual na área de texto.
+            """Carrega a referência atual (versão/livro/cap/V:) na área de texto.
+
+            O campo "V:" define o trecho carregado:
+              - vazio ou "1"  → o capítulo inteiro
+              - "7"            → do versículo 7 até o fim do capítulo
+              - "1-7"          → somente os versículos de 1 a 7
 
             Se `foco` for informado, exibe o capítulo inteiro e destaca o
             versículo correspondente (usado para sincronizar a janela com a
@@ -10759,10 +10781,22 @@ class AppInterface:
 
             if foco is not None:
                 v_ini, v_fim = 1, 9999
-            elif vers and vers.isdigit():
-                v_ini = v_fim = int(vers)
             else:
-                v_ini, v_fim = 1, 9999
+                ok, msg_erro, ini, fim = _analisar_faixa_versiculos(vers)
+                if not ok:
+                    _escrever_na_biblia(
+                        f"{msg_erro}\n\n"
+                        "O campo \"V:\" aceita um número (\"7\"), uma faixa "
+                        "(\"1-7\") ou fica vazio para o capítulo inteiro.")
+                    return
+                if ini is None:
+                    v_ini, v_fim = 1, 9999
+                elif "-" in vers:
+                    # Faixa explícita: respeita o fim digitado (16-16 = só o 16).
+                    v_ini, v_fim = ini, fim
+                else:
+                    # Número único é o ponto de partida: vai até o fim.
+                    v_ini, v_fim = ini, 9999
 
             rows = db_query(
                 "SELECT * FROM versiculos WHERE versao = ? AND livro = ? "
@@ -10770,15 +10804,15 @@ class AppInterface:
                 "ORDER BY versiculo",
                 (versao, livro, cap, v_ini, v_fim))
 
-            biblia_text.config(state='normal')
-            biblia_text.delete('1.0', tk.END)
-            biblia_text.tag_remove('verso_atual', '1.0', tk.END)
-            try:
-                biblia_text.tag_configure('verso_atual', background='#6e40c9',
-                                          foreground='#ffffff')
-            except tk.TclError:
-                pass
             if rows:
+                biblia_text.config(state='normal')
+                biblia_text.delete('1.0', tk.END)
+                biblia_text.tag_remove('verso_atual', '1.0', tk.END)
+                try:
+                    biblia_text.tag_configure('verso_atual', background='#6e40c9',
+                                              foreground='#ffffff')
+                except tk.TclError:
+                    pass
                 for r in rows:
                     biblia_text.insert(tk.END, f"{r['versiculo']}. {r['texto']}\n")
                     if foco is not None and r['versiculo'] == foco:
@@ -10787,13 +10821,58 @@ class AppInterface:
                         biblia_text.tag_add('verso_atual', f"{linha}.0",
                                             f"{linha}.0 lineend")
                         biblia_text.see(f"{linha}.0")
+                biblia_text.config(state='disabled')
             else:
-                biblia_text.insert(tk.END,
+                _escrever_na_biblia(
                     f"Nenhum versículo encontrado para {livro} {cap}:{vers or '*'} "
                     f"({versao}).\n\n"
                     "Dica: use o botão '📥 Importar Bíblia (XML/TXT/JSON)'\n"
                     "para importar uma Bíblia.")
-            biblia_text.config(state='disabled')
+
+        # ── Carga automática da referência ──
+        # Versão, livro, capítulo e versículo já carregam o trecho 500 ms
+        # após a última alteração, dispensando o botão "Carregar". As escritas
+        # feitas pelo próprio app NÃO devem disparar recarga: o "V:" que a
+        # sincronização com o telão grava a cada versículo projetado e a
+        # versão escolhida pela importação de Bíblia. Por isso o bloqueio
+        # _travado_recarga.
+        _travado_recarga = False
+        _id_recarga: Optional[str] = None
+
+        def _cancelar_recarga() -> None:
+            """Cancela a recarga agendada (chamado antes de agendar outra)."""
+            nonlocal _id_recarga
+            if _id_recarga is not None:
+                try:
+                    janela.after_cancel(_id_recarga)
+                except tk.TclError:
+                    pass
+                _id_recarga = None
+
+        def _recarga_agendada() -> None:
+            nonlocal _id_recarga
+            _id_recarga = None
+            if _janela_viva():
+                _carregar_capitulo()
+
+        def _agendar_recarga() -> None:
+            nonlocal _id_recarga
+            if _travado_recarga:
+                return
+            _cancelar_recarga()
+            _id_recarga = janela.after(500, _recarga_agendada)
+
+        def _ao_alterar_referencia(*_args) -> None:
+            _agendar_recarga()
+
+        for _var_ref in (versao_var, livro_var, cap_var, vers_var):
+            _var_ref.trace_add('write', _ao_alterar_referencia)
+
+        def _ao_destruir_janela(event) -> None:
+            if event.widget is janela:
+                _cancelar_recarga()
+
+        janela.bind("<Destroy>", _ao_destruir_janela)
 
         # ── Importação de Bíblia (XML / TXT) ──
         def _sem_acentos(texto: str) -> str:
@@ -11102,6 +11181,7 @@ class AppInterface:
 
         def _importar_biblia(caminhos: tuple) -> None:
             """Importa uma ou mais Bíblias (XML/TXT/JSON) para a tabela versiculos."""
+            nonlocal _travado_recarga
             total_inseridos = 0
             total_pulados = 0
             erros = 0
@@ -11180,7 +11260,13 @@ class AppInterface:
             if novas_versoes:
                 combo_versao.config(values=novas_versoes)
             if versoes_importadas:
-                versao_var.set(versoes_importadas[0])
+                # A escolha da versão não recarrega sozinha: a carga é feita
+                # na linha seguinte, uma única vez.
+                _travado_recarga = True
+                try:
+                    versao_var.set(versoes_importadas[0])
+                finally:
+                    _travado_recarga = False
                 _carregar_capitulo()
 
         def _importar_biblia_dialog() -> None:
@@ -11195,10 +11281,6 @@ class AppInterface:
         btn_frame = tk.Frame(main, bg='#0d1117')
         btn_frame.pack(fill='x', pady=5)
 
-        tk.Button(btn_frame, text="📖 Carregar", font=("Arial", 11, "bold"),
-                  bg='#238636', fg='white', activebackground='#2ea043',
-                  command=_carregar_capitulo, cursor='hand2', padx=12, pady=4
-                  ).pack(side='left', padx=3)
         tk.Button(btn_frame, text="🔍 Buscar Texto", font=("Arial", 11, "bold"),
                   bg='#1f6feb', fg='white', activebackground='#388bfd',
                   command=_buscar_versiculos_texto, cursor='hand2', padx=12, pady=4
@@ -11218,13 +11300,20 @@ class AppInterface:
                   ).pack(side='right', padx=3)
 
         def _projetar_versiculo():
-            """Projeta o capítulo aberto como versículos no telão.
+            """Projeta os versículos da referência aberta no telão.
 
-            A projeção inicia pelo versículo indicado no campo "V:"
-            (padrão: versículo 1). O administrador navega entre versículos
-            com as setas do teclado ou do painel; Esc encerra e volta o
-            relógio + temperatura ao telão.
+            O campo "V:" define o que é projetado, com a mesma regra usada
+            no carregamento da janela:
+              - vazio    → o capítulo inteiro, começando no versículo 1
+              - "7"      → do versículo 7 até o fim do capítulo
+              - "9-16"   → somente os versículos de 9 a 16
+
+            O administrador navega entre versículos com as setas do teclado,
+            do painel ou do controle remoto. Ao passar do último versículo da
+            faixa, a projeção se encerra como a tecla Esc e o telão volta a
+            mostrar o relógio + temperatura.
             """
+            nonlocal _proj_faixa
             versao = versao_var.get()
             livro = livro_var.get()
             cap_t = cap_var.get().strip()
@@ -11241,13 +11330,34 @@ class AppInterface:
                     parent=janela)
                 return
             vers_t = vers_var.get().strip()
-            vers_ini = int(vers_t) if vers_t.isdigit() else 1
+            ok, msg_erro, ini, fim = _analisar_faixa_versiculos(vers_t)
+            if not ok:
+                tkinter.messagebox.showwarning("Projeção", msg_erro, parent=janela)
+                return
+            if ini is None:
+                ini = 1
+            # Faixa explícita ("9-16"): projeta só os versículos pedidos,
+            # senão mantém o capítulo inteiro começando no versículo inicial.
+            if "-" in vers_t:
+                rows = [r for r in rows if ini <= r['versiculo'] <= fim]
+                if not rows:
+                    tkinter.messagebox.showwarning(
+                        "Projeção",
+                        f"Nenhum versículo encontrado para {livro} "
+                        f"{cap}:{ini}-{fim} ({versao}).", parent=janela)
+                    return
+
             numeros = [r['versiculo'] for r in rows]
             _cap_numeros[:] = numeros
+            _proj_faixa = (ini, fim) if "-" in vers_t else None
             slides = [(r['texto'], f"{livro} {cap}:{r['versiculo']}") for r in rows]
-            inicio = numeros.index(vers_ini) if vers_ini in numeros else 0
+            inicio = numeros.index(ini) if ini in numeros else 0
             self.player.telao.projetar_slides(slides, indice_inicial=inicio)
-            _carregar_capitulo(foco=vers_ini)
+            # A janela segue mostrando o trecho pedido (a carga automática já
+            # trouxe "9-16"); se o versículo inicial não estiver visível, o
+            # foco de sincronismo recarrega o capítulo e destaca ele.
+            if not _destacar_versiculo_na_tela(numeros[inicio]):
+                _carregar_capitulo(foco=numeros[inicio])
             _atualizar_indicador_slide()
 
         # ── Painel de controle da projeção (versículos) ──
@@ -11292,6 +11402,9 @@ class AppInterface:
         label_slide.pack(side='right', padx=10)
 
         _cap_numeros = []
+        # Faixa projetada ("9-16") quando a projeção não cobre o capítulo
+        # inteiro; None quando é o capítulo inteiro ou uma busca por texto.
+        _proj_faixa: Optional[tuple] = None
 
         def _atualizar_indicador_slide():
             try:
@@ -11307,9 +11420,11 @@ class AppInterface:
                     num = f"Versículo {_cap_numeros[idx]}"
                 else:
                     num = f"Versículo {idx + 1}"
-                label_slide.config(
-                    text=f"{num} de {len(telao._slides)}",
-                    fg='#3fb950', bg='#161b22')
+                # Numa faixa "9-16" o total de slides (8) não é o total do
+                # capítulo, então o rótulo mostra a faixa em vez de "de 8".
+                rotulo = (f"{num} · faixa {_proj_faixa[0]}-{_proj_faixa[1]}"
+                          if _proj_faixa else f"{num} de {len(telao._slides)}")
+                label_slide.config(text=rotulo, fg='#3fb950', bg='#161b22')
             elif getattr(telao, "mostrando_letra", False):
                 label_slide.config(text="Projeção ativa", fg='#f0c040', bg='#161b22')
             else:
@@ -11337,6 +11452,7 @@ class AppInterface:
             Atualiza o campo "V:", destaca o versículo na área de texto e
             rola a visualização até ele, mantendo as duas telas em sincronia.
             """
+            nonlocal _travado_recarga
             telao = self.player.telao
             if not getattr(telao, "_em_slides", False) or not telao._slides:
                 return
@@ -11345,9 +11461,33 @@ class AppInterface:
                 num = _cap_numeros[idx]
             else:
                 num = idx + 1
-            vers_var.set(str(num))
+            # O "V:" é reescrito a cada versículo projetado; a recarga
+            # automática fica desligada aqui para não substituir o capítulo
+            # inteiro (e o destaque) a cada navegação das setas.
+            _travado_recarga = True
+            try:
+                vers_var.set(str(num))
+            finally:
+                _travado_recarga = False
             if not _destacar_versiculo_na_tela(num):
                 _carregar_capitulo(foco=num)
+            _atualizar_indicador_slide()
+
+        def _refletir_telao_na_janela() -> None:
+            """Atualiza a janela da Bíblia depois de navegar um slide.
+
+            Enquanto há projeção, sincroniza o campo "V:", o destaque e o
+            indicador. Ao passar do último versículo, o telão já encerrou a
+            projeção (como a tecla Esc) e a janela limpa o destaque e volta
+            para "Sem projeção".
+            """
+            if getattr(self.player.telao, "_em_slides", False):
+                _sincronizar_biblia_com_telao()
+                return
+            try:
+                biblia_text.tag_remove('verso_atual', '1.0', tk.END)
+            except tk.TclError:
+                pass
             _atualizar_indicador_slide()
 
         def _slide_anterior(event: object = None):
@@ -11355,7 +11495,7 @@ class AppInterface:
             if not getattr(telao, "_em_slides", False):
                 return None
             if telao.slide_anterior():
-                _sincronizar_biblia_com_telao()
+                _refletir_telao_na_janela()
             return "break"
 
         def _slide_proximo(event: object = None):
@@ -11363,7 +11503,7 @@ class AppInterface:
             if not getattr(telao, "_em_slides", False):
                 return None
             if telao.slide_proximo():
-                _sincronizar_biblia_com_telao()
+                _refletir_telao_na_janela()
             return "break"
 
         def _parar_projecao(event: object = None):
@@ -11446,11 +11586,11 @@ class AppInterface:
             keysym = str(getattr(event, 'keysym', '') or '').lower()
             if keysym in ('next', 'page_next', 'page_down', 'space', 'f5'):
                 if telao.slide_proximo():
-                    _sincronizar_biblia_com_telao()
+                    _refletir_telao_na_janela()
                 return "break"
             if keysym in ('prior', 'page_prior', 'page_up', 'backspace'):
                 if telao.slide_anterior():
-                    _sincronizar_biblia_com_telao()
+                    _refletir_telao_na_janela()
                 return "break"
             return None
 
@@ -11459,7 +11599,7 @@ class AppInterface:
         for _seq in ("<Next>", "<Prior>", "<F5>", "<BackSpace>"):
             self.root.bind(_seq, _navegar_passador_biblia)
 
-        # Carrega João 3:16 como padrão
+        # Abre com João 3 a partir do versículo 16 (campo "V:" = 16)
         _carregar_capitulo()
 
     # ────────────────────────────────────────────────────────────────────
