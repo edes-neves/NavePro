@@ -292,8 +292,9 @@ LICENSE               # GPLv3
 requirements.txt      # Dependências (runtime + pyinstaller)
 build.sh              # Gera o AppImage (PyInstaller + appimagetool)
 Gerar.AppImage        # Passo a passo (resumo) para empacotar o AppImage
-AS21.xml              # Bíblia Almeida Século 21 (XML Zefania)
-biblia-em-txt.txt     # Bíblia Almeida Revista e Corrigida (TXT)
+Biblias/               # Bíbblias para importar (XML do Zefania e TXT): AS21, ARC, ACF, ARA…
+  AS21.xml            #   Bíblia Almeida Século 21 (XML Zefania)
+  biblia-em-txt.txt   #   Bíblia Almeida Revista e Corrigida (TXT)
 NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista
 HASD/                 # Hinário (OpenLyrics XML)
 AppDir/               # Estrutura do AppImage (AppRun, .desktop, ícones)

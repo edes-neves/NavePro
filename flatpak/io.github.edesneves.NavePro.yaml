@@ -129,9 +129,9 @@ modules:
       - type: file
         path: ../NavePro.py
       - type: file
-        path: ../AS21.xml
+        path: ../Biblias/AS21.xml
       - type: file
-        path: ../biblia-em-txt.txt
+        path: ../Biblias/biblia-em-txt.txt
       - type: file
         path: ../img/Icon.png
         dest: img
