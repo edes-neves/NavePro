@@ -40,6 +40,17 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.0" date="2026-10-04">
+      <description>
+        <ul>
+          <li>Bíblia da Ordem de Serviço carrega sozinha 500 ms após trocar versão, livro ou capítulo (o botão Carregar saiu da janela)</li>
+          <li>Campo "V:" aceita faixa de versículos (ex.: 9-16, inclusiva) ou um número (dele até o fim); vazio ou 1 continua o capítulo inteiro</li>
+          <li>Projeção da faixa começa no primeiro versículo, encerra sozinha no último e mostra o indicador "faixa 9-16" no painel</li>
+          <li>Janela do operador sempre abre no monitor 1 do sistema</li>
+          <li>Salvar transferência, importar transferência e escolher imagem de fundo passam a usar o seletor do próprio app: sem pastas ocultas e sem piscar do diálogo do sistema</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-09-27">
       <description>
         <ul>

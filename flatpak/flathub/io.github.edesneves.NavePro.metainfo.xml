@@ -18,8 +18,10 @@
     <ul>
       <li>Hinos com CRUD, importação XML/TXT (OpenLyrics) e projeção por slides</li>
       <li>Bíblia com importação XML (Zefania), TXT e JSON (4 formatos)</li>
-      <li>Anúncios com importação TXT/PDF</li>
-      <li>Ordem de Serviço e Gerenciador de Mídia</li>
+      <li>Anúncios com importação TXT/PDF e editor de imagem + texto</li>
+      <li>Redimensionamento ao vivo da imagem e da fonte no telão</li>
+      <li>Ordem de Serviço (JSON) e Gerenciador de Mídia</li>
+      <li>Tema claro/escuro no painel do administrador</li>
       <li>Atualização automática via GitHub Releases</li>
     </ul>
   </description>
@@ -33,6 +35,100 @@
     </screenshot>
   </screenshots>
   <releases>
+    <!-- Cada <release> declarado aqui vira a versão que o flatpak mostra
+         (`flatpak info`/`remote-ls`) e o que ele compara em
+         `flatpak update`. Releases esquecidos aqui fazem o flatpak
+         considerar a build nova "igual" à instalada e recusar a
+         atualização. -->
+    <release version="2.1.0" date="2026-10-04">
+      <description>
+        <ul>
+          <li>Bíblia da Ordem de Serviço carrega sozinha 500 ms após trocar versão, livro ou capítulo (o botão Carregar saiu da janela)</li>
+          <li>Campo "V:" aceita faixa de versículos (ex.: 9-16, inclusiva) ou um número (dele até o fim); vazio ou 1 continua o capítulo inteiro</li>
+          <li>Projeção da faixa começa no primeiro versículo, encerra sozinha no último e mostra o indicador "faixa 9-16" no painel</li>
+          <li>Janela do operador sempre abre no monitor 1 do sistema</li>
+          <li>Salvar transferência, importar transferência e escolher imagem de fundo passam a usar o seletor do próprio app: sem pastas ocultas e sem piscar do diálogo do sistema</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.0.0" date="2026-09-27">
+      <description>
+        <ul>
+          <li>Ordem de Serviço: item do tipo Sermão aceita arquivo PDF, aberto no visualizador do sistema em tela cheia</li>
+          <li>Item escolhido na lista vale uma única vez: o botão Executar Serviço começa nele e depois avança item a item</li>
+          <li>Janela de edição de item não salta de posição ao trocar o tipo do item</li>
+          <li>Excluir Item na barra de botões e pelo botão direito na lista de itens</li>
+          <li>Passador de slides (controle remoto) nos slides projetados: AvPag/RetPag, espaço, F5 e BackSpace</li>
+          <li>Flatpak: metainfo com todas as releases, para o flatpak mostrar a versão certa e permitir "flatpak update"</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.9.9" date="2026-09-24">
+      <description>
+        <ul>
+          <li>Passador de slides (controle remoto) nos slides projetados: AvPag/RetPag, espaço, F5 e BackSpace</li>
+          <li>Contagem regressiva reinicia sem precisar reiniciar o aplicativo</li>
+          <li>Nome e frase da contagem limpos quando o campo fica vazio</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.9.8" date="2026-09-24">
+      <description>
+        <ul>
+          <li>Cronômetro e contagem regressiva também no telão, nos menus e por contato por e-mail</li>
+          <li>Painel do operador abre sempre no monitor 1</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.9.7" date="2026-09-20">
+      <description>
+        <ul>
+          <li>Telão fechado é recuperado ao continuar a projeção</li>
+          <li>Escala da imagem do anúncio persistida entre sessões</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.9.6" date="2026-09-18">
+      <description>
+        <ul>
+          <li>Reuso de ID de serviço, duplo-clique, copiar e correção da seleção na lista de mídias</li>
+          <li>Escala da imagem do anúncio ajustada ao vivo e salva</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.9.5" date="2026-09-16">
+      <description>
+        <ul>
+          <li>Ordem de Serviço: busca por nº/nome, edição de item, anúncios e execução item a item</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.9.4" date="2026-09-15">
+      <description>
+        <ul>
+          <li>NavePro compatível com Windows: player (mpv com fallback), atualização (.exe), ícone, fontes e detecção de monitores</li>
+          <li>Flatpak: manifesto sem config.json/midia.db e CI no container oficial com emulação aarch64</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.9.3" date="2026-09-11">
+      <description>
+        <ul>
+          <li>Anúncios no banco de dados, com editor de imagem + texto</li>
+          <li>Tema claro/escuro no painel do administrador</li>
+          <li>Documentação atualizada</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.9.2" date="2026-09-10">
+      <description>
+        <ul>
+          <li>Relógio no telão com cores, tamanhos e espaçamento configuráveis</li>
+          <li>Referência bíblica (livro capítulo:versículo) no canto do telão</li>
+          <li>Atualização automática via GitHub Releases</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.9.1" date="2026-09-09">
       <description>
         <ul>

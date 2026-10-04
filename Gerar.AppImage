@@ -20,15 +20,15 @@ o `publicar.sh` o atualiza (sed) antes de chamar o `build.sh`, mantendo o
 binário sempre com a mesma versão do release no GitHub:
 
 ```bash
-PYTHON_BIN=.venv/bin/python ./build.sh 1.9.0        # gera NavePro-1.9.0.AppImage
-./NavePro-1.9.0.AppImage                            # testar
+PYTHON_BIN=.venv/bin/python ./build.sh 2.1.0        # gera NavePro-2.1.0.AppImage
+./NavePro-2.1.0.AppImage                           # testar
 ```
 
-> Para publicar uma versão nova, prefira `./publicar.sh 1.9.0`: ele grava o
+> Para publicar uma versão nova, prefira `./publicar.sh 2.1.0`: ele grava o
 > `APP_VERSION` em `navepro/config.py`, roda o `build.sh` e cria o release.
 
-A versão também pode vir de `VERSION=1.9.0 ./build.sh` ou do tag git
-mais próximo (`./build.sh`, ex.: `v1.9.0` → 1.9.0).
+A versão também pode vir de `VERSION=2.1.0 ./build.sh` ou do tag git
+mais próximo (`./build.sh`, ex.: `v2.1.0` → 2.1.0).
 
 > ⚠️ **Sempre passe a mesma versão do release que vai criar.** Se o nº do
 > release no GitHub for maior que o `APP_VERSION` gravado no binário,
@@ -66,27 +66,27 @@ mais próximo (`./build.sh`, ex.: `v1.9.0` → 1.9.0).
 3. **Gerar o AppImage**:
 
    ```bash
-   rm -f NavePro-1.9.0.AppImage
-   ARCH=x86_64 appimagetool AppDir NavePro-1.9.0.AppImage
+   rm -f NavePro-2.1.0.AppImage
+   ARCH=x86_64 appimagetool AppDir NavePro-2.1.0.AppImage
    ```
    Use `ARCH=$(uname -m)` se a máquina não for x86_64.
 
 4. **Testar**:
 
    ```bash
-   chmod +x NavePro-1.9.0.AppImage
-   ./NavePro-1.9.0.AppImage
+   chmod +x NavePro-2.1.0.AppImage
+   ./NavePro-2.1.0.AppImage
    ```
 
 ## Para publicar uma versão nova no GitHub (Release)
 
 ```bash
-./publicar.sh 1.9.0     # grava APP_VERSION em navepro/config.py, gera o AppImage,
+./publicar.sh 2.1.0     # grava APP_VERSION em navepro/config.py, gera o AppImage,
                         # faz commit/tag/push e cria o release com o binário anexado
 ```
 
-O app em execução detecta o `v1.9.0`, avisa o usuário e baixa
-`NavePro-1.9.0.AppImage` para `~/Downloads`.
+O app em execução detecta o `v2.1.0`, avisa o usuário e baixa
+`NavePro-2.1.0.AppImage` para `~/Downloads`.
 
 ## Observações
 

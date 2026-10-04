@@ -13,8 +13,9 @@ Desenvolvido para Ubuntu (Python 3 + Tkinter), empacotado como AppImage.
 | **Projeção** | Exibe letras, versículos e mídias no monitor 2 (telão), com configuração de fonte, cor e tamanho. |
 | **📖 Hinos / Letras** | CRUD de hinos (artista, CCLI, categoria, letra completa), importação XML/TXT, busca, projeção com navegação por slides. |
 | **📢 Anúncios** | CRUD na tabela `anuncios` do SQLite (com migração automática do `anuncios.json` legado), importação de **TXT/PDF/vídeo/áudio/imagem** (mídias copiadas para `~/.navepro/uploads`) e projeção com **editor de imagem + texto**. |
-| **✝️ Bíblia** | Importação de bíblias em XML/TXT/JSON, seleção de versão/livro/capítulo/versículo, busca por texto e projeção sincronizada com o telão. |
+| **✝️ Bíblia** | Importação de bíblias em XML/TXT/JSON, seleção de versão/livro/capítulo/versículo com **carga automática**, busca por texto e projeção sincronizada com o telão (um versículo por slide, com opção de faixa). |
 | **📋 Ordem de Serviço** | Montagem de roteiros de culto com itens (hinos, mídias), com letras em snapshot e tempo estimado; salva em `~/.navepro/servicos.json` (migração automática do banco legado). |
+| **🔄 Transferir** | Exporta/importa anúncios e ordens de serviço num arquivo `.navepro` para levar a outro computador (Flatpak incluído). |
 | **🎨 Tema claro/escuro** | Painel do administrador (monitor 1) alterna entre tema claro e escuro — menu **Visualizar** ou atalho **Ctrl+T**; o telão não é afetado. |
 | **📦 Gerenciar Banco de Mídia** | Organização das mídias utilizadas nas apresentações. |
 | **🎨 Projeção (config)** | Mesmo diálogo de ajustes de aparência usado por Hinos e Bíblia. |
@@ -45,23 +46,23 @@ O NavePro consulta o repositório **`edes-neves/NavePro`** no GitHub:
 1. **Publique com a versão** — o `publicar.sh` grava o `APP_VERSION` em `navepro/config.py`, chama o `./build.sh <versão>` (gera o `NavePro-<versão>.AppImage` já nomeado com a versão) e faz commit, tag, push e release:
 
    ```bash
-   ./publicar.sh 1.9.1              # grava APP_VERSION, gera o AppImage e publica o release
-   ./NavePro-1.9.1.AppImage         # teste
+   ./publicar.sh 2.1.0              # grava APP_VERSION, gera o AppImage e publica o release
+   ./NavePro-2.1.0.AppImage         # teste
    ```
 
    Se quiser **apenas gerar** o AppImage (sem publicar), rode o `build.sh` diretamente:
 
    ```bash
-   ./build.sh 1.9.1                 # gera NavePro-1.9.1.AppImage usando a versão passada
-   ./NavePro-1.9.1.AppImage         # teste
+   ./build.sh 2.1.0                 # gera NavePro-2.1.0.AppImage usando a versão passada
+   ./NavePro-2.1.0.AppImage         # teste
    ```
 
-   > ⚠️ **Não pule a versão**: se criar um release `v1.9.1` com um AppImage ainda em `1.9.0`, o binário se achará desatualizado e oferecerá "atualizar" baixando a si mesmo. O `./publicar.sh <versão>` previne isso (grava e confere o `APP_VERSION` em `navepro/config.py`).
+   > ⚠️ **Não pule a versão**: se criar um release `v2.1.0` com um AppImage ainda em `2.0.0`, o binário se achará desatualizado e oferecerá "atualizar" baixando a si mesmo. O `./publicar.sh <versão>` previne isso (grava e confere o `APP_VERSION` em `navepro/config.py`).
 
-2. Se preferir publicar **manualmente** (o `publicar.sh` já faz tudo): commite as mudanças, crie um **tag** na versão (ex.: `v1.9.0`) e crie o release no GitHub anexando o AppImage:
+2. Se preferir publicar **manualmente** (o `publicar.sh` já faz tudo): commite as mudanças, crie um **tag** na versão (ex.: `v2.1.0`) e crie o release no GitHub anexando o AppImage:
 
    ```bash
-   gh release create v1.9.1 NavePro-1.9.1-AMD.AppImage --title "NavePro 1.9.1" --notes "O que mudou nesta versão..."
+   gh release create v2.1.0 NavePro-2.1.0.AppImage --title "NavePro 2.1.0" --notes "O que mudou nesta versão..."
    ```
 
 O app considera o `tag_name` do release mais recente como a versão a oferecer; o primeiro asset `*.AppImage` é o que será baixado.
@@ -88,9 +89,16 @@ O número exibido na primeira coluna é o **ID** interno. O número real do hin�
 
 - **Versão padrão**: ao abrir, seleciona **"Almeida Revista e Corrigida"** se ela existir no banco (senão, a primeira versão disponível). A lista de versões é lida do banco (`DISTINCT versao`).
 - **Importar Bíblia** (`📥`): o botão abre um **seletor no home do usuário**, sem pastas ocultas (`.`) e com apenas `*.xml` / `*.txt` / `*.json`.
-- **Navegação**: Livro + Cap + Versículo (V vazio = capítulo inteiro) + botão **Ir**.
+- **Navegação**: Livro + Cap + Versículo (campo **V:**) + botão **Ir**.
+- **Carga automática**: ao trocar versão, livro ou capítulo, o texto é recarregado sozinho (500 ms após a última mudança) — não há botão "Carregar". Se o texto não mudar (ex.: a mesma referência de novo), use **Ir**.
+- **Campo "V:"** — o que projetar:
+  - **vazio** ou **`1`** → capítulo inteiro;
+  - **`16`** → do versículo 16 **até o fim** do capítulo;
+  - **`9-16`** → faixa **inclusiva** (9 a 16).
+
+  Quando o texto não couber na janela, o campo mostra a faixa válida (`9 a 16`).
 - **Busca por texto** (`Buscar versículo por texto...`): LIKE no texto da versão selecionada.
-- **📺 Projetar** (controle de projeção 🎬): exibe o capítulo na janela com o versículo atual **destacado** (fundo roxo `#6e40c9`) e projeta cada versículo no telão.
+- **📺 Projetar** (controle de projeção 🎬): exibe o capítulo na janela com o versículo atual **destacado** (fundo roxo `#6e40c9`) e projeta cada versículo no telão. Se o campo "V:" define uma faixa, a projeção **começa no início da faixa** e **termina sozinha** no último versículo (o botão ⏹ passa a ser "⏹ Encerrar"). Enquanto uma faixa parcial está projetada, o painel 🎬 mostra o indicador `faixa 9-16`.
 - **Sincronização Monitor 1 ↔ Monitor 2**: ao navegar (botões ◀ ▶ **ou** setas do teclado) o versículo avança **junto** no telão e na janela — o campo "V:" acompanha, o destaque se move e a tela rola até o versículo. **⏹ / Esc** encerra e limpa o destaque.
 
 ### Formatos aceitos na importação de Bíblia
@@ -162,6 +170,14 @@ Particularidades tratadas:
 - Configurações antigas (formato 320×250, sem posição) são **migradas automaticamente**: a imagem é redimensionada e reposicionada à direita, centralizada verticalmente.
 - A projeção compõe a imagem + texto na proporção do telão, mantendo exatamente a posição ajustada no editor.
 
+### 🔄 Transferir anúncios e Ordem de Serviço
+
+O botão **🔄 Transferir** existe na janela de **Anúncios** e na de **Ordem de Serviço** e usa o mesmo seletor de arquivos do app:
+
+- **Transferir…** grava um arquivo `.navepro` (o campo **Nome do arquivo** já vem preenchido com `NavePro-Transferencia-<data>.navepro`). Navegue até a pasta de destino, ajuste o nome e clique em **💾 Salvar**. Se já existir um arquivo com esse nome, o NavePro pergunta antes de sobrescrever; se o nome digitado for uma **pasta**, ele **entra** na pasta em vez de salvar.
+- **Importar…** lê o `.navepro` (ou um `.zip`) e pergunta se quer incluir as mídias — arquivos que não existirem mais no outro PC são avisados e ignorados.
+- O seletor **não mostra pastas/arquivos ocultos** (`.`) e **não pisca** ao abrir: é o mesmo diálogo do app, não o do sistema.
+
 ---
 
 ## Banco de dados
@@ -211,7 +227,7 @@ idênticas em qualquer lugar. Use `build.sh` (reproduz o passo a passo do
 `Gerar.AppImage`) com um python de Tk 8.6:
 
 ```bash
-./build.sh 1.9.1       # usa o python com Tk 8.6; PYTHON_BIN=.venv/bin/python ./build.sh
+./build.sh 2.1.0       # usa o python com Tk 8.6; PYTHON_BIN=.venv/bin/python ./build.sh
 ```
 
 Ou, manualmente:
@@ -220,8 +236,8 @@ Ou, manualmente:
     --name NavePro --hidden-import "PIL._tkinter_finder" \
     --add-data "img/Icon.xbm:img/" --add-data "img/Icon.png:img/" NavePro.py   # gera dist/NavePro
 cp dist/NavePro AppDir/usr/bin/NavePro && chmod +x AppDir/usr/bin/NavePro
-ARCH=x86_64 appimagetool AppDir NavePro-1.9.1-AMD.AppImage
-./NavePro-1.9.1-AMD.AppImage
+ARCH=x86_64 appimagetool AppDir NavePro-2.1.0.AppImage
+./NavePro-2.1.0.AppImage
 ```
 
 > **Por que PyInstaller?** O AppRun antigo usava o `python3` do sistema
@@ -308,6 +324,16 @@ img/                    # Ícones do app (Icon.png, Icon.xbm, Icon.ico…)
 
 ## Histórico recente
 
+### 2.1.0
+
+- **Bíblia carrega sozinha**: trocar versão, livro ou capítulo recarrega o texto em 500 ms (o botão **📖 Carregar** saiu da janela).
+- **Faixa de versículos** no campo **V:** — `9-16` projeta só a faixa (inclusiva) e um número (`16`) projeta desse versículo até o fim; vazio/`1` continua sendo o capítulo inteiro.
+- **Projeção acompanha a faixa**: começa no primeiro versículo da faixa, **encerra sozinha** no último (o ⏹ vira "⏹ Encerrar") e o painel 🎬 mostra o indicador `faixa 9-16`.
+- **Janela do operador sempre no monitor 1** do sistema (antes podia abrir no telão).
+- **Seletor de arquivos do app em todo lugar**: salvar transferência, importar transferência e escolher imagem de fundo não usam mais o diálogo do sistema — sem pastas ocultas (`.`) e sem piscar ao abrir.
+
+### 2.0.0 e anteriores
+
 - **Anúncios no banco de dados**: tabela `anuncios` no SQLite, com migração automática do `anuncios.json` legado e reaproveitamento de IDs livres.
 - **Ordem de Serviço em `servicos.json`**: migração automática do banco legado; IDs de hinos/versículos referenciados ficam preservados da reutilização.
 - **Editor de anúncio unificado (imagem + texto)**: pré-visualização em espaço virtual 1440×1080, mover/redimensionar a imagem sobre o texto, migração de configurações antigas.
@@ -323,4 +349,4 @@ img/                    # Ícones do app (Icon.png, Icon.xbm, Icon.ico…)
 - **Placeholder** real no campo de busca de hinos.
 - **Exclusão física** de hinos (remove o ID do banco).
 - Versão padrão da Bíblia = **Almeida Revista e Corrigida**; remoção da versão `nvi` não utilizada.
-- **Seletor de arquivos do usuário** para Importar Bíblia e Importar Hinos: abre no home, esconde pastas/arquivos ocultos (`.*`) e filtra extensões.
+- **Seletor de arquivos do usuário** para Importar Bíblia e Importar Hinos: abre no home, esconde pastas/arquivos ocultos (`.*`) e filtra extensões. (Desde 2.1.0 é usado também para salvar transferência e escolher imagem de fundo.)
