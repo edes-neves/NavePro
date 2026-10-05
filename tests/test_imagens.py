@@ -1,4 +1,4 @@
-import ast, os, sys, textwrap, types
+import ast, atexit, os, sys, textwrap, types
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -8,8 +8,10 @@ src = open(ARQ).read()
 raiz_ast = ast.parse(src)
 nos = {n.name: n for n in ast.walk(raiz_ast) if isinstance(n, ast.FunctionDef)}
 
+sys.path.insert(0, _AQUI)
 sys.path.insert(0, RAIZ)
 from navepro.config import SUFIXOS_IMAGEM
+from fixture_arvore import criar_arvore, limpar_arvore
 
 falhas = []
 def check(n, cond, extra=''):
@@ -20,7 +22,8 @@ def check(n, cond, extra=''):
 ns = {'List': list, 'Tuple': tuple}
 exec(compile(textwrap.dedent(ast.get_source_segment(src, nos['_listar_pastas_arquivos_usuario'])),
              '<l>', 'exec'), ns)
-RAIZ = '/tmp/opencode/arvore'
+RAIZ = criar_arvore()
+atexit.register(limpar_arvore, RAIZ)
 nomes = [n for _, n, _ in ns['_listar_pastas_arquivos_usuario'](RAIZ, tuple(sorted(SUFIXOS_IMAGEM)))]
 check('arquivos listados são só imagens',
       {n for n in nomes if not os.path.isdir(os.path.join(RAIZ, n))}

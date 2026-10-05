@@ -1,11 +1,13 @@
-import ast, os, sys, types
+import ast, atexit, os, sys, types
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
+sys.path.insert(0, _AQUI)
 sys.path.insert(0, RAIZ)
 ARQ = os.path.join(RAIZ, 'NavePro.py')
 src = open(ARQ).read()
 nos = {n.name: n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)}
+from fixture_arvore import criar_arvore, limpar_arvore
 
 class TclError(Exception): pass
 REG, AVISOS, CONFIRMA, RESPOSTAS = {}, [], [], []
@@ -63,7 +65,8 @@ ns = {'tk': tk, 'tkinter': tkinter, 'Optional': __import__('typing').Optional,
 exec(compile(ast.get_source_segment(src, nos['_listar_pastas_arquivos_usuario']), '<l>', 'exec'), ns)
 exec(compile(ast.get_source_segment(src, nos['_escolher_arquivos_usuario']), '<s>', 'exec'), ns)
 escolher, listar = ns['_escolher_arquivos_usuario'], ns['_listar_pastas_arquivos_usuario']
-RAIZ = os.path.abspath('/tmp/opencode/arvore')
+RAIZ = criar_arvore()
+atexit.register(limpar_arvore, RAIZ)
 
 falhas = []
 def check(n, cond, extra=''):
