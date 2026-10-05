@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.edesneves.NavePro</id>
+  <id>io.github.edes_neves.NavePro</id>
   <name>NavePro</name>
   <summary>Sistema de projeção multimídia para igreja</summary>
   <metadata_license>CC0-1.0</metadata_license>
@@ -25,7 +25,7 @@
       <li>Atualização automática via GitHub Releases</li>
     </ul>
   </description>
-  <launchable type="desktop-id">io.github.edesneves.NavePro.desktop</launchable>
+  <launchable type="desktop-id">io.github.edes_neves.NavePro.desktop</launchable>
   <url type="homepage">https://github.com/edes-neves/NavePro</url>
   <url type="bugtracker">https://github.com/edes-neves/NavePro/issues</url>
   <screenshots>

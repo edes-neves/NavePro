@@ -31,7 +31,7 @@ class Cenario:
         for k in self._env:
             os.environ.pop(k, None)
         if self.fp:
-            os.environ['FLATPAK_ID'] = 'io.github.edesneves.NavePro'
+            os.environ['FLATPAK_ID'] = 'io.github.edes_neves.NavePro'
         if self.am:
             os.environ['APPIMAGE'] = '/home/x/NavePro-2.1.0.AppImage'
         # at.* importa as funções de ambiente, então as duas cópias
@@ -118,11 +118,11 @@ with Cenario(flatpak=True):
     check('--assumeyes presente (senão o prompt responderia "n")',
           '--assumeyes' in cmd, str(cmd))
     check('aponta para o app em execução',
-          cmd[-1] == 'io.github.edesneves.NavePro', str(cmd))
+          cmd[-1] == 'io.github.edes_neves.NavePro', str(cmd))
 with Cenario():
     cmd = at._comando_atualizacao_flatpak()
     check('sem FLATPAK_ID cai no ID canônico',
-          cmd[-1] == 'io.github.edesneves.NavePro', str(cmd))
+          cmd[-1] == 'io.github.edes_neves.NavePro', str(cmd))
 
 print('\n' + ('TODOS OS CASOS PASSARAM' if not falhas else f'FALHAS: {falhas}'))
 sys.exit(1 if falhas else 0)

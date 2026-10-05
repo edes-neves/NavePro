@@ -1,4 +1,4 @@
-app-id: io.github.edesneves.NavePro
+app-id: io.github.edes_neves.NavePro
 runtime: org.freedesktop.Platform
 runtime-version: '24.08'
 sdk: org.freedesktop.Sdk
@@ -87,9 +87,9 @@ modules:
       - cp -r navepro img /app/lib/navepro/
       # Sem icones/: os botões usam emojis coloridos (runtime traz NotoColorEmoji).
       - cp -r NHA HASD /app/lib/navepro/
-      - install -Dm644 io.github.edesneves.NavePro.desktop -t /app/share/applications/
-      - install -Dm644 io.github.edesneves.NavePro.metainfo.xml -t /app/share/metainfo/
-      - install -Dm644 img/Icon.png /app/share/icons/hicolor/256x256/apps/io.github.edesneves.NavePro.png
+      - install -Dm644 io.github.edes_neves.NavePro.desktop -t /app/share/applications/
+      - install -Dm644 io.github.edes_neves.NavePro.metainfo.xml -t /app/share/metainfo/
+      - install -Dm644 img/Icon.png /app/share/icons/hicolor/256x256/apps/io.github.edes_neves.NavePro.png
     sources:
       - type: file
         path: navepro.sh
@@ -100,6 +100,6 @@ modules:
         # Atualize a tag ao lançar nova versão:
         tag: v1.9.3
       - type: file
-        path: io.github.edesneves.NavePro.desktop
+        path: io.github.edes_neves.NavePro.desktop
       - type: file
-        path: io.github.edesneves.NavePro.metainfo.xml
+        path: io.github.edes_neves.NavePro.metainfo.xml

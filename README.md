@@ -48,9 +48,9 @@ Instalação Flatpak (a mais comum no Linux), depois de confirmar:
 
 > Os dois comandos abaixo são o que o app executa:
 > ```bash
-> flatpak-spawn --host flatpak update --user --assumeyes io.github.edesneves.NavePro
+> flatpak-spawn --host flatpak update --user --assumeyes io.github.edes_neves.NavePro
 > # ou, manualmente, fora do app:
-> flatpak update --user --assumeyes io.github.edesneves.NavePro
+> flatpak update --user --assumeyes io.github.edes_neves.NavePro
 > ```
 > O `--assumeyes` é importante: sem ele o Flatpak pergunta "Prosseguir com estas alterações? [Y/n]" e, como o app roda sem terminal, a resposta seria **não** e nada seria atualizado.
 >
@@ -279,7 +279,7 @@ sudo apt install flatpak-builder
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 
-./build-flatpak.sh              # gera io.github.edesneves.NavePro.<arch>.flatpak
+./build-flatpak.sh              # gera io.github.edes_neves.NavePro.<arch>.flatpak
 ./build-flatpak.sh --install    # instala no usuário atual
 ```
 
@@ -289,7 +289,7 @@ A workflow `.github/workflows/flatpak.yml` gera bundles para `x86_64` e
 usa QEMU para cross-compile em aarch64.
 
 **Publicar no Flathub:**
-O manifesto `flatpak/io.github.edesneves.NavePro.yaml` está pronto para
+O manifesto `flatpak/io.github.edes_neves.NavePro.yaml` está pronto para
 submissão. O Flathub compila automaticamente para **x86_64**, **aarch64** e
 **riscv64** — sem infraestrutura extra. Para submeter, crie um pull request
 em [flathub/flathub](https://github.com/flathub/flathub) apontando para este
