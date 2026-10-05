@@ -26,7 +26,7 @@ SEGUNDOS_PARA_VERIFICAR_ATUALIZACAO: int = 20
 
 # App ID do Flatpak. Só é usado como reserva: em execução o ID real vem
 # da variável FLATPAK_ID que o runtime do Flatpak define.
-APP_ID_FLATPAK: str = "io.github.edes-neves.NavePro"
+APP_ID_FLATPAK: str = "io.github.edesneves.NavePro"
 
 EXTENSOES_VIDEO: frozenset = frozenset({'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm'})
 EXTENSOES_AUDIO: frozenset = frozenset({'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'})

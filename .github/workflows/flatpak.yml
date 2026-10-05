@@ -43,7 +43,7 @@ jobs:
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           arch: ${{ matrix.arch }}
-          manifest-path: flatpak/io.github.edes-neves.NavePro.yaml
+          manifest-path: flatpak/io.github.edesneves.NavePro.yaml
           cache: true
           cache-key: flatpak-${{ matrix.arch }}
           build-bundle: true
@@ -79,7 +79,7 @@ jobs:
 
   # Publica o repositório Flatpak auto-hospedado (https://edes-neves.github.io/NavePro/)
   # em cada release: constrói x86_64 e adiciona o commit ao ostree publicado no gh-pages.
-  # Usuários atualizam com: flatpak update --user io.github.edes-neves.NavePro
+  # Usuários atualizam com: flatpak update --user io.github.edesneves.NavePro
   publish-repo:
     name: Publicar repositório Flatpak (gh-pages)
     if: startsWith(github.ref, 'refs/tags/')
@@ -108,7 +108,7 @@ jobs:
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           arch: x86_64
-          manifest-path: flatpak/io.github.edes-neves.NavePro.yaml
+          manifest-path: flatpak/io.github.edesneves.NavePro.yaml
           repo-dir: pages
           build-bundle: false
           upload-artifact: false
