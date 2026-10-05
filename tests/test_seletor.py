@@ -5,7 +5,7 @@ RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, _AQUI)
 sys.path.insert(0, RAIZ)
 ARQ = os.path.join(RAIZ, 'NavePro.py')
-src = open(ARQ).read()
+src = open(ARQ, encoding='utf-8').read()
 nos = {n.name: n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)}
 from fixture_arvore import criar_arvore, limpar_arvore
 

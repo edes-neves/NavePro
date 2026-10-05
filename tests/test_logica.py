@@ -3,7 +3,7 @@ import ast, os, sqlite3, tkinter, sys
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
-src = open(os.path.join(RAIZ, 'NavePro.py')).read()
+src = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
 tree = ast.parse(src)
 
 def achar(nome, classe=None):

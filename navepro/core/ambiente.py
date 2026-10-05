@@ -39,6 +39,50 @@ def _eh_linux() -> bool:
     return sys.platform.startswith('linux')
 
 
+def _tornar_dpi_aware() -> bool:
+    """Torna o processo DPI-aware no Windows. Deve ser chamado ANTES de
+    qualquer tk.Tk(), porque o Tk 8.6 não é DPI-aware e não se auto-corrige.
+
+    Sem isto, o Tk reporta a tela em pixels LÓGICOS (a resolução virtualizada
+    pelo Windows quando há escala de 125%/150%), enquanto o screeninfo — que
+    chama SetProcessDpiAwareness(2) na primeira enumeração — passa a reportar
+    pixels FÍSICOS. Os dois passam a falar unidades diferentes e o
+    geometry("WxH+X+Y") do telão aponta para fora da tela; o Windows então
+    puxa a janela de volta para o monitor primário. Sintoma: painel e telão
+    abertos no mesmo monitor, e o telão não cobre a segunda tela.
+
+    Em Linux e macOS é no-op: ambos já entregam coordenadas físicas ao Tk.
+    """
+    if not _eh_windows():
+        return False
+    try:
+        import ctypes
+    except ImportError:
+        return False
+
+    # Windows 10 1703+: "per monitor v2", o melhor comportamento para
+    # telas com escalas diferentes. Precisa vir antes dos demais porque,
+    # depois de definido, o contexto não pode ser rebaixado.
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)
+        return True
+    except (AttributeError, OSError):
+        pass
+    # Windows 8.1+.
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return True
+    except (AttributeError, OSError):
+        pass
+    # Vista+ (DPI awareness "system-wide", sem suporte a DPI por monitor).
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+        return True
+    except (AttributeError, OSError):
+        pass
+    return False
+
+
 def _eh_flatpak() -> bool:
     """True se o NavePro estiver rodando DENTRO de um Flatpak.
 

@@ -2,7 +2,8 @@
 
 Aplicativo desktop (Python/Tkinter) para **projeção multimídia em dois monitores**: o monitor principal (1) controla tudo e o segundo monitor (2) exibe o **telão** (letras de hinos, Bíblia, mídias) em tela cheia para a congregação.
 
-Desenvolvido para Ubuntu (Python 3 + Tkinter), empacotado como AppImage.
+Desenvolvido para **Windows** (Python 3 + Tkinter), distribuído como um
+`NavePro.exe` portátil (PyInstaller).
 
 ---
 
@@ -15,11 +16,11 @@ Desenvolvido para Ubuntu (Python 3 + Tkinter), empacotado como AppImage.
 | **📢 Anúncios** | CRUD na tabela `anuncios` do SQLite (com migração automática do `anuncios.json` legado), importação de **TXT/PDF/vídeo/áudio/imagem** (mídias copiadas para `~/.navepro/uploads`) e projeção com **editor de imagem + texto**. |
 | **✝️ Bíblia** | Importação de bíblias em XML/TXT/JSON, seleção de versão/livro/capítulo/versículo com **carga automática**, busca por texto e projeção sincronizada com o telão (um versículo por slide, com opção de faixa). |
 | **📋 Ordem de Serviço** | Montagem de roteiros de culto com itens (hinos, mídias), com letras em snapshot e tempo estimado; salva em `~/.navepro/servicos.json` (migração automática do banco legado). |
-| **🔄 Transferir** | Exporta/importa anúncios e ordens de serviço num arquivo `.navepro` para levar a outro computador (Flatpak incluído). |
+| **🔄 Transferir** | Exporta/importa anúncios e ordens de serviço num arquivo `.navepro` para levar a outro computador. |
 | **🎨 Tema claro/escuro** | Painel do administrador (monitor 1) alterna entre tema claro e escuro — menu **Visualizar** ou atalho **Ctrl+T**; o telão não é afetado. |
 | **📦 Gerenciar Banco de Mídia** | Organização das mídias utilizadas nas apresentações. |
 | **🎨 Projeção (config)** | Mesmo diálogo de ajustes de aparência usado por Hinos e Bíblia. |
-| **🔄 Atualização automática** | Verifica versões novas no GitHub (Releases) e baixa o novo AppImage para `~/Downloads` com instruções de instalação. |
+| **🔄 Atualização automática** | Verifica versões novas no GitHub (Releases) e baixa o novo `NavePro.exe` para `~/Downloads` com instruções de instalação. |
 
 ---
 
@@ -31,58 +32,41 @@ O NavePro consulta o repositório **`edes-neves/NavePro`** no GitHub:
 2. Se a versão do release for **maior** que a instalada, mostra o aviso com as novidades e pergunta se deseja atualizar.
 
 O **passo 3 depende de como o NavePro foi instalado** — o app se detecta sozinho
-(`FLATPAK_ID`/`/.flatpak-info` = Flatpak, `APPIMAGE` = AppImage, Windows = `.exe`):
+(`.exe` do PyInstaller = Windows; a partir do código-fonte = outro caminho):
 
 | Instalação | O que acontece ao confirmar |
 |---|---|
-| **Flatpak** | Roda `flatpak update --user` **no sistema** (via `flatpak-spawn --host`). Não baixa nada. |
-| **AppImage** | Baixa o novo `.AppImage` do release para **`~/Downloads`** com barra de progresso. |
-| **Windows** | Baixa o novo `.exe` para **`~/Downloads`** com barra de progresso. |
-| Código-fonte (Linux) | Baixa o `.AppImage` como cópia para usar à vontade (o aviso diz que não substitui nada). |
+| **Windows** | Baixa o novo `.exe` do release para **`~/Downloads`** com barra de progresso. |
+| Código-fonte (python NavePro.py) | Baixa o `.exe` como cópia para usar à vontade (o aviso diz que não substitui nada). |
 
-Instalação Flatpak (a mais comum no Linux), depois de confirmar:
+Para instalar: feche o NavePro, abra o `.exe` baixado e substitua o antigo. Como
+o NavePro.exe é portátil, não há instalador nem registro — o `.exe` pode ir
+para qualquer pasta (os dados do usuário ficam em `%USERPROFILE%\.navepro`).
 
-1. Abre uma janela com a **saída do `flatpak update` em tempo real** (o comando exato fica no alto, para copiar se precisar).
-2. Ao final, avisa que deu certo e pede para **fechar e abrir o NavePro** de novo — o Flatpak só troca os arquivos na próxima execução.
-3. Se o comando falhar, a janela mostra o erro e o comando para rodar no terminal. Instalar no **sistema** (e não no usuário) faz o app pedir confirmação de administrador; nesse caso o próprio Flatpak explica.
-
-> Os dois comandos abaixo são o que o app executa:
-> ```bash
-> flatpak-spawn --host flatpak update --user --assumeyes io.github.edes_neves.NavePro
-> # ou, manualmente, fora do app:
-> flatpak update --user --assumeyes io.github.edes_neves.NavePro
-> ```
-> O `--assumeyes` é importante: sem ele o Flatpak pergunta "Prosseguir com estas alterações? [Y/n]" e, como o app roda sem terminal, a resposta seria **não** e nada seria atualizado.
->
-> A opção **Verificar atualizações…** (menu Ajuda) mostra uma mensagem mesmo quando já está atualizado ou quando o GitHub está inacessível.
->
-> Quem instalou pelo Flatpak e quer atualizar na mão pode usar `flatpak update --appstream` para renovar os metadados do remote antes (é o que faz o `flatpak info` mostrar a versão certa).
+> A opção **Verificar atualizações…** (menu Ajuda) mostra uma mensagem mesmo
+> quando já está atualizado ou quando o GitHub está inacessível.
 
 ### Como publicar uma versão nova
 
-1. **Publique com a versão** — o `publicar.sh` grava o `APP_VERSION` em `navepro/config.py`, chama o `./build.sh <versão>` (gera o `NavePro-<versão>.AppImage` já nomeado com a versão) e faz commit, tag, push e release:
+1. Grave a versão em `navepro/config.py` (`APP_VERSION`) — é o que o app exibe
+   e compara. Não pule a versão: um release `v2.2.0` com binário em `2.1.1` faz
+   o app oferecer "atualizar" baixando a si mesmo.
 
-   ```bash
-   ./publicar.sh 2.1.0              # grava APP_VERSION, gera o AppImage e publica o release
-   ./NavePro-2.1.0.AppImage         # teste
+2. Gere o `.exe` (no Windows — o PyInstaller não faz cross-compile):
+
+   ```bat
+   build-windows.bat
+   dist\NavePro.exe                   # teste
    ```
 
-   Se quiser **apenas gerar** o AppImage (sem publicar), rode o `build.sh` diretamente:
+3. Publique o release, anexando o `.exe`:
 
-   ```bash
-   ./build.sh 2.1.0                 # gera NavePro-2.1.0.AppImage usando a versão passada
-   ./NavePro-2.1.0.AppImage         # teste
+   ```bat
+   gh release create v2.2.0 dist\NavePro.exe --title "NavePro 2.2.0" --notes "O que mudou nesta versão..."
    ```
 
-   > ⚠️ **Não pule a versão**: se criar um release `v2.1.0` com um AppImage ainda em `2.0.0`, o binário se achará desatualizado e oferecerá "atualizar" baixando a si mesmo. O `./publicar.sh <versão>` previne isso (grava e confere o `APP_VERSION` em `navepro/config.py`).
-
-2. Se preferir publicar **manualmente** (o `publicar.sh` já faz tudo): commite as mudanças, crie um **tag** na versão (ex.: `v2.1.0`) e crie o release no GitHub anexando o AppImage:
-
-   ```bash
-   gh release create v2.1.0 NavePro-2.1.0.AppImage --title "NavePro 2.1.0" --notes "O que mudou nesta versão..."
-   ```
-
-O app considera o `tag_name` do release mais recente como a versão a oferecer; o primeiro asset `*.AppImage` é o que será baixado.
+O app considera o `tag_name` do release mais recente como a versão a oferecer;
+o primeiro asset `*.exe` é o que será baixado.
 
 ---
 
@@ -220,92 +204,73 @@ Notas:
 
 ## Como executar
 
-**Requisitos (desenvolvimento):** Python 3 + Tkinter com **Tk 8.6** (o que
-resolve os aliases de fonte do fontconfig: "Arial" → Liberation Sans).
-O **Tk 9.0** (ex.: python do conda) **não** resolve esses aliases e deixa
-fontes minúsculas/botões "quadradinhos" — evite. Para o logo aparecer,
-instale o **Pillow (PIL)** no python usado para rodar/empacotar
-(`pip install Pillow`). O AppImage usa as fontes instaladas no sistema de
-destino; em qualquer Linux desktop (que tenha fontes liberation/dejavu/noto)
-o "Arial" resolve para uma sans-serif equivalente.
+Para uso na igreja, basta o **`NavePro.exe`** (portátil, sem instalador):
+baixe e execute. Os dados do usuário ficam em `%USERPROFILE%\.navepro`.
 
-```bash
+**Requisitos (desenvolvimento):** Python 3.10+ com **Tk 8.6** e as
+dependências do `requirements.txt`. O Tk do Windows não é DPI-aware (o
+`NavePro.py` resolve isso chamando `_tornar_dpi_aware()` antes de abrir
+qualquer janela — ver `navepro/core/ambiente.py`).
+
+```bat
 python -m pip install -r requirements.txt
 python NavePro.py
 ```
 
-> O AppImage (seção abaixo) embute o mesmo Tk 8.6, então fica idêntico ao
-> `python NavePro.py`.
+### Gerar o NavePro.exe
 
-### Gerar AppImage
-O AppImage é **autocontido** (PyInstaller embute Python + **Tk 8.6**), então
-não precisa de python3/tkinter na máquina de destino e as fontes ficam
-idênticas em qualquer lugar. Use `build.sh` (reproduz o passo a passo do
-`Gerar.AppImage`) com um python de Tk 8.6:
-
-```bash
-./build.sh 2.1.0       # usa o python com Tk 8.6; PYTHON_BIN=.venv/bin/python ./build.sh
+```bat
+build-windows.bat
 ```
 
-Ou, manualmente:
-```bash
-/usr/sbin/python -m PyInstaller --noconfirm --clean --onefile \
-    --name NavePro --hidden-import "PIL._tkinter_finder" \
-    --add-data "img/Icon.xbm:img/" --add-data "img/Icon.png:img/" NavePro.py   # gera dist/NavePro
-cp dist/NavePro AppDir/usr/bin/NavePro && chmod +x AppDir/usr/bin/NavePro
-ARCH=x86_64 appimagetool AppDir NavePro-2.1.0.AppImage
-./NavePro-2.1.0.AppImage
+O `build-windows.bat` confere o Tk 8.6, instala as dependências e chama o
+PyInstaller com o `NavePro.spec`, que é a **fonte única** do empacotamento.
+O `.exe` sai sem janela de console; para ver o log de detecção de monitores
+("✅ screeninfo: 2 monitor(es)..."), gere um build de diagnóstico com:
+
+```bat
+set NAVEPRO_CONSOLE=1 && build-windows.bat
 ```
 
-> **Por que PyInstaller?** O AppRun antigo usava o `python3` do sistema
-> (Tk 8.6), que é o que funciona bem. A troca errada anterior para o **Tk 9.0**
-> (conda) quebrava as fontes: o Tk 9.0 não resolve "Arial" → Liberation Sans
-> e caía para a fonte bitmap `fixed` (minúscula + quadradinhos). O binário
-> PyInstaller garante o **Tk 8.6** dentro do AppImage.
-> **Edite sempre `NavePro.py` na raiz** (e os módulos de infraestrutura em
-> `navepro/`, se aplicável) e repita o build;
-> `AppDir/usr/bin/NavePro.py` não é mais usado (virou o binário).
+O ícone do executável vem de `img\Icon.ico` (variável `NAVEPRO_ICON`); sem
+esse arquivo o `.exe` sai sem ícone próprio, mas as janelas continuam com
+ícone.
 
-### Gerar Flatpak
+### Player de mídia no Windows (mpv)
 
-O Flatpak empacotado **não precisa do PyInstaller/imagetool** — o `python3` da
-runtime do Flatpak roda o `NavePro.py` direto. O módulo `_tkinter` (ausente
-na runtime) é compilado a partir do [tkinter-standalone](https://github.com/iwalton3/tkinter-standalone)
-com **Tcl/Tk 8.6.15** (mantém as mesmas fontes do AppImage).
+No Windows o NavePro abre o vídeo em um player externo. O **mpv** é
+responsável pelo **pausar/continuar** pelo painel, porque é o único que
+aceita comando remoto (IPC JSON). Ele **não** vem embutido no `NavePro.exe`
+(seriam +56 MB) e precisa ser instalado **uma vez por máquina**:
 
-**Build local** (requer `flatpak-builder`):
-```bash
-sudo apt install flatpak-builder
-flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
-
-./build-flatpak.sh              # gera io.github.edes_neves.NavePro.<arch>.flatpak
-./build-flatpak.sh --install    # instala no usuário atual
+```bat
+winget install mpv-player.mpv-CI.MSVC
 ```
 
-**Build multi-arquitetura (GitHub Actions):**
-A workflow `.github/workflows/flatpak.yml` gera bundles para `x86_64` e
-`aarch64` em cada release (`git push origin v<versão>`). O `flatpak-builder`
-usa QEMU para cross-compile em aarch64.
+Sem o mpv, o NavePro continua funcionando: ele detecta e usa o **VLC** ou o
+**SMPlayer** se estiverem instalados, o vídeo abre no telão e o botão
+**parar** funciona. Só o **pausar/continuar** fica indisponível — e o NavePro
+avisa isso na tela, com o comando de instalação, em vez de falhar calado.
 
-**Publicar no Flathub:**
-O manifesto `flatpak/io.github.edes_neves.NavePro.yaml` está pronto para
-submissão. O Flathub compila automaticamente para **x86_64**, **aarch64** e
-**riscv64** — sem infraestrutura extra. Para submeter, crie um pull request
-em [flathub/flathub](https://github.com/flathub/flathub) apontando para este
-repositório.
+#### Por que o player é reposicionado por código
 
----
+Nenhum player respeita o monitor pedido em tela cheia no Windows: medido
+aqui, o mpv ignora `--screen` e `--geometry` e sempre abre no monitor
+primário (o VLC faz o mesmo). Por isso o player é aberto **sem**
+`--fullscreen` e a janela é colocada sobre o monitor do telão por Win32
+(`posicionar_janela_player` em `navepro/core/player.py`), sem moldura e em
+cima das outras janelas. O mesmo vale para o relógio do telão, em
+`TelaoWindow._aplicar_tela_cheia`.
 
 ## Testes
 
 As suítes ficam em `tests/` e rodam **sem tela e sem servidor** — quando precisam
 de interface, recriam um `Tk` falso e extraem do `NavePro.py` só o trecho que
-está sendo testado (via `ast`). Assim dá para testar no CI e em máquina sem X.
+está sendo testado (via `ast`).
 
-```bash
-python3 tests/test_logica.py          # uma suíte
-for f in tests/test_*.py; do python3 "$f" || echo "FALHOU: $f"; done   # todas
+```bat
+python tests\test_logica.py          :: uma suíte
+for %f in (tests\test_*.py) do @python %f || echo FALHOU: %f   :: todas
 ```
 
 | Suíte | O que cobre |
@@ -318,11 +283,17 @@ for f in tests/test_*.py; do python3 "$f" || echo "FALHOU: $f"; done   # todas
 | `test_indicador.py` | Indicador de progresso |
 | `test_seletor.py` | Seletor de arquivos do app (filtros e pastas ocultas) |
 | `test_imagens.py` | Imagens de fundo e transferência entre janelas |
-| `test_atualizacao.py` | Detecção de instalação (Flatpak/AppImage/Windows), escolha do asset e comando do `flatpak update` |
+| `test_monitores.py` | Escolha do monitor do painel e do telão: nunca os dois no mesmo monitor, mesmo sem primário detectado |
+| `test_player_windows.py` | Player no Windows: descoberta de executáveis, pipe do mpv por faixa, flags do comando (sem `--fullscreen`), fim de faixa sem "ended" falso, aviso de player sem comando remoto |
+| `test_atualizacao.py` | Detecção de instalação e escolha do asset do release |
 
 > Um detalhe que já custou tempo: o `after()` do Tk devolve o id do timer como
 > **`str`**. Num Tk falso, guardar o timer sob chave `int` faz o `after_cancel`
 > silenciosamente não encontrar nada — o debounce parece quebrado quando não está.
+
+> Outro: toda leitura de arquivo de teste precisa de `encoding="utf-8"`. Sem
+> isso o `open()` usa o `cp1252` do Windows e estoura `UnicodeDecodeError` em
+> qualquer acento — a suíte passa no Linux e quebra no Windows.
 
 ---
 
@@ -332,21 +303,18 @@ for f in tests/test_*.py; do python3 "$f" || echo "FALHOU: $f"; done   # todas
 NavePro.py            # Aplicativo principal (interface + projeção + importadores)
 navepro/              # Infraestrutura reutilizável (config, caminhos, temas, textos, atualização)
   config.py           # APP_VERSION e constantes de configuração
-NavePro.spec          # (gerado pelo PyInstaller)
+  core/player.py      # Player de mídia no Windows: acha o executável, IPC do mpv, posiciona a janela
+NavePro.spec          # Configuração do PyInstaller (fonte única do empacotamento)
+build-windows.bat     # Gera o dist\NavePro.exe
 README.md             # Este documento
 LICENSE               # GPLv3
 requirements.txt      # Dependências (runtime + pyinstaller)
-build.sh              # Gera o AppImage (PyInstaller + appimagetool)
-Gerar.AppImage        # Passo a passo (resumo) para empacotar o AppImage
 Biblias/               # Bíbblias para importar (XML do Zefania e TXT): AS21, ARC, ACF, ARA…
   AS21.xml            #   Bíblia Almeida Século 21 (XML Zefania)
   biblia-em-txt.txt   #   Bíblia Almeida Revista e Corrigida (TXT)
 NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista
 HASD/                 # Hinário (OpenLyrics XML)
-AppDir/               # Estrutura do AppImage (AppRun, .desktop, ícones)
-flatpak/              # Manifesto Flatpak + .desktop + metainfo + wrapper + repositório
 tests/                # Suítes de teste headless (ver "Testes")
-.github/workflows/    # CI/CD: build Flatpak multi-arquitetura (x86_64 + aarch64)
 img/                    # Ícones do app (Icon.png, Icon.xbm, Icon.ico…)
 .gitignore            # Arquivos locais/artefatos de build ignorados
 ```
@@ -354,6 +322,8 @@ img/                    # Ícones do app (Icon.png, Icon.xbm, Icon.ico…)
 ---
 
 ## Dados locais (`~/.navepro/`)
+
+No Windows esta pasta é `%USERPROFILE%\.navepro`.
 
 | Arquivo/pasta | Conteúdo |
 |---|---|

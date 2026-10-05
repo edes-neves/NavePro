@@ -5,39 +5,22 @@
 /__pycache__/
 **/__pycache__/
 *.pyc
+/.pytest_cache
 
 # Projetos antigos / não relacionados
 /SistemaEnommerce
-/Sistema.AppDir
 /hinario.py
 /novohinario.py
 /novohinario.spec
-/NavePro.spec
 
 # Builds e artefatos gerados
 /build
 /dist
-/AppDir
 /tmp
-/NavePro.zip
-/NavePro.AppImage
-/NavePro-*.AppImage
-/appimage-builder-*.AppImage
-/appimagetool-*.AppImage
-/.flatpak-builder/
-/flatpak/build-ghpages/
 
 # Configuração local e utilitários
 /config.json
 /tempCodeRunnerFile.py
-
-# Script auxiliar com token GitHub embutido (não versionar)
-/check-flathub.sh
-
-# Flatpak (build local)
-/flatpak/build/
-/flatpak/repo/
-*.flatpak
 
 # Banco de dados local (não versionar)
 *.db

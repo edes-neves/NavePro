@@ -49,12 +49,20 @@ from navepro.core.ambiente import (
     _eh_windows,
     _eh_linux,
     _eh_appimage,
+    _tornar_dpi_aware,
 )
 from navepro.core.ssl_context import (
     _ssl_context,
     _baixar,
 )
 from navepro.core.tema import _cor_clara, _OPCOES_COR_TK, _OPCOES_TEXTO
+from navepro.core.player import (
+    ClienteMpvIpc,
+    encerrar_arvore,
+    localizar_executavel,
+    nome_pipe_mpv,
+    posicionar_janela_player,
+)
 from navepro.core.paths import (
     _caminho_recurso,
     _aplicar_icone_janela,
@@ -102,6 +110,14 @@ from navepro.config import (
     SUFIXOS_IMAGEM,
     MAPA_ESTADOS,
 )
+
+
+# Precisa rodar ANTES de qualquer tk.Tk(): o Tk 8.6 do Windows não é
+# DPI-aware e cacheia a tela em pixels lógicos, enquanto o screeninfo ativa o
+# DPI-awareness do processo e passa a medir em pixels físicos. Sem esta
+# chamada, os dois discordam das unidades e o telão é reposicionado pelo
+# Windows de volta para o monitor primário. No Linux é no-op.
+_TORNAR_DPI_AWARE: bool = _tornar_dpi_aware()
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -1427,6 +1443,46 @@ def get_monitors_config() -> List[MonitorInfo]:
 # TELÃO - JANELA DE PROJEÇÃO (mantido)
 # ────────────────────────────────────────────────────────────────────
 
+def _escolher_monitor_painel(monitors: List[MonitorInfo]) -> Optional[MonitorInfo]:
+    """Monitor do painel do administrador: o primário do SO, ou o primeiro.
+
+    É a mesma escolha de sempre — só que isolada, para que o telão possa
+    garantir que não vai cair no mesmo monitor.
+    """
+    if not monitors:
+        return None
+    for m in monitors:
+        if getattr(m, 'primary', False):
+            return m
+    # Nenhum primário informado: por convenção do SO o primeiro é o primário.
+    return monitors[0]
+
+
+def _escolher_monitor_telao(monitors: List[MonitorInfo]) -> Optional[MonitorInfo]:
+    """Escolhe em qual monitor o TELÃO abre.
+
+    Regra: nunca o mesmo monitor do painel, senão as duas janelas se sobrepõem
+    e o telão não cobre a segunda tela. O painel ocupa o primário (ver
+    _escolher_monitor_painel), então o telão pega o primeiro que sobra.
+
+    Importante para o caso em que a detecção do primário falha: antes, o telão
+    caía em monitors[0] — exatamente o monitor do painel. Agora ele é sempre
+    um monitor diferente, mesmo sem primário definido.
+
+    Com o primário corretamente detectado (xrandr no Linux, screeninfo no
+    Windows), o resultado é o primeiro não primário — idêntico ao
+    comportamento anterior.
+    """
+    if not monitors:
+        return None
+    if len(monitors) == 1:
+        return monitors[0]
+    painel = _escolher_monitor_painel(monitors)
+    for m in monitors:
+        if m is not painel:
+            return m
+    return monitors[0]
+
 
 def _normalizar_escala_tk(root) -> float:
     """Garante texto legível e consistente entre Python/Tk diferentes.
@@ -1479,14 +1535,8 @@ class TelaoWindow:
 
         # TelaoWindow (relogio/telão) abre SEMPRE no monitor que NÃO é
         # o primário, conforme definido pelo SO. Se houver apenas um
-        # monitor, usa-o. Se houver múltiplos, escolhe o primeiro não primário.
-        monitor = None
-        if len(monitors) > 1:
-            nao_prim = [m for m in monitors if not getattr(m, 'primary', False)]
-            if nao_prim:
-                monitor = nao_prim[0]
-        if monitor is None:
-            monitor = monitors[0] if monitors else None
+        # monitor, usa-o.
+        monitor = _escolher_monitor_telao(monitors)
 
         # Cache de geometria privada (evita acessos repetidos)
         self._monitor = monitor
@@ -1515,7 +1565,7 @@ class TelaoWindow:
         self.root.attributes('-alpha', self._alpha_relogio())
         self.root.attributes('-topmost', False)
         self._fullscreen: bool = True
-        self.root.attributes('-fullscreen', True)
+        self._aplicar_tela_cheia(True)
         self.root.lift()
         # Só reafirma a geometria no modo tela cheia; no modo janela o
         # gerenciador de janelas controla livremente (min/max/redimensionar).
@@ -1724,15 +1774,52 @@ class TelaoWindow:
         except tk.TclError:
             pass
 
+    def _aplicar_tela_cheia(self, ativo: bool) -> None:
+        """Liga/desliga o modo tela cheia do telão no monitor que ele escolheu.
+
+        POR QUE O WINDOWS É DIFERENTE
+        O `-fullscreen` do Tk no Windows é implementado com a ÁREA DE TRABALHO
+        DO MONITOR PRIMÁRIO (SPI_GETWORKAREA): ele ignora onde a janela está e
+        sempre a joga no primário. Medido aqui: uma janela posicionada em
+        x=1920 (monitor 2) saía do `-fullscreen` em x=0 — exatamente o sintoma
+        "as duas janelas no monitor primário, e o telão só vai para o telão
+        quando aperto F11". O F11 parecer consertar é coincidência: ao sair da
+        tela cheia o código reaplica a geometria, e aí ela obedece.
+
+        No Windows a tela cheia é então EMULADA: `overrideredirect` remove a
+        borda da janela e a geometria exata do monitor faz o resto — o Windows
+        respeita posição/tamanho em qualquer monitor.
+
+        No Linux nada muda: continua o `-fullscreen` nativo, que funciona.
+        """
+        self._fullscreen = bool(ativo)
+        monitor = self._monitor
+        if monitor is None:
+            self.root.attributes('-fullscreen', self._fullscreen)
+            return
+        geometria = f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}"
+        if _eh_windows():
+            self.root.overrideredirect(self._fullscreen)
+            if self._fullscreen:
+                self.root.geometry(geometria)
+                # Sem a moldura o Windows não dá foco sozinho; o telão precisa
+                # do foco para receber F11, Esc e as setas.
+                try:
+                    self.root.focus_force()
+                except tk.TclError:
+                    pass
+        else:
+            self.root.attributes('-fullscreen', self._fullscreen)
+            if self._fullscreen:
+                self.root.lift()
+        if not self._fullscreen:
+            # Saindo da tela cheia a janela volta ao tamanho do monitor, na
+            # posição do monitor (e não no canto da tela, como no Tk puro).
+            self.root.geometry(geometria)
+
     def _alternar_fullscreen(self, event: object = None) -> str:
         """Alterna entre tela cheia (sem bordas) e janela redimensionável."""
-        self._fullscreen = not getattr(self, '_fullscreen', False)
-        self.root.attributes('-fullscreen', self._fullscreen)
-        if self._fullscreen:
-            self.root.lift()
-        else:
-            m = self._monitor
-            self.root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
+        self._aplicar_tela_cheia(not getattr(self, '_fullscreen', False))
         return "break"
 
     def _fonte_temp_para_texto(self, temperatura: str) -> tuple:
@@ -3122,12 +3209,31 @@ class MediaPlayer:
         # Flag para evitar que _monitorar dispare "ended" quando matamos
         # o processo intencionalmente (via stop, próximo, anterior, tocar_indice)
         self._killed_intentionally: bool = False
+        # ── Controle remoto do player (só Windows) ───────────────────
+        # No Linux o controle vem por D-Bus/MPRIS (ver _pausar_player). No
+        # Windows o mpv expõe o IPC JSON dele, que é o equivalente. Guardamos
+        # o pipe/ipc por reprodução: o nome muda a cada faixa para não
+        # reaproveitar a conversa de um mpv anterior.
+        self._ipc: Optional[ClienteMpvIpc] = None
+        self._pipe_mpv: str = ""
+        self._contador_pipe: int = 0
+        # True quando o lançamento foi via "aplicativo padrão" (cmd /c start):
+        # nesse caso o cmd.exe morre na hora e não sobra handle para o player,
+        # então o fim não pode ser detectado pelo poll() do processo.
+        self._lancamento_desanexado: bool = False
 
         # Dependency Injection: TelaoWindow pode ser injetado externamente
         # para testes ou uso compartilhado. Fallback: cria internamente.
         self.telao = telao if telao is not None else TelaoWindow(monitor_index)
         self.on_state_change: Optional[Callable[[str], None]] = None
         self.on_track_change: Optional[Callable[[int, str], None]] = None
+        # Aviso não-bloqueante para o painel (AppInterface escreve no
+        # status_label). O NavePro.exe é gerado sem console, então um `print`
+        # de aviso não chegaria a quem opera o NavePro — precisa ser visual.
+        self.on_aviso: Optional[Callable[[str], None]] = None
+        # Só avisa uma vez por sessão sobre falta de controle remoto, para
+        # não repetir o mesmo aviso a cada clique em pausar.
+        self._ja_avisou_sem_controle: bool = False
         # Referência para o root da janela principal (setado externamente)
         self._root_after: Optional[tk.Misc] = None
         # Inicia monitoramento assíncrono
@@ -3170,8 +3276,13 @@ class MediaPlayer:
     def _monitorar(self) -> None:
         """Verifica se o player terminou (sem polling, via after)."""
         processo_terminou = False
+        # Um lançamento "desanexado" (cmd /c start) morre na hora que sai,
+        # mas o player que ele abriu continua tocando. Nesse caso o fim não
+        # pode ser deduzido do poll() — senão o NavePro pulava de faixa
+        # sozinho logo depois de começar a tocar.
+        ignora_processo = self._lancamento_desanexado
         with self._process_lock:
-            if self._process is not None:
+            if self._process is not None and not ignora_processo:
                 rc = self._process.poll()
                 if rc is not None:
                     # rc não-None significa que o processo morreu (qualquer código)
@@ -3229,6 +3340,8 @@ class MediaPlayer:
         e o mplayer filho pertencem ao mesmo grupo (PGID = PID do pai).
         Matar o grupo inteiro garante que o áudio pare.
         """
+        self._fechar_ipc()
+
         with self._process_lock:
             proc = self._process
             self._process = None
@@ -3243,6 +3356,14 @@ class MediaPlayer:
 
         if _eh_windows():
             # Windows: não existem grupos de processo nem os sinais POSIX.
+            # `taskkill /T` é o equivalente: sem o /T, um player que abre
+            # processo auxiliar sobrevive ao terminate() e continua tocando.
+            encerrar_arvore(pid)
+            try:
+                proc.wait(timeout=2.0)
+                return
+            except subprocess.TimeoutExpired:
+                pass
             try:
                 proc.terminate()
             except Exception:
@@ -3331,6 +3452,12 @@ class MediaPlayer:
 
         mx, my, mw, mh = self._get_monitor_geometry()
 
+        # Cada reprodução começa sem controle remoto e sem sendo "desanexada";
+        # _montar_comando_player reaciona se for o caso do app padrão.
+        self._fechar_ipc()
+        self._pipe_mpv = ""
+        self._lancamento_desanexado = False
+
         try:
             cmd = self._montar_comando_player(arquivo, mx, my, mw, mh)
 
@@ -3350,27 +3477,77 @@ class MediaPlayer:
 
             self.is_playing = True
             self.is_paused = False
+            if _eh_windows():
+                self._preparar_controle_windows(proc.pid, arquivo, mx, my, mw, mh)
             return True
         except Exception as e:
             print(f"❌ Erro ao iniciar player: {e}")
             return False
 
+    def _fechar_ipc(self) -> None:
+        """Fecha o cliente IPC da reprodução anterior, se houver."""
+        if self._ipc is not None:
+            try:
+                self._ipc.fechar()
+            except Exception:
+                pass
+            self._ipc = None
+
+    def _preparar_controle_windows(
+        self, pid: int, arquivo: str, mx: int, my: int, mw: int, mh: int
+    ) -> None:
+        """Liga o canal de comando e joga a janela do player no telão.
+
+        Duas coisas separadas, porque uma depende da outra:
+
+        1. **Janela no telão** — reposiciona em uma thread de fundo, para não
+           travar a interface enquanto espera a janela do player aparecer. Só
+           para vídeo: arquivo de áudio não tem janela para cobrir.
+
+        2. **Comando remoto** — se o player for o mpv, conecta no IPC dele. É
+           o que dá pausa/continuar/parar e o tempo exato, e só precisa do
+           pipe: não bloqueia.
+        """
+        if self._eh_arquivo_de_video(arquivo):
+            def _posicionar() -> None:
+                ok = posicionar_janela_player(pid, mx, my, mw, mh)
+                print(("   🖥️ Player posicionado no telão" if ok
+                       else "   ⚠️ Não consegui posicionar o player no telão"))
+
+            threading.Thread(target=_posicionar, daemon=True,
+                             name="navepro-pos-player").start()
+
+        if self._pipe_mpv:
+            cliente = ClienteMpvIpc(self._pipe_mpv)
+            if cliente.conectar():
+                self._ipc = cliente
+                print("🎛️ Controle remoto do mpv ligado (IPC)")
+
     def _montar_comando_player(
         self, arquivo: str, mx: int, my: int, mw: int, mh: int
     ) -> list[str]:
         """Monta o comando do player conforme o tipo configurado.
-        
-        ANTES de montar, verifica se o player existe no PATH.
-        Se smplayer (padrão) não existir, tenta mpv (melhor alternativa),
-        depois vlc, e só por último xdg-open.
+
+        ANTES de montar, verifica se o player existe no sistema (PATH +
+        diretórios de instalação padrão). Se o configurado não existir, tenta
+        alternativas — no Windows o mpv vem primeiro por ser o único com canal
+        de comando; no Linux a ordem é a de sempre (smplayer, que expõe MPRIS).
+
+        No Windows o player é aberto SEM `--fullscreen`: nem o mpv nem o VLC
+        respeitam o monitor pedido nesse modo (medido aqui: mpv ignora
+        `--screen` e `--geometry` e vai sempre para o primário). A janela é
+        aberta normal e reposicionada sobre o telão por
+        `posicionar_janela_player`, que funciona com qualquer player.
         """
         player = self.player_cmd
 
-        # Verifica se o player configurado existe no PATH
+        # Verifica se o player configurado existe no sistema
         if not self._player_existe(player):
             print(f"\u26a0\ufe0f Player '{player}' n\u00e3o encontrado no sistema!")
             # Tenta alternativas em ordem de prefer\u00eancia
-            for alt in ["smplayer", "mpv", "vlc"]:
+            alternativas = (["mpv", "vlc", "smplayer"] if _eh_windows()
+                            else ["smplayer", "mpv", "vlc"])
+            for alt in alternativas:
                 if self._player_existe(alt):
                     print(f"   \u27a1\ufe0f Usando '{alt}' como alternativa")
                     player = alt
@@ -3378,16 +3555,29 @@ class MediaPlayer:
             else:
                 print("   \u274c Nenhum player encontrado! "
                       "Usando o aplicativo padrão")
+                self._lancamento_desanexado = True
                 if _eh_windows():
                     return ['cmd', '/c', 'start', '', arquivo]
                 return ['xdg-open', arquivo]
 
         if player == "smplayer":
+            if _eh_windows():
+                exe = localizar_executavel("smplayer") or "smplayer"
+                return [exe, '-close-at-end', '--no-embedded-video', arquivo]
             return [
                 'smplayer', '-close-at-end', '-fullscreen',
                 arquivo,
             ]
         elif player == "vlc":
+            if _eh_windows():
+                exe = localizar_executavel("vlc") or "vlc"
+                return [
+                    exe, '--quiet', '--no-osd', '--no-video-title-show',
+                    '--play-and-exit', '--no-embedded-video',
+                    f'--video-x={mx}', f'--video-y={my}',
+                    f'--width={mw}', f'--height={mh}',
+                    arquivo,
+                ]
             return [
                 'vlc', '--quiet', '--no-osd', '--no-video-title-show',
                 '--play-and-exit', '--fullscreen',
@@ -3397,6 +3587,18 @@ class MediaPlayer:
                 arquivo,
             ]
         elif player == "mpv":
+            if _eh_windows():
+                exe = localizar_executavel("mpv") or "mpv"
+                self._contador_pipe += 1
+                self._pipe_mpv = nome_pipe_mpv(self._contador_pipe)
+                return [
+                    exe, '--no-border',
+                    '--really-quiet', '--no-terminal',
+                    f'--input-ipc-server={self._pipe_mpv}',
+                    '--keep-open=no',
+                    f'--geometry={mw}x{mh}+{mx}+{my}',
+                    arquivo,
+                ]
             return [
                 'mpv', '--fullscreen', '--screen=1',
                 '--really-quiet', '--no-terminal',
@@ -3404,35 +3606,108 @@ class MediaPlayer:
                 arquivo,
             ]
         else:
+            self._lancamento_desanexado = True
             if _eh_windows():
                 # Abre com o aplicativo padrão do Windows (sem console).
                 return ['cmd', '/c', 'start', '', arquivo]
             return ['xdg-open', arquivo]
 
+    def _eh_arquivo_de_video(self, arquivo: str) -> bool:
+        """True para extensão de vídeo — só vídeo tem janela para posicionar."""
+        return os.path.splitext(arquivo or "")[1].lower() in EXTENSOES_VIDEO
+
     @staticmethod
     def _player_existe(player: str) -> bool:
-        """Verifica se um player est\u00e1 dispon\u00edvel no PATH.
-        
-        Verifica tanto no PATH do ambiente atual quanto nos locais comuns
-        do sistema (/usr/bin, /run/host/usr/bin para sandbox AppImage).
+        """Verifica se um player está disponível no sistema.
+
+        No Linux é o que sempre foi: PATH + /usr/bin, /usr/local/bin e
+        /run/host/usr/bin (sandbox do AppImage).
+
+        No Windows passou a olhar também os diretórios de instalação padrão
+        (Program Files, WinGet, scoop, Chocolatey). Sem isso, o VLC instalado
+        em "C:\\Program Files\\VideoLAN\\VLC" — que normalmente não está no
+        PATH do processo — era dado como inexistente, o NavePro caía no
+        "aplicativo padrão do sistema" e perdia o controle do player.
         """
-        # 1. PATH padr\u00e3o
-        if shutil.which(player) is not None:
-            return True
-        # 2. Caminhos absolutos comuns (incluindo sandbox AppImage)
-        for path in ["/usr/bin", "/usr/local/bin", "/run/host/usr/bin"]:
-            full = os.path.join(path, player)
-            if os.path.exists(full) and os.access(full, os.X_OK):
-                return True
-        return False
+        return localizar_executavel(player) is not None
+
+    def _ipc_mpv_disponivel(self) -> bool:
+        """True se há um mpv conectado e respondendo ao IPC.
+
+        Exige as duas coisas: o pipe aberto E o processo vivo. O handle do
+        pipe continua "válido" para o Windows mesmo depois de o mpv sair, então
+        sozinho ele não serve de resposta — sem o poll(), o NavePro ficaria
+        perguntando o tempo para um player que já terminou.
+        """
+        if self._ipc is None or not self._ipc.vivo():
+            return False
+        with self._process_lock:
+            proc = self._process
+        return proc is not None and proc.poll() is None
+
+    def _avisar(self, mensagem: str) -> None:
+        """Manda um aviso para o painel (sem travar a interface)."""
+        print(f"⚠️ {mensagem}")
+        if self.on_aviso:
+            try:
+                self.on_aviso(mensagem)
+            except Exception:
+                pass  # Nunca deixar o aviso derrubar o playback
+
+    def _sem_controle_remoto(self) -> bool:
+        """True se o player em uso não aceita comando de pause/continuar.
+
+        Só o mpv expõe um canal de comando no Windows (IPC JSON). VLC e
+        SMPlayer abrem o vídeo, são posicionados no telão e param pelo
+        `taskkill`, mas ignoram pausa — medido aqui: o VLC 3.0.24 não responde
+        nem pela interface HTTP dele nem por `WM_APPCOMMAND`. No Linux quem
+        atende é o D-Bus/MPRIS, presente no smplayer.
+        """
+        if _eh_windows():
+            return self._ipc is None
+        if _eh_linux():
+            return False  # D-Bus/MPRIS: o painel assume que dá
+        return True
+
+    def _explicar_sem_controle(self) -> str:
+        """Mensagem actionable sobre a falta de controle remoto."""
+        if _eh_windows():
+            if self.player_cmd and self.player_cmd != "mpv":
+                return (f"⚠️ Pausar/continuar não funciona com "
+                        f"'{self.player_cmd}' — ele não aceita comando remoto. "
+                        f"Em Configurações, troque o player para 'mpv'.")
+            return ("⚠️ Pausar/continuar precisa do mpv, que não está instalado. "
+                    "Instale com: winget install mpv-player.mpv-CI.MSVC "
+                    "(vídeo e parar funcionam mesmo sem ele)")
+        return ("⚠️ Este player não aceita comando remoto; "
+                "use um player com D-Bus/MPRIS (smplayer) no Linux.")
+
+    def _avisar_sem_controle_se_precisar(self) -> None:
+        """Chamado quando um pause/continuar não surtiu efeito."""
+        if not self._sem_controle_remoto() or self._ja_avisou_sem_controle:
+            return
+        self._ja_avisou_sem_controle = True
+        self._avisar(self._explicar_sem_controle())
 
     def _pausar_player(self) -> bool:
         """Pausa/continua o player externo.
 
         No Linux usa D-Bus (MPRIS) ou SIGSTOP/SIGCONT (fallback). No Windows
-        não há esses mecanismos; o app apenas deixa o player seguir e o estado
-        interno acompanha (o tempo decorrido continua correndo).
+        usa o IPC JSON do mpv — o equivalente ao MPRIS. Sem nenhum dos dois
+        (macOS, ou player que não expõe canal) devolve False e o chamador
+        mantém o estado interno como estava.
         """
+        if _eh_windows():
+            if not self._ipc_mpv_disponivel():
+                return False
+            try:
+                # These runs on the Tk main thread (tecla de pause/continuar),
+                # so the timeout is tight: the named pipe is local and answers
+                # in milliseconds. If mpv is hung, we don't want to freeze the
+                # interface waiting for it.
+                return self._ipc.definir_pausa(not self.is_paused, timeout=1.0)
+            except Exception:
+                return False
         if not _eh_linux():
             return False
         # Tenta D-Bus com o player ativo primeiro (evita loop em ambos)
@@ -3483,9 +3758,21 @@ class MediaPlayer:
         return self.tempo_acumulado
 
     def sincronizar_tempo_dbus(self, player: str = "") -> None:
-        """Sincroniza o tempo via D-Bus (SMPlayer ou VLC). Uma única chamada unificada."""
-        # Sem D-Bus no Windows: o tempo decorrido é acompanhado localmente.
-        if not _eh_linux() or not self.is_playing:
+        """Sincroniza tempo/estado com o player externo.
+
+        O nome é herança do Linux, onde isso é D-Bus/MPRIS. No Windows a mesma
+        função pergunta o IPC JSON do mpv (mesma ideia: o player é a fonte da
+        verdade do que está tocando). Em qualquer outro SO fica só com o
+        relógio local do NavePro.
+        """
+        if not self.is_playing:
+            return
+
+        if _eh_windows():
+            self._sincronizar_ipc_mpv()
+            return
+
+        if not _eh_linux():
             return
 
         dest = player or self.player_cmd
@@ -3535,6 +3822,40 @@ class MediaPlayer:
         except Exception:
             pass  # Mantém valores internos
 
+    def _sincronizar_ipc_mpv(self) -> None:
+        """Pergunta ao mpv (via IPC) o estado real da reprodução.
+
+        Três propriedades por sincronização. O `duration` também substitui o
+        ffprobe no Windows: ele quase nunca está instalado lá, e sem ele a
+        barra de progresso ficava sem tempo total.
+
+        O tratamento é idêntico ao do caminho D-Bus do Linux — `tempo_acumulado`
+        vira a última posição conhecida e `tempo_inicio` reanima a contagem até
+        a próxima sincronização, de modo que o tempo exibido não "pula".
+        """
+        if not self._ipc_mpv_disponivel():
+            return
+        ipc = self._ipc
+        # Isso roda no `after` do Tk, na thread da interface: as três
+        # propriedades compartilham UM prazo, para que um mpv travado não
+        # trave a interface por 3x o timeout.
+        limite = time.monotonic() + 1.2
+        try:
+            pausado = ipc.propriedade("pause", timeout=1.2)
+            posicao = ipc.propriedade("time-pos",
+                                      timeout=max(0.05, limite - time.monotonic()))
+            duracao = ipc.propriedade("duration",
+                                      timeout=max(0.05, limite - time.monotonic()))
+        except Exception:
+            return  # Mantém valores internos
+
+        if isinstance(duracao, (int, float)) and duracao > 0:
+            self.duracao_total = float(duracao)
+        if isinstance(posicao, (int, float)) and posicao >= 0:
+            self.is_paused = bool(pausado)
+            self.tempo_acumulado = float(posicao)
+            self.tempo_inicio = None if self.is_paused else time.time()
+
     # ── Controles principais ──────────────────────────────────────
 
     def play_pause(self) -> None:
@@ -3545,11 +3866,17 @@ class MediaPlayer:
                 if self.tempo_inicio is not None:
                     self.tempo_acumulado += time.time() - self.tempo_inicio
                     self.tempo_inicio = None
+            else:
+                # O player não aceitou o comando: o estado interno não muda
+                # (senão o painel mentiria), e o operador é avisado de por quê.
+                self._avisar_sem_controle_se_precisar()
         elif self.is_paused:
             if self._pausar_player():
                 self.is_paused = False
                 self.is_playing = True
                 self.tempo_inicio = time.time()
+            else:
+                self._avisar_sem_controle_se_precisar()
         else:
             if self.playlist and self.index < len(self.playlist):
                 arquivo = self.playlist[self.index]
@@ -3559,6 +3886,34 @@ class MediaPlayer:
 
     def stop(self) -> None:
         """Para o player completamente."""
+        # Pedir educadamente primeiro: o mpv sai pelo IPC, fechando o vídeo e
+        # o áudio sem o piscar do /F. Se o IPC não responder, _matar_processo
+        # cai no taskkill /T.
+        if self._ipc_mpv_disponivel():
+            try:
+                if self._ipc.encerrar():
+                    print("🛑 Player encerrado pelo IPC")
+                    self._fechar_ipc()
+                    with self._process_lock:
+                        proc = self._process
+                        self._process = None
+                        self._player_pid = None
+                    if proc is not None:
+                        try:
+                            proc.wait(timeout=2.0)
+                        except subprocess.TimeoutExpired:
+                            pass
+                    self.is_playing = False
+                    self.is_paused = False
+                    self.tempo_inicio = None
+                    self.tempo_acumulado = 0.0
+                    self.duracao_total = None
+                    self.telao = self._garantir_telao()
+                    self.telao.restaurar_tela()
+                    print("✅ Player parado")
+                    return
+            except Exception:
+                pass  # Cai para o encerramento forçado
         self._matar_processo()
         self.is_playing = False
         self.is_paused = False
@@ -4749,12 +5104,10 @@ class AppInterface:
         try:
             monitors = get_monitors_config()
             if monitors:
-                # Painel do operador abre SEMPRE no monitor marcado como
-                # PRIMÁRIO pelo sistema operacional. Se nenhum estiver
-                # marcado como primário, usa o primeiro monitor detectado.
-                m = next((mon for mon in monitors if getattr(mon, 'primary', False)), None)
-                if m is None:
-                    m = monitors[0]
+                # Painel do operador abre no monitor marcado como PRIMÁRIO
+                # pelo SO (ou no primeiro, se nenhum for marcado). O telão
+                # escolhe o que sobrar — ver _escolher_monitor_telao.
+                m = _escolher_monitor_painel(monitors)
                 # Salva geometria do monitor para restaurar depois
                 self._monitor_geo = (m.width, m.height, m.x, m.y)
                 self.root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
@@ -4801,6 +5154,7 @@ class AppInterface:
         self.player = MediaPlayer(self.monitor_index, self.player_cmd)
         self.player.on_state_change = self.quando_midia_terminar
         self.player.on_track_change = self.quando_faixa_muda
+        self.player.on_aviso = self.mostrar_aviso
         self.player._root_after = self.root
 
         # Aplica configuração de aparência da projeção (letra/versículo)
@@ -7019,6 +7373,8 @@ class AppInterface:
         self._pulse_timer: Optional[str] = None
         self._pulse_index: int = -1
         self._pulse_state: int = 0
+        # Timer que segura um aviso no rodapé (ver mostrar_aviso)
+        self._aviso_timer: Optional[str] = None
 
     def atualizar_lista(self) -> None:
         """Atualiza a lista reciclando itens do pool (cores alternadas, barra de progresso)."""
@@ -7133,6 +7489,44 @@ class AppInterface:
 
     def tocar_anterior(self) -> bool:
         return self.player.anterior()
+
+    def mostrar_aviso(self, mensagem: str, segundos: float = 9.0) -> None:
+        """Mostra um aviso no rodapé, sem travar a interface nem sumir cedo.
+
+        `atualizar_status` roda a cada ~2 s e reescreve o status_label com a
+        faixa atual, então um texto colocado ali uma única vez desapareceria
+        em segundos. Por isso o aviso é reescrito a cada 1 s enquanto durar, e
+        no fim o label é devolvido ao `atualizar_status`.
+
+        Usado pelo MediaPlayer para coisas como "este player não aceita pausa".
+        """
+        if self._aviso_timer:
+            try:
+                self.root.after_cancel(self._aviso_timer)
+            except Exception:
+                pass
+            self._aviso_timer = None
+
+        # Contagem de repetições: cada tique reescreve e conta 1 s.
+        restantes = max(1, int(segundos))
+
+        def _repetir() -> None:
+            try:
+                self.status_label.config(text=mensagem)
+            except tk.TclError:
+                self._aviso_timer = None
+                return
+            if restantes > 0:
+                restantes -= 1
+                # 1 s: menos que o intervalo do atualizar_status, então o
+                # aviso sempre "vence" a reescrita da faixa.
+                self._aviso_timer = self.root.after(1000, _repetir)
+            else:
+                self._aviso_timer = None
+                self.atualizar_status()
+
+        # after(0, ...): o aviso pode vir de outra thread.
+        self._aviso_timer = self.root.after(0, _repetir)
 
     def atualizar_status(self) -> None:
         """Atualiza o label de status com informações da faixa atual."""

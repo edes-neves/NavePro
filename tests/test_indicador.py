@@ -4,7 +4,7 @@ _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
 ARQ = os.path.join(RAIZ, 'NavePro.py')
-src = open(ARQ).read()
+src = open(ARQ, encoding='utf-8').read()
 nos = {n.name: n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)}
 
 class TclError(Exception): pass

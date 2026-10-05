@@ -3,7 +3,7 @@ import os, ast, sys, types, tkinter as tkinter
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
-src = open(os.path.join(RAIZ, 'NavePro.py')).read()
+src = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
 nos = {n.name: n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)}
 NOMES = ('_janela_viva','_cancelar_recarga','_recarga_agendada','_agendar_recarga',
          '_ao_alterar_referencia','_ao_destruir_janela','_sincronizar_biblia_com_telao')
