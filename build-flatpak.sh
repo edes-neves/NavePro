@@ -7,12 +7,12 @@
 #   flatpak install flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 #
 # Uso:
-#   ./build-flatpak.sh            # gera io.github.edesneves.NavePro.<arch>.flatpak
+#   ./build-flatpak.sh            # gera io.github.edes-neves.NavePro.<arch>.flatpak
 #   ./build-flatpak.sh --install  # também instala no usuário (flatpak --user install)
 
 set -euo pipefail
 
-APP_ID="io.github.edesneves.NavePro"
+APP_ID="io.github.edes-neves.NavePro"
 MANIFEST="flatpak/${APP_ID}.yaml"
 ARCH="$(flatpak --default-arch)"
 BUILD_DIR="flatpak/build"

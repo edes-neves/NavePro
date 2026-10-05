@@ -2,7 +2,7 @@
 #
 # Build local:
 #   flatpak-builder --user --install --force-clean build-dir \
-#     flatpak/io.github.edesneves.NavePro.yaml
+#     flatpak/io.github.edes-neves.NavePro.yaml
 #
 # Submissão Flathub: o buildbot constrói automaticamente para
 # x86_64, aarch64 e riscv64.
@@ -15,7 +15,7 @@
 #   - Tcl/Tk 8.6.15 e não 9.0: o NavePro documenta que o Tk 9.0 quebra
 #     os aliases de fonte (fontconfig) — mesmo motivo do AppImage usar 8.6.
 
-app-id: io.github.edesneves.NavePro
+app-id: io.github.edes-neves.NavePro
 runtime: org.freedesktop.Platform
 runtime-version: '24.08'
 sdk: org.freedesktop.Sdk
@@ -118,9 +118,9 @@ modules:
       # Sem icones/: os botões usam emojis coloridos (runtime traz NotoColorEmoji),
       # como no AppImage. Os PNGs amarelos ficariam feios/desnecessários.
       - cp -r NHA HASD /app/lib/navepro/
-      - install -Dm644 io.github.edesneves.NavePro.desktop -t /app/share/applications/
-      - install -Dm644 io.github.edesneves.NavePro.metainfo.xml -t /app/share/metainfo/
-      - install -Dm644 img/Icon.png /app/share/icons/hicolor/256x256/apps/io.github.edesneves.NavePro.png
+      - install -Dm644 io.github.edes-neves.NavePro.desktop -t /app/share/applications/
+      - install -Dm644 io.github.edes-neves.NavePro.metainfo.xml -t /app/share/metainfo/
+      - install -Dm644 img/Icon.png /app/share/icons/hicolor/256x256/apps/io.github.edes-neves.NavePro.png
     sources:
       - type: file
         path: navepro.sh
@@ -148,6 +148,6 @@ modules:
         path: ../HASD
         dest: HASD
       - type: file
-        path: io.github.edesneves.NavePro.desktop
+        path: io.github.edes-neves.NavePro.desktop
       - type: file
-        path: io.github.edesneves.NavePro.metainfo.xml
+        path: io.github.edes-neves.NavePro.metainfo.xml
