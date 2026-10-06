@@ -311,9 +311,14 @@ de interface, recriam um `Tk` falso e extraem do `NavePro.py` só o trecho que
 está sendo testado (via `ast`).
 
 ```bat
+set PYTHONUTF8=1
 python tests\test_logica.py          :: uma suíte
 for %f in (tests\test_*.py) do @python %f || echo FALHOU: %f   :: todas
 ```
+
+> O `PYTHONUTF8=1` importa num console antigo (cmd com cp1252): sem ele, o
+> print dos emojis da suíte (✅, ◀, 📁) estoura `UnicodeEncodeError` no
+> Windows. No GitHub Actions o workflow já força o modo UTF-8.
 
 No GitHub Actions (`.github/workflows/testes.yml`) a suíte roda nos **dois**
 sistemas a cada push e pull request — `ubuntu-latest` e `windows-latest` —,

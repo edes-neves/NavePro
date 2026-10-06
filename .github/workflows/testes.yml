@@ -29,6 +29,11 @@ jobs:
 
       - name: Roda as suítes
         shell: bash
+        env:
+          # O console do runner Windows é cp1252: sem o modo UTF-8 do Python,
+          # o print dos emojis da suíte (✅, ◀, 📁) estoura UnicodeEncodeError.
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
         run: |
           set -u
           falhas=0
