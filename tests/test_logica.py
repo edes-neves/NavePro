@@ -22,7 +22,9 @@ nos = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 assert mod_fn and '_carregar_capitulo' in nos and '_escrever_na_biblia' in nos
 
 # --- stubs ---
-DB = os.path.expanduser('~/.navepro/midia.db')
+# banco temporário criado pela fixture (funciona em máquina limpa/CI)
+from fixture_biblia import criar_biblia
+_raiz_biblia, DB = criar_biblia()
 _cache = {}
 def db_query(sql, params=()):
     chave = (sql, tuple(params))

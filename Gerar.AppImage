@@ -19,8 +19,8 @@ passada. O `APP_VERSION` que o app exibe/compara fica em `navepro/config.py`:
 grave lá a mesma versão do release antes de gerar o binário:
 
 ```bash
-./build.sh 2.1.0           # usa o .venv do projeto; gera NavePro-2.1.0.AppImage
-./NavePro-2.1.0.AppImage   # testar
+./build.sh 2.1.1           # usa o .venv do projeto; gera NavePro-2.1.1.AppImage
+./NavePro-2.1.1.AppImage   # testar
 ```
 
 > ⚠️ **Sempre passe a mesma versão do release que vai criar.** Se o nº do
@@ -67,29 +67,35 @@ grave lá a mesma versão do release antes de gerar o binário:
 3. **Gerar o AppImage**:
 
    ```bash
-   rm -f NavePro-2.1.0.AppImage
-   ARCH=x86_64 appimagetool AppDir NavePro-2.1.0.AppImage
+   rm -f NavePro-2.1.1.AppImage
+   ARCH=x86_64 appimagetool AppDir NavePro-2.1.1.AppImage
    ```
    Use `ARCH=$(uname -m)` se a máquina não for x86_64.
 
 4. **Testar**:
 
    ```bash
-   chmod +x NavePro-2.1.0.AppImage
-   ./NavePro-2.1.0.AppImage
+   chmod +x NavePro-2.1.1.AppImage
+   ./NavePro-2.1.1.AppImage
    ```
 
 ## Publicação
 
-O release do GitHub é do **`.exe`** — fluxo na seção "Como publicar uma
-versão nova" do README. Para distribuir o AppImage também, anexe-o ao mesmo
-release:
+O app decide o que baixar pelo formato em que está instalado: `.exe` no
+Windows, `.AppImage` no Linux e `flatpak update` no Flatpak. Ou seja, o
+release precisa carregar **os dois assets que o app baixa** — sem eles, a
+atualização avisa "o release não contém um arquivo ..." em vez de falhar:
 
 ```bash
-gh release upload v2.1.0 NavePro-2.1.0.AppImage
+gh release create v2.1.1 dist/NavePro.exe --title "NavePro 2.1.1" --notes "O que mudou nesta versão..."
+gh release upload v2.1.1 NavePro-2.1.1.AppImage
 ```
 
-O app em execução detecta o `v2.1.0` e baixa o asset do formato em que está
+Os bundles `.flatpak` do release são apenas para distribuição manual; quem tem
+o Flatpak instalado atualiza pelo `flatpak update` (repositório remoto), não
+por esses arquivos.
+
+O app em execução detecta o release e baixa o asset do formato em que está
 instalado (`.exe` no Windows, `.AppImage` no Linux).
 
 ## Observações

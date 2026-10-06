@@ -1,0 +1,49 @@
+# Roda a suíte de testes do NavePro nos DOIS sistemas que o projeto atende —
+# Windows (NavePro.exe) e Linux (AppImage) — para que uma mudança feita de um
+# lado não quebre o outro sem ninguém perceber na mão.
+#
+# Os testes são headless (fakes de Tk, código extraído via ast) e usam só a
+# biblioteca padrão: não pedem display, servidor nem `pip install`.
+
+name: Testes
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  testes:
+    name: Suíte (${{ matrix.sistema }})
+    runs-on: ${{ matrix.sistema }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Roda as suítes
+        shell: bash
+        run: |
+          set -u
+          falhas=0
+          for f in tests/test_*.py; do
+            echo "::group::${f}"
+            if python "$f"; then
+              echo "OK  ${f}"
+            else
+              echo "FALHOU  ${f}"
+              falhas=$((falhas + 1))
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$falhas" -ne 0 ]; then
+            echo "${falhas} suíte(s) falharam"
+            exit 1
+          fi
+          echo "Todas as suítes passaram"

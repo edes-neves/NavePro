@@ -32,15 +32,18 @@ O NavePro consulta o repositório **`edes-neves/NavePro`** no GitHub:
 2. Se a versão do release for **maior** que a instalada, mostra o aviso com as novidades e pergunta se deseja atualizar.
 
 O **passo 3 depende de como o NavePro foi instalado** — o app se detecta sozinho
-(`.exe` do PyInstaller = Windows; a partir do código-fonte = outro caminho):
+(Flatpak > Windows > AppImage; sem sinal de instalação, vale o caminho do
+AppImage):
 
 | Instalação | O que acontece ao confirmar |
 |---|---|
-| **Windows** | Baixa o novo `.exe` do release para **`~/Downloads`** com barra de progresso. |
-| Código-fonte (python NavePro.py) | Baixa o `.exe` como cópia para usar à vontade (o aviso diz que não substitui nada). |
+| **Windows** | Baixa o primeiro asset `*.exe` do release para **`~/Downloads`** com barra de progresso. |
+| **AppImage** | Baixa o primeiro asset `*.AppImage` do release para **`~/Downloads`**; feche o app, troque o AppImage antigo pelo baixado e abra de novo. |
+| **Flatpak** | **Não baixa arquivo**: roda `flatpak update --user` no host (via `flatpak-spawn --host`) e mostra a saída na tela. Os assets `.flatpak` do release são apenas para distribuição manual — a atualização vem do repositório remoto (ex.: Flathub) já configurado na máquina. |
+| Código-fonte (python NavePro.py) | Vale como AppImage: baixa o `*.AppImage` do release para usar à vontade (o aviso diz que não substitui nada). |
 
-Para instalar: feche o NavePro, abra o `.exe` baixado e substitua o antigo. Como
-o NavePro.exe é portátil, não há instalador nem registro — o `.exe` pode ir
+Para instalar (Windows e Linux): feche o NavePro, abra/substitua pelo arquivo
+baixado. Como o `.exe` é portátil, não há instalador nem registro — pode ir
 para qualquer pasta (os dados do usuário ficam em `%USERPROFILE%\.navepro`).
 
 > A opção **Verificar atualizações…** (menu Ajuda) mostra uma mensagem mesmo
@@ -59,14 +62,23 @@ para qualquer pasta (os dados do usuário ficam em `%USERPROFILE%\.navepro`).
    dist\NavePro.exe                   # teste
    ```
 
-3. Publique o release, anexando o `.exe`:
+3. Publique o release, anexando **os dois formatos que o app baixa sozinho**
+   (`NavePro.exe` para o Windows e `NavePro-<versão>.AppImage` para o Linux —
+   gere-o no Linux com `./build.sh <versão>`, seção "Gerar o AppImage"):
 
    ```bat
    gh release create v2.2.0 dist\NavePro.exe --title "NavePro 2.2.0" --notes "O que mudou nesta versão..."
+   gh release upload v2.2.0 NavePro-2.2.0.AppImage
    ```
 
+   Se quiser distribuir também o Flatpak manualmente, anexe os bundles
+   `NavePro-x86_64.flatpak` / `NavePro-aarch64.flatpak` — mas quem tem o
+   Flatpak instalado se atualiza pelo `flatpak update`, não por esses arquivos.
+
 O app considera o `tag_name` do release mais recente como a versão a oferecer;
-o primeiro asset `*.exe` é o que será baixado.
+o primeiro asset `*.exe` é o baixado no Windows e o primeiro `*.AppImage`, no
+Linux. Se o release não tiver o asset do formato instalado, o aviso diz isso
+em vez de quebrar.
 
 ---
 
@@ -250,9 +262,9 @@ depois monta o `AppDir/` e comprime com o `appimagetool` da raiz
 quando existe — que já tem PyInstaller e as dependências — e só exige Tk 8.6.
 O passo a passo detalhado está no `Gerar.AppImage`.
 
-> Os releases do GitHub publicam o `.exe`; o AppImage é o caminho para rodar
-> o NavePro em Linux (o código de atualização ainda reconhece os formatos
-> AppImage e Flatpak).
+> Os releases precisam carregar o `.exe` **e** o `.AppImage` — é de cada um
+> que o app baixa a atualização no Windows e no Linux. No Flatpak a
+> atualização não usa os assets: é `flatpak update` via repositório remoto.
 
 ### Player de mídia no Windows (mpv)
 
@@ -302,6 +314,13 @@ está sendo testado (via `ast`).
 python tests\test_logica.py          :: uma suíte
 for %f in (tests\test_*.py) do @python %f || echo FALHOU: %f   :: todas
 ```
+
+No GitHub Actions (`.github/workflows/testes.yml`) a suíte roda nos **dois**
+sistemas a cada push e pull request — `ubuntu-latest` e `windows-latest` —,
+justo para que uma mudança feita de um lado não quebre o outro sem ninguém
+perceber. As suítes de bíblia/projeção apontam para `tests/fixture_biblia.py`,
+que monta um banco temporário com o schema real (`init_db` extraído do
+`NavePro.py`) — em máquina limpa nem existe o `~/.navepro` do usuário.
 
 | Suíte | O que cobre |
 |---|---|

@@ -44,7 +44,9 @@ class TelaoTeste(Telao):
         self._mostrar_slide(indice_inicial)
 
 # ---------- janela da Bíblia (só _projetar_versiculo) ----------
-DB = os.path.expanduser('~/.navepro/midia.db')
+# banco temporário criado pela fixture (funciona em máquina limpa/CI)
+from fixture_biblia import criar_biblia
+_raiz_biblia, DB = criar_biblia()
 _cache = {}
 def db_query(sql, params=()):
     k = (sql, tuple(params))
