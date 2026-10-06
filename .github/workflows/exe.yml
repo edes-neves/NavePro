@@ -1,0 +1,49 @@
+# Gera o NavePro.exe no GitHub Actions e anexa à release da tag.
+#
+# O PyInstaller não faz cross-compile (o build-windows.bat até avisa): o .exe
+# tem que ser gerado num runner Windows. Este workflow resolve isso — roda o
+# mesmo script da máquina de desenvolvimento, sobe o .exe como artifact e,
+# quando o ref é tag v*, anexa à release (junto com o .AppImage e os bundles
+# .flatpak que o workflow Flatpak gera).
+#
+# Dispara em tag v* e manualmente (workflow_dispatch) para conferir o build
+# sem publicar nada.
+
+name: NavePro.exe
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Gerar NavePro.exe
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # python.org: o build-windows.bat exige Tk 8.6 (Tk 9 quebra os
+          # aliases de fonte e o app renderiza textos minúsculos/quadradinhos)
+          python-version: '3.12'
+
+      - name: Gerar o .exe
+        shell: cmd
+        run: build-windows.bat
+
+      - name: Subir o .exe como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NavePro.exe
+          path: dist/NavePro.exe
+          if-no-files-found: error
+
+      - name: Anexar à release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/NavePro.exe

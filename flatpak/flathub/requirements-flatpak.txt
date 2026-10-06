@@ -1,0 +1,5 @@
+# Dependências Python do NavePro para o Flatpak (runtime do app).
+# O pyinstaller (em requirements.txt) NÃO entra aqui: é só build do AppImage.
+screeninfo>=0.7
+Pillow>=10.0.0
+pypdf>=4.0.0

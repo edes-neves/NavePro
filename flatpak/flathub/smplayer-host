@@ -1,0 +1,38 @@
+#!/bin/sh
+# /app/bin/smplayer — wrapper para o Flatpak.
+#
+# O sandbox NÃO tem smplayer. Substituímos o comando `smplayer` por este
+# script, que lança o SMPlayer REAL do sistema via `flatpak-spawn --host`.
+#
+# O NavePro encerra o player matando o grupo de processos (killpg com
+# SIGTERM). Como o smplayer roda fora do sandbox, capturamos o TERM/INT
+# aqui e repassamos o sinal ao processo real no host, para o vídeo parar.
+set +e
+
+PIDFILE="$HOME/.navepro/smplayer-host.pid"
+rm -f "$PIDFILE"
+
+# Dispara o smplayer no host. O `$$` do host-shell vira o PID do smplayer
+# após o exec; anotamos esse PID no pidfile (mesmo caminho no host e aqui).
+# `_` é o $0 do shell; "$@" (os argumentos reais do NavePro) ficam em $1...
+flatpak-spawn --host /bin/sh -c \
+  'echo $$ > "$HOME/.navepro/smplayer-host.pid"; exec smplayer "$@"' \
+  _ "$@" &
+BROKER_PID=$!
+
+_kill_host_player() {
+  pid=$(cat "$PIDFILE" 2>/dev/null)
+  if [ -n "$pid" ]; then
+    # TERM no grupo do smplayer (smplayer vira líder de grupo e o mpv entra
+    # no mesmo grupo) → o vídeo para junto com a janela do player.
+    flatpak-spawn --host /bin/sh -c 'kill -TERM -- -"$1" 2>/dev/null' _ "$pid"
+  fi
+  exit 0
+}
+
+trap _kill_host_player TERM INT
+
+wait "$BROKER_PID"
+RESULT=$?
+rm -f "$PIDFILE"
+exit "$RESULT"
