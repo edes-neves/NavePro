@@ -6982,6 +6982,10 @@ class AppInterface:
         janela.geometry("440x150")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
+        try:
+            _centralizar_toplevel(janela, 440, 150)
+        except Exception:
+            pass
         janela.grab_set()
 
         def _atualizar_progresso(pct: int, baixado: int, total: int) -> None:
@@ -8126,6 +8130,10 @@ class AppInterface:
         janela.geometry("800x900")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
+        try:
+            _centralizar_toplevel(janela, 800, 900)
+        except Exception:
+            pass
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -8715,6 +8723,10 @@ class AppInterface:
         janela.geometry("950x750")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
+        try:
+            _centralizar_toplevel(janela, 950, 750)
+        except Exception:
+            pass
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -9291,6 +9303,10 @@ class AppInterface:
         janela.geometry("950x700")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
+        try:
+            _centralizar_toplevel(janela, 950, 700)
+        except Exception:
+            pass
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -11240,6 +11256,10 @@ class AppInterface:
         janela.geometry("950x700")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
+        try:
+            _centralizar_toplevel(janela, 950, 700)
+        except Exception:
+            pass
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
