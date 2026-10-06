@@ -8061,11 +8061,9 @@ class AppInterface:
             hora_atual = datetime.now().strftime("%H:%M")
             self.hora_label.config(text=hora_atual)
 
-            # Status a cada 2 segundos para reduzir chamadas D-Bus
-            # (o relógio é a cada 1s, status a cada 2s)
-            now_sec = datetime.now().second
-            if now_sec % 2 == 0:
-                self.atualizar_status()
+            # Atualiza o status a cada 1 segundo para que o tempo da música
+            # avance sem saltos de 2 segundos
+            self.atualizar_status()
 
             # Telão: só atualiza se estiver no modo relógio
             if self.player and self.player.telao.mostrando_relogio:
