@@ -5185,7 +5185,25 @@ class AppInterface:
                 m = _escolher_monitor_painel(monitors)
                 # Salva geometria do monitor para restaurar depois
                 self._monitor_geo = (m.width, m.height, m.x, m.y)
-                self.root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
+                # Inicia maximizado respeitando a área de trabalho (barra de tarefas)
+                # Usar 'zoomed' evita que a janela fique atrás da barra de tarefas
+                try:
+                    # Em alguns setups, setar a geometria completa antes de maximizar
+                    # evita que a janela fique parcialmente atrás da barra de tarefas
+                    self.root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
+                    self.root.update_idletasks()
+                    self.root.state('zoomed')
+                    self.root.update_idletasks()
+                    # Se ainda não cobriu direito, força a geometria para a área visível
+                    if _eh_windows():
+                        try:
+                            import ctypes
+                            rect = (ctypes.c_long * 4)()
+                            ctypes.windll.user32.SystemParametersInfoW(48, 0, rect, 0)  # SPI_GETWORKAREA
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
             else:
                 self._monitor_geo = None
                 self.root.state('zoomed')
@@ -7047,12 +7065,13 @@ class AppInterface:
                 self.root.geometry("900x800+200+100")
             self._maximizado = False
         else:
-            # Maximizar para ocupar todo o monitor
-            if hasattr(self, '_monitor_geo') and self._monitor_geo:
-                mw, mh, mx, my = self._monitor_geo
-                self.root.geometry(f"{mw}x{mh}+{mx}+{my}")
-            else:
+            # Maximizar para ocupar todo o monitor (respeitando barra de tarefas)
+            try:
                 self.root.state('zoomed')
+            except Exception:
+                if hasattr(self, '_monitor_geo') and self._monitor_geo:
+                    mw, mh, mx, my = self._monitor_geo
+                    self.root.geometry(f"{mw}x{mh}+{mx}+{my}")
             self._maximizado = True
 
     def criar_widgets(self) -> None:
