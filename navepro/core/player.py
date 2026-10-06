@@ -418,6 +418,13 @@ _WS_EX_APPWINDOW = 0x00040000
 _SWP_FRAMECHANGED = 0x0020
 _SWP_SHOWWINDOW = 0x0040
 _HWND_TOPMOST = -1
+_SW_HIDE = 0
+_SW_SHOW = 5
+
+# Títulos das janelas de saída de vídeo dos players conhecidos. O VLC cria
+# uma janela por fora ("VLC (Direct3D11 output)" / "(OpenGL output)") e outra
+# dentro para o painel; só a primeira é o vídeo que deve ir para o telão.
+_MARCAS_VIDEO = ("output", "direct3d", "opengl", "vout")
 
 
 def _user32():
@@ -476,6 +483,61 @@ def _janela_do_processo(u, pid: int) -> Optional[int]:
     return melhor
 
 
+def esconder_janelas_auxiliares(pid: int, tentativas: int = 20,
+                                intervalo: float = 0.15) -> int:
+    """Esconde as janelas do player que NÃO são a saída de vídeo.
+
+    Usado quando o player é capaz de se posicionar sozinho (VLC com
+    `--fullscreen` + `--qt-fullscreen-screennumber`): aí o NavePro não mexe em
+    geometria nenhuma, e o painel de controle do VLC — que o VLC abre na tela
+    primária — ficaria por cima/dentro do telão.
+
+    Devolve quantas janelas foram escondidas. Só age em janelas cujo título
+    não é a saída de vídeo (ver `_MARCAS_VIDEO`), então nunca esconde a
+    janela que está tocando.
+    """
+    if not _eh_windows() or not pid:
+        return 0
+    try:
+        u = _user32()
+    except Exception:
+        return 0
+
+    escondidas = 0
+    for _ in range(max(1, tentativas)):
+        alvos: list = []
+
+        @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+        def _cb(hwnd, _lparam, _alvos=alvos):
+            dono = wt.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ctypes.byref(dono))
+            if dono.value != pid or not u.IsWindowVisible(hwnd):
+                return True
+            tamanho = u.GetWindowTextLengthW(hwnd)
+            buffer = ctypes.create_unicode_buffer(tamanho + 1)
+            if tamanho:
+                u.GetWindowTextW(hwnd, buffer, tamanho + 1)
+            titulo = buffer.value.lower()
+            if not any(marca in titulo for marca in _MARCAS_VIDEO):
+                r = wt.RECT()
+                if u.GetWindowRect(hwnd, ctypes.byref(r)):
+                    if (r.right - r.left) > 0 and (r.bottom - r.top) > 0:
+                        _alvos.append(hwnd)
+            return True
+
+        u.EnumWindows(_cb, 0)
+        if not alvos:
+            return escondidas
+        for hwnd in alvos:
+            try:
+                u.ShowWindow(hwnd, _SW_HIDE)
+                escondidas += 1
+            except Exception:
+                pass
+        time.sleep(intervalo)
+    return escondidas
+
+
 def posicionar_janela_player(
     pid: int, x: int, y: int, largura: int, altura: int,
     tentativas: int = 40, intervalo: float = 0.1, topo: bool = True,
@@ -488,11 +550,21 @@ def posicionar_janela_player(
     para (0,0) do jeito que for. O Tk do telão tem o mesmo defeito. Então o
     player é aberto NORMAL e a janela é colocada por aqui.
 
+    ATENÇÃO — não use isto com o VLC
+    Redimensionar a janela de vídeo do VLC 3.0.24 (módulo de saída
+    `direct3d11`) faz o vout renegociar o tamanho a cada chamada: a janela
+    cresce sem parar (medido aqui: 1920x1080 → 5328x9368 → 10240x21341 →
+    12864x27737) e o monitor do telão fica com uma cor só, sem imagem. O
+    redimensionamento contínuo também trava a máquina. Para o VLC o NavePro
+    usa `--fullscreen` + `--qt-fullscreen-screennumber` e deixa o próprio VLC
+    se posicionar — ver `_montar_comando_player`. Esta função continua sendo
+    usada pelo mpv, que abre uma janela só e obedece ao `SetWindowPos`.
+
     Janela sem moldura (`WS_POPUP` + `WS_EX_APPWINDOW`) e em cima das outras,
     para o telão ficar limpo e o vídeo não ser interrompido por clique.
 
     Repete algumas vezes porque o player se reposiciona quando carrega o
-    arquivo, logo depois de aparecer a janela. Se nãoouver janela visível
+    arquivo, logo depois de aparecer a janela. Se não houver janela visível
     (arquivo só de áudio, ou player que não abre janela), devolve False e o
     NavePro segue normalmente.
     """

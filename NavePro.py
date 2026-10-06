@@ -59,6 +59,7 @@ from navepro.core.tema import _cor_clara, _OPCOES_COR_TK, _OPCOES_TEXTO
 from navepro.core.player import (
     ClienteMpvIpc,
     encerrar_arvore,
+    esconder_janelas_auxiliares,
     localizar_executavel,
     nome_pipe_mpv,
     posicionar_janela_player,
@@ -3206,6 +3207,9 @@ class MediaPlayer:
         self.tempo_acumulado: float = 0.0
         self.duracao_total: Optional[float] = None
         self._player_pid: Optional[int] = None
+        # Player realmente usado na última reprodução. Pode diferir de
+        # player_cmd quando o configurado não existe e caiu no fallback.
+        self._player_em_uso: str = player_cmd
         # Flag para evitar que _monitorar dispare "ended" quando matamos
         # o processo intencionalmente (via stop, próximo, anterior, tocar_indice)
         self._killed_intentionally: bool = False
@@ -3319,19 +3323,43 @@ class MediaPlayer:
         self.playlist = list(arquivos) if arquivos else []
         self.index = 0
 
-    def _get_monitor_geometry(self) -> tuple[int, int, int, int]:
-        """Retorna (x, y, width, height) do monitor alvo."""
+    def _monitor_alvo(self):
+        """Devolve o MonitorInfo do telão (com fallback se a lista falhar)."""
         try:
             monitors = get_monitors_config()
             if len(monitors) >= self.monitor_index:
-                m = monitors[self.monitor_index - 1]
-            elif len(monitors) > 1:
-                m = monitors[1]
-            else:
-                m = monitors[0]
+                return monitors[self.monitor_index - 1]
+            if len(monitors) > 1:
+                return monitors[1]
+            return monitors[0]
+        except Exception:
+            return MonitorInfo(1920, 0, 1920, 1080, "Telão")
+
+    def _get_monitor_geometry(self) -> tuple[int, int, int, int]:
+        """Retorna (x, y, width, height) do monitor alvo."""
+        try:
+            m = self._monitor_alvo()
             return m.x, m.y, m.width, m.height
         except Exception:
             return 1920, 0, 1920, 1080
+
+    def _indice_screennumber(self) -> int:
+        """Índice 0-based do telão para o `--qt-fullscreen-screennumber` do VLC.
+
+        O VLC numera os monitores na ordem em que o Windows os enumera
+        (primário primeiro), e é a mesma ordem de `get_monitors_config()`.
+        Confere pela geometria: se dois monitores tivessem a mesma origem,
+        o índice da lista ainda seria o certo.
+        """
+        try:
+            m = self._monitor_alvo()
+            for indice, outro in enumerate(get_monitors_config()):
+                if (outro.x, outro.y, outro.width, outro.height) == (
+                        m.x, m.y, m.width, m.height):
+                    return indice
+        except Exception:
+            pass
+        return 0
 
     def _matar_processo(self) -> None:
         """Mata o processo atual e TODOS os seus filhos (grupo de processos).
@@ -3493,6 +3521,20 @@ class MediaPlayer:
                 pass
             self._ipc = None
 
+    def _player_se_posiciona_sozinho(self) -> bool:
+        """True se o player em uso já entra no telão sem ajuda do Win32.
+
+        Só o VLC: ele aceita `--fullscreen` com `--qt-fullscreen-screennumber`
+        e cumpre o monitor pedido (medido aqui no VLC 3.0.24, estável por
+        46 s de reprodução). O mpv ignora `--screen`/`--geometry` em tela
+        cheia, então para ele o NavePro continua movendo a janela.
+
+        O VLC não pode ser reposicionado por `posicionar_janela_player`: o
+        redimensionamento quebra o vout `direct3d11` e a janela cresce sem
+        parar. Por isso ele entra EXCLUSIVAMENTE por este caminho.
+        """
+        return self._player_em_uso == "vlc"
+
     def _preparar_controle_windows(
         self, pid: int, arquivo: str, mx: int, my: int, mw: int, mh: int
     ) -> None:
@@ -3509,13 +3551,27 @@ class MediaPlayer:
            pipe: não bloqueia.
         """
         if self._eh_arquivo_de_video(arquivo):
-            def _posicionar() -> None:
-                ok = posicionar_janela_player(pid, mx, my, mw, mh)
-                print(("   🖥️ Player posicionado no telão" if ok
-                       else "   ⚠️ Não consegui posicionar o player no telão"))
+            # O VLC já entra em tela cheia no monitor certo por conta própria
+            # (--fullscreen + --qt-fullscreen-screennumber), e redimensionar a
+            # janela de vídeo dele quebra o vout (ver _montar_comando_player).
+            # Então só escondemos o painel de controle que ele abre na tela
+            # primária; nenhum SetWindowPos é feito.
+            if self._player_se_posiciona_sozinho():
+                def _limpar() -> None:
+                    n = esconder_janelas_auxiliares(pid)
+                    print(f"   🖥️ Vídeo no telão (player se posicionou)"
+                          f"{f', {n} painel(is) escondido(s)' if n else ''}")
 
-            threading.Thread(target=_posicionar, daemon=True,
-                             name="navepro-pos-player").start()
+                threading.Thread(target=_limpar, daemon=True,
+                                 name="navepro-limpa-vlc").start()
+            else:
+                def _posicionar() -> None:
+                    ok = posicionar_janela_player(pid, mx, my, mw, mh)
+                    print(("   🖥️ Player posicionado no telão" if ok
+                           else "   ⚠️ Não consegui posicionar o player no telão"))
+
+                threading.Thread(target=_posicionar, daemon=True,
+                                 name="navepro-pos-player").start()
 
         if self._pipe_mpv:
             cliente = ClienteMpvIpc(self._pipe_mpv)
@@ -3533,11 +3589,17 @@ class MediaPlayer:
         alternativas — no Windows o mpv vem primeiro por ser o único com canal
         de comando; no Linux a ordem é a de sempre (smplayer, que expõe MPRIS).
 
-        No Windows o player é aberto SEM `--fullscreen`: nem o mpv nem o VLC
-        respeitam o monitor pedido nesse modo (medido aqui: mpv ignora
-        `--screen` e `--geometry` e vai sempre para o primário). A janela é
-        aberta normal e reposicionada sobre o telão por
-        `posicionar_janela_player`, que funciona com qualquer player.
+        No Windows, como o monitor é escolhido:
+
+        - **VLC** — aberto em `--fullscreen` + `--qt-fullscreen-screennumber`,
+          então ele mesmo entra no monitor pedido. Não usamos
+          `posicionar_janela_player` nele: redimensionar a janela de vídeo do
+          VLC quebra o vout (medido aqui nos comentários do comando).
+        - **mpv / SMPlayer** — abertos SEM `--fullscreen`, porque nenhum dos
+          dois respeita o monitor pedido nesse modo (medido aqui: o mpv 0.41
+          ignora `--screen` e `--geometry` e vai sempre para o primário). A
+          janela é aberta normal e reposicionada sobre o telão por
+          `posicionar_janela_player`.
         """
         player = self.player_cmd
 
@@ -3553,12 +3615,17 @@ class MediaPlayer:
                     player = alt
                     break
             else:
-                print("   \u274c Nenhum player encontrado! "
+                print("   ❌ Nenhum player encontrado! "
                       "Usando o aplicativo padrão")
                 self._lancamento_desanexado = True
                 if _eh_windows():
                     return ['cmd', '/c', 'start', '', arquivo]
                 return ['xdg-open', arquivo]
+
+        # Player realmente usado (pode ter mudado pelo fallback acima). É
+        # daqui que _preparar_controle_windows descobre se precisa posicionar
+        # a janela ou se o player já se posicionou sozinho.
+        self._player_em_uso = player
 
         if player == "smplayer":
             if _eh_windows():
@@ -3571,11 +3638,19 @@ class MediaPlayer:
         elif player == "vlc":
             if _eh_windows():
                 exe = localizar_executavel("vlc") or "vlc"
+                # Fullscreen pedido AO VLC, e não via SetWindowPos.
+                # Medido aqui: redimensionar a janela de vídeo do VLC 3.0.24
+                # (vout direct3d11) faz o vout renegociar o tamanho a cada
+                # chamada — a janela cresce sem parar (1920x1080 → 5328x9368
+                # → 10240x21341 → 12864x27737), o monitor do telão fica com
+                # uma cor só (sem imagem) e a máquina trava. Deixando o VLC
+                # se posicionar sozinho, o vídeo entra certo e fica estável.
+                # `--qt-fullscreen-screennumber` é o que escolhe o monitor
+                # (é 0-based, na ordem do Windows: primário primeiro).
                 return [
                     exe, '--quiet', '--no-osd', '--no-video-title-show',
-                    '--play-and-exit', '--no-embedded-video',
-                    f'--video-x={mx}', f'--video-y={my}',
-                    f'--width={mw}', f'--height={mh}',
+                    '--play-and-exit', '--fullscreen',
+                    f'--qt-fullscreen-screennumber={self._indice_screennumber()}',
                     arquivo,
                 ]
             return [
@@ -7508,9 +7583,14 @@ class AppInterface:
             self._aviso_timer = None
 
         # Contagem de repetições: cada tique reescreve e conta 1 s.
+        # `nonlocal` é obrigatório: sem ele o Python trata `restantes` como
+        # variável local de `_repetir` e o `restantes -= 1` estoura
+        # UnboundLocalError no primeiro tique — foi o que derrubou o aviso de
+        # pausa do VLC (e, com a exceção na thread do Tk, congelou a interface).
         restantes = max(1, int(segundos))
 
         def _repetir() -> None:
+            nonlocal restantes
             try:
                 self.status_label.config(text=mensagem)
             except tk.TclError:

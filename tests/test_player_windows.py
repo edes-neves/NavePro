@@ -10,15 +10,29 @@ Regressões travadas aqui:
 2. **Pipe do mpv único por reprodução** — se o nome se repetisse, o mpv novo
    reconectaria no servidor do mpv velho e o NavePro controlaria o player errado.
 
-3. **Flags do comando** — no Windows o player NÃO pode levar `--fullscreen`:
-   medido aqui, o mpv ignora `--screen`/`--geometry` em tela cheia e sempre abre
-   no monitor primário. A posição vem do Win32 depois.
+3. **Flags do comando** — cada player recebe o tratamento certo:
+   o mpv NÃO pode levar `--fullscreen` (medido aqui: ignora `--screen` e
+   `--geometry` em tela cheia e sempre abre no monitor primário, a posição vem
+   do Win32 depois); o VLC PRECISA levar `--fullscreen` com
+   `--qt-fullscreen-screennumber`, porque redimensionar a janela de vídeo dele
+   quebra o vout `direct3d11` (a janela cresce sem parar e o telão fica sem
+   imagem).
 
-4. **Fim de faixa** — lançamento desanexado (`cmd /c start`) não pode gerar
+4. **Escolha de quem posiciona** — VLC se posiciona sozinho, mpv/SMPlayer não.
+   Se o NavePro chamar `posicionar_janela_player` no VLC, o vídeo some e a
+   máquina trava; se não chamar no mpv, o vídeo vai para o monitor errado.
+
+5. **Fim de faixa** — lançamento desanexado (`cmd /c start`) não pode gerar
    "ended" falso logo depois de começar a tocar.
 
-5. **Integridade** — `_pausar_player` precisa existir em todos os caminhos e o
+6. **Integridade** — `_pausar_player` precisa existir em todos os caminhos e o
    caminho Linux não pode ter sido comido.
+
+7. **Aviso de pausa sem quebrar a interface** — o `mostrar_aviso` reescreve o
+   status a cada tique para o texto não ser apagado pelo `atualizar_status`.
+   A contagem precisa de `nonlocal`: sem isso o `restantes -= 1` estoura
+   UnboundLocalError no primeiro tique, que é o que derrubava o clique em
+   pausar.
 """
 
 import ast
@@ -32,6 +46,7 @@ sys.path.insert(0, RAIZ)
 from navepro.core.player import (  # noqa: E402
     ClienteMpvIpc,
     encerrar_arvore,
+    esconder_janelas_auxiliares,
     localizar_executavel,
     limpar_cache_executaveis,
     nome_pipe_mpv,
@@ -57,6 +72,24 @@ def _extrair_metodo(classe: str, metodo: str) -> callable:
                     exec(compile(mod, f"<{classe}.{metodo}>", "exec"), ns)
                     return ns[metodo]
     raise AssertionError(f"{classe}.{metodo} não encontrada em NavePro.py")
+
+
+def _arvore_metodo(classe: str, metodo: str):
+    """Devolve o nó AST de um método do NavePro.py."""
+    src = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+    no = ast.parse(src)
+    for node in ast.walk(no):
+        if isinstance(node, ast.ClassDef) and node.name == classe:
+            for sub in node.body:
+                if (isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and sub.name == metodo):
+                    return sub
+    raise AssertionError(f"{classe}.{metodo} não encontrada em NavePro.py")
+
+
+def _falso_sozinho(player: str):
+    """Objeto com o mínimo que `_player_se_posiciona_sozinho` toca."""
+    return type("F", (), {"_player_em_uso": player})()
 
 
 def _fontes_da_classe(classe: str) -> str:
@@ -108,16 +141,22 @@ def _rodar() -> int:
     # ── 3. Comando do player no Windows ───────────────────────────────
     montar = _extrair_metodo("MediaPlayer", "_montar_comando_player")
     if _eh_windows():
-        mpv = localizar_executavel("mpv")
-        if mpv:
-            # self mínimo: só o que _montar_comando_player usa.
-            fake = type("F", (), {
-                "player_cmd": "mpv", "_lancamento_desanexado": False,
+        # self mínimo: só o que _montar_comando_player usa.
+        def _falso(player, **extra):
+            base = {
+                "player_cmd": player, "_lancamento_desanexado": False,
                 "_pipe_mpv": "", "_contador_pipe": 0,
+                "_player_em_uso": player,
                 "_player_existe": staticmethod(
                     lambda n: localizar_executavel(n) is not None),
-                "_print": staticmethod(lambda *a: None),
-            })()
+                "_indice_screennumber": staticmethod(lambda: 1),
+            }
+            base.update(extra)
+            return type("F", (), base)()
+
+        mpv = localizar_executavel("mpv")
+        if mpv:
+            fake = _falso("mpv")
             cmd = montar(fake, "musica.mp3", 1920, 0, 1920, 1080)
             checar("mpv é chamado pelo caminho completo (não depende do PATH)",
                    cmd[0] == mpv)
@@ -137,45 +176,54 @@ def _rodar() -> int:
                    fake._pipe_mpv.startswith("\\\\.\\pipe\\navepro-mpv-"))
             checar("lançamento NÃO é desanexado (mpv é chamado direto)",
                    fake._lancamento_desanexado is False)
-
-            vlc = localizar_executavel("vlc")
-            if vlc:
-                fake2 = type("F", (), {
-                    "player_cmd": "vlc", "_lancamento_desanexado": False,
-                    "_pipe_mpv": "", "_contador_pipe": 0,
-                    "_player_existe": staticmethod(
-                        lambda n: localizar_executavel(n) is not None),
-                })()
-                cmd2 = montar(fake2, "video.mp4", 1920, 0, 1920, 1080)
-                checar("vlc é chamado pelo caminho completo",
-                       cmd2[0] == vlc)
-                checar("vlc NÃO recebe --fullscreen no Windows",
-                       "--fullscreen" not in cmd2)
-                checar("vlc não é lançado desanexado (senão perde o handle)",
-                       fake2._lancamento_desanexado is False)
+            checar("player_em_uso registra o mpv",
+                   fake._player_em_uso == "mpv")
 
             # Player configurado que não existe: tem de cair no mpv (que tem
             # canal de comando), não no SMPlayer (não tem).
             smplayer = localizar_executavel("smplayer")
-            fake3 = type("F", (), {
-                "player_cmd": "player-inexistente", "_lancamento_desanexado": False,
-                "_pipe_mpv": "", "_contador_pipe": 0,
-                "_player_existe": staticmethod(
-                    lambda n: localizar_executavel(n) is not None),
-            })()
+            fake3 = _falso("player-inexistente")
             cmd3 = montar(fake3, "video.mp4", 1920, 0, 1920, 1080)
             if mpv and smplayer:
                 checar("player inexistente cai no mpv, não no smplayer",
                        cmd3[0] == mpv)
                 checar("comando de fallback continua sendo um player direto",
                        cmd3[0] != "cmd")
+                checar("player_em_uso passa a ser o do fallback",
+                       fake3._player_em_uso == "mpv")
         else:
-            print("   (mpv ausente: pulando os testes de comando)")
+            print("   (mpv ausente: pulando os testes de comando do mpv)")
+
+        # VLC: fullscreen pedido a ele, e nunca redimensionado pelo Win32.
+        vlc = localizar_executavel("vlc")
+        if vlc:
+            fake2 = _falso("vlc")
+            cmd2 = montar(fake2, "video.mp4", 1920, 0, 1920, 1080)
+            checar("vlc é chamado pelo caminho completo", cmd2[0] == vlc)
+            checar("vlc RECEBE --fullscreen (ele cumpre o monitor pedido)",
+                   "--fullscreen" in cmd2)
+            checar("vlc recebe --qt-fullscreen-screennumber (escolhe o telão)",
+                   any(c.startswith("--qt-fullscreen-screennumber=")
+                       for c in cmd2))
+            checar("--qt-fullscreen-screennumber usa o índice do telão",
+                   "--qt-fullscreen-screennumber=1" in cmd2)
+            checar("vlc NÃO recebe --video-x/--video-y (vão para y=-32768)",
+                   not any(c.startswith("--video-") for c in cmd2))
+            checar("vlc NÃO recebe --width/--height (vout renegociaria)",
+                   not any(c.startswith("--width") or c.startswith("--height")
+                           for c in cmd2))
+            checar("vlc não é lançado desanexado (senão perde o handle)",
+                   fake2._lancamento_desanexado is False)
+            checar("player_em_uso registra o vlc",
+                   fake2._player_em_uso == "vlc")
+        else:
+            print("   (vlc ausente: pulando os testes de comando do vlc)")
     else:
         # No Linux nada muda: player direto, sem IPC, sem pipe.
         fake = type("F", (), {
             "player_cmd": "smplayer", "_lancamento_desanexado": False,
             "_pipe_mpv": "", "_contador_pipe": 0,
+            "_player_em_uso": "smplayer",
             "_player_existe": staticmethod(lambda n: True),
         })()
         cmd = montar(fake, "video.mp4", 0, 0, 1920, 1080)
@@ -290,13 +338,63 @@ def _rodar() -> int:
     checar("AppInterface mostra o aviso no status_label",
            "status_label.config" in
            fonte_app.split("def mostrar_aviso")[1][:1500])
+    corpo_aviso = fonte_app.split("def mostrar_aviso")[1][:1500]
     checar("mostrar_aviso segura o texto contra o atualizar_status",
-           "after(" in fonte_app.split("def mostrar_aviso")[1][:1500])
+           "after(" in corpo_aviso)
+    checar("mostrar_aviso declara `nonlocal restantes`",
+           "nonlocal restantes" in corpo_aviso)
+    # Sem o `nonlocal`, `restantes -= 1` cria uma variável local e o primeiro
+    # tique do aviso levanta UnboundLocalError dentro da thread do Tk.
+    arvore_aviso = _arvore_metodo("AppInterface", "mostrar_aviso")
+    repeticoes = [n for n in ast.walk(arvore_aviso)
+                  if isinstance(n, ast.FunctionDef) and n.name == "_repetir"]
+    checar("mostrar_aviso tem a função _repetir do timer", len(repeticoes) == 1)
+    if repeticoes:
+        nao_locais = {nome for n in ast.walk(repeticoes[0])
+                      if isinstance(n, ast.Nonlocal) for nome in n.names}
+        checar("_repetir realmente usa nonlocal (senão quebra o aviso)",
+               "restantes" in nao_locais)
     checar("MediaPlayer avisa via on_aviso (sem console no .exe)",
            "on_aviso" in fonte)
 
+    # ── 5c. Quem posiciona a janela: VLC sozinho, mpv pelo Win32 ──────
+    # Se o NavePro redimensionar a janela de vídeo do VLC, o vout direct3d11
+    # renegociá-la e a janela cresce sem parar (medido: 1920x1080 →
+    # 12864x27737): o telão fica com uma cor só e a máquina trava.
+    sozinho = _extrair_metodo("MediaPlayer", "_player_se_posiciona_sozinho")
+    checar("VLC se posiciona sozinho (nada de SetWindowPos nele)",
+           sozinho(_falso_sozinho("vlc")) is True)
+    checar("mpv NÃO se posiciona sozinho (precisa do Win32)",
+           sozinho(_falso_sozinho("mpv")) is False)
+    checar("smplayer NÃO se posiciona sozinho (precisa do Win32)",
+           sozinho(_falso_sozinho("smplayer")) is False)
+
+    # Estrutural: o `posicionar_janela_player` tem de estar no `else` do teste
+    # de quem se posiciona sozinho, nunca no caminho do VLC.
+    arvore_preparar = _arvore_metodo("MediaPlayer", "_preparar_controle_windows")
+    guardas = [n for n in ast.walk(arvore_preparar)
+               if isinstance(n, ast.If)
+               and "_player_se_posiciona_sozinho" in ast.unparse(n.test)]
+    checar("_preparar_controle_windows testa quem se posiciona sozinho",
+           len(guardas) == 1)
+    if guardas:
+        guarda = guardas[0]
+        ramo_sozinho = ast.unparse(guarda.body)
+        ramo_win32 = ast.unparse(guarda.orelse)
+        checar("ramo do VLC esconde o painel e NÃO chama SetWindowPos",
+               "esconder_janelas_auxiliares" in ramo_sozinho
+               and "posicionar_janela_player" not in ramo_sozinho)
+        checar("ramo do mpv/SMPlayer é o que reposiciona a janela",
+               "posicionar_janela_player" in ramo_win32
+               and "esconder_janelas_auxiliares" not in ramo_win32)
+
     # ── 6. Posicionamento: coordenadas exatas, sem sair do SO ─────────
     if _eh_windows():
+        checar("esconder_janelas_auxiliares ignora PID inexistente",
+               esconder_janelas_auxiliares(0) == 0)
+        checar("esconder_janelas_auxiliares tolera processo sem janela",
+               isinstance(esconder_janelas_auxiliares(
+                   os.getpid(), tentativas=2, intervalo=0.01), int))
         checar("posicionar_janela_player ignora PID inexistente",
                posicionar_janela_player(0, 1920, 0, 1920, 1080,
                                        tentativas=1) is False)

@@ -252,14 +252,26 @@ Sem o mpv, o NavePro continua funcionando: ele detecta e usa o **VLC** ou o
 **parar** funciona. Só o **pausar/continuar** fica indisponível — e o NavePro
 avisa isso na tela, com o comando de instalação, em vez de falhar calado.
 
-#### Por que o player é reposicionado por código
+#### Como o player é colocado no monitor do telão
 
-Nenhum player respeita o monitor pedido em tela cheia no Windows: medido
-aqui, o mpv ignora `--screen` e `--geometry` e sempre abre no monitor
-primário (o VLC faz o mesmo). Por isso o player é aberto **sem**
-`--fullscreen` e a janela é colocada sobre o monitor do telão por Win32
-(`posicionar_janela_player` em `navepro/core/player.py`), sem moldura e em
-cima das outras janelas. O mesmo vale para o relógio do telão, em
+Cada player recebe o tratamento que funciona nele, medido nesta máquina:
+
+| Player | Como entra no telão |
+|---|---|
+| **VLC** | `--fullscreen` + `--qt-fullscreen-screennumber=<n>`, ou seja, o próprio VLC se posiciona. O NavePro só esconde o painel de controle que ele abre na tela principal. |
+| **mpv**, **SMPlayer** | Abertos **sem** `--fullscreen`, e a janela é colocada sobre o telão por Win32 (`posicionar_janela_player` em `navepro/core/player.py`), sem moldura e em cima das outras janelas. |
+
+**Por que o VLC não pode ser reposicionado por código:** redimensionar a janela
+de vídeo do VLC 3.0.24 (módulo de saída `direct3d11`) faz o vout renegociar o
+tamanho a cada chamada, e a janela cresce sem parar. Medido aqui, indo de
+1920x1080 para 5328x9368, depois 10240x21341 e 12864x27737. Com a janela
+nesse estado o monitor do telão fica com uma cor só (sem imagem) e o
+redimensionamento contínuo trava a máquina. Deixando o VLC se posicionar
+sozinho, o vídeo entra no monitor certo e fica estável.
+
+**Por que o mpv e o SMPlayer não podem usar `--fullscreen`:** medido aqui, o
+mpv 0.41 ignora `--screen` e `--geometry` em tela cheia e sempre abre no
+monitor primário. O mesmo vale para o relógio do telão, em
 `TelaoWindow._aplicar_tela_cheia`.
 
 ## Testes
@@ -284,8 +296,16 @@ for %f in (tests\test_*.py) do @python %f || echo FALHOU: %f   :: todas
 | `test_seletor.py` | Seletor de arquivos do app (filtros e pastas ocultas) |
 | `test_imagens.py` | Imagens de fundo e transferência entre janelas |
 | `test_monitores.py` | Escolha do monitor do painel e do telão: nunca os dois no mesmo monitor, mesmo sem primário detectado |
-| `test_player_windows.py` | Player no Windows: descoberta de executáveis, pipe do mpv por faixa, flags do comando (sem `--fullscreen`), fim de faixa sem "ended" falso, aviso de player sem comando remoto |
+| `test_player_windows.py` | Player no Windows: descoberta de executáveis, pipe do mpv por faixa, flags do comando (mpv sem `--fullscreen`; VLC com `--fullscreen --qt-fullscreen-screennumber`), quem posiciona a janela, fim de faixa sem "ended" falso, aviso de pausa sem `UnboundLocalError` |
 | `test_atualizacao.py` | Detecção de instalação e escolha do asset do release |
+
+Duas suítes de verificação ligam o código a esta máquina e servem quando um
+problema só aparece na tela (o resto roda sem monitor e sem vídeo):
+
+```bat
+python tests\validar_vlc_telao.py   :: toca o MP4 no telão e confere por captura de tela
+python tests\validar_aviso.py        :: roda o aviso de pausa com Tk real e caça exceção
+```
 
 > Um detalhe que já custou tempo: o `after()` do Tk devolve o id do timer como
 > **`str`**. Num Tk falso, guardar o timer sob chave `int` faz o `after_cancel`
