@@ -1,8 +1,9 @@
 """NavePro - Localização e controle de players externos.
 
-Este módulo concentra o que é específico do Windows para tocar mídia no
-telão. No Linux nada aqui altera o comportamento: os caminhos Linux e o
-controle por D-Bus/MPRIS continuam como estavam em NavePro.py.
+Este módulo concentra o que é específico de cada plataforma para tocar mídia
+no telão. No Windows: localização de players e controle do mpv por IPC. No
+Linux: os nomes D-Bus/MPRIS dos players e o modo de falar com o player do
+host quando o NavePro roda dentro de um Flatpak.
 
 1. `localizar_executavel` - além do PATH, procura o programa nos diretórios
    padrão de instalação do Windows. Sem isso, um VLC instalado em
@@ -29,11 +30,13 @@ import ctypes.wintypes as wt
 import glob
 import json
 import os
+import re
 import shutil
+import subprocess
 import time
 from typing import Optional
 
-from navepro.core.ambiente import _eh_windows
+from navepro.core.ambiente import _ambiente_sem_appimage, _eh_windows
 
 # Nomes de programa que o NavePro pode precisar localizar no Windows, com os
 # caminhos relativos de instalação padrão de cada um. A sintaxe é a do
@@ -605,3 +608,100 @@ def posicionar_janela_player(
         time.sleep(intervalo)
     return False
 
+
+
+# ── D-Bus/MPRIS (Linux) ──────────────────────────────────────────
+# Nomes MPRIS que o NavePro sabe falar. O mpv é o que registra o nome
+# quando roda por baixo do smplayer — é ele que faltava no mapa (e no
+# manifesto do Flatpak): sem o nome certo, o pause do painel "funciona"
+# no papel e o vídeo segue tocando.
+MPRIS_DESTS: dict[str, str] = {
+    "smplayer": "org.mpris.MediaPlayer2.smplayer",
+    "vlc": "org.mpris.MediaPlayer2.vlc",
+    "mpv": "org.mpris.MediaPlayer2.mpv",
+}
+
+
+def destino_mpris(comando: str) -> Optional[str]:
+    """Destino D-Bus MPRIS pelo nome base do comando.
+
+    O comando pode vir como caminho completo (/run/host/usr/bin/mpv no
+    Flatpak, C:\\...\\mpv.exe no Windows); o que interessa para o MPRIS é
+    o nome do player. Separa barra de qualquer sistema e remove o .exe,
+    para valer nos dois lados.
+    """
+    base = (comando or "").replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+    if base.endswith(".exe"):
+        base = base[:-4]
+    return MPRIS_DESTS.get(base)
+
+
+def mpris_status(dest: str, timeout: float = 1.0) -> Optional[str]:
+    """PlaybackStatus ('Playing'/'Paused'/'Stopped') de um nome MPRIS.
+
+    A leitura de propriedade funciona mesmo de dentro do Flatpak; o que
+    não funciona de forma confiável são os MÉTODOS (PlayPause). Ler o
+    status antes/depois é o que permite saber se um comando surtiu efeito.
+    """
+    try:
+        resp = subprocess.run(
+            ['dbus-send', '--session', '--print-reply',
+             f'--dest={dest}', '/org/mpris/MediaPlayer2',
+             'org.freedesktop.DBus.Properties.Get',
+             'string:org.mpris.MediaPlayer2.Player',
+             'string:PlaybackStatus'],
+            timeout=timeout, capture_output=True, text=True,
+            env=_ambiente_sem_appimage())
+    except Exception:
+        return None
+    m = re.search(r'string "(Playing|Paused|Stopped)"', resp.stdout or '')
+    return m.group(1) if m else None
+
+
+def mpris_ativo(destinos: list, timeout: float = 1.0) -> Optional[str]:
+    """Primeiro destino MPRIS que realmente responde no barramento.
+
+    Só o returncode do `dbus-send` não prova que o player está lá: sem
+    --print-reply ele devolve exit 0 MESMO quando o nome não existe (o
+    erro nem vai pro stderr). Por isso o NameHasOwner, que responde
+    boolean true/false de verdade — é o que impede o painel de mostrar
+    "pausado" com o vídeo tocando.
+    """
+    for dest in destinos:
+        if not dest:
+            continue
+        try:
+            resp = subprocess.run(
+                ['dbus-send', '--session', '--print-reply',
+                 '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus',
+                 'org.freedesktop.DBus.NameHasOwner', f'string:{dest}'],
+                timeout=timeout, capture_output=True, text=True,
+                env=_ambiente_sem_appimage())
+        except Exception:
+            continue
+        if resp.returncode == 0 and re.search(r'boolean true', resp.stdout or ''):
+            return dest
+
+    # Nome com sufixo de instância (org.mpris.MediaPlayer2.smplayer_1).
+    # Só aceita o que bate com os nomes pedidos — nunca outro player.
+    alvos = [d for d in destinos if d]
+    if not alvos:
+        return None
+    try:
+        resp = subprocess.run(
+            ['dbus-send', '--session', '--print-reply',
+             '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus',
+             'org.freedesktop.DBus.ListNames'],
+            timeout=timeout, capture_output=True, text=True,
+            env=_ambiente_sem_appimage())
+        if resp.returncode != 0:
+            return None
+        for nome in re.findall(r'string "([^"]+)"', resp.stdout or ''):
+            if not nome.startswith('org.mpris.MediaPlayer2.'):
+                continue
+            for alvo in alvos:
+                if nome == alvo or nome.startswith(alvo + '_'):
+                    return nome
+    except Exception:
+        pass
+    return None

@@ -39,9 +39,14 @@ finish-args:
   - --filesystem=host-os
   # flatpak-spawn --host: executa o smplayer/mpv/vlc DO SISTEMA fora do sandbox
   - --talk-name=org.freedesktop.Flatpak
-  # Pausa/sincronização via D-Bus (MPRIS) com o player do host
+  # Pausa/sincronização via D-Bus (MPRIS) com o player do host.
+  # O mpv é o que registra o nome quando roda por baixo do smplayer — sem
+  # o talk-name dele (e sem o curinga com sufixo de instância), o pause
+  # do painel não enxergava o player dentro do sandbox.
   - --talk-name=org.mpris.MediaPlayer2.smplayer
   - --talk-name=org.mpris.MediaPlayer2.vlc
+  - --talk-name=org.mpris.MediaPlayer2.mpv
+  - --talk-name=org.mpris.MediaPlayer2.*
   # Notificações e "abrir pasta Downloads"
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.freedesktop.FileManager1

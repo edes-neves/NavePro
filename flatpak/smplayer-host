@@ -23,9 +23,12 @@ BROKER_PID=$!
 _kill_host_player() {
   pid=$(cat "$PIDFILE" 2>/dev/null)
   if [ -n "$pid" ]; then
-    # TERM no grupo do smplayer (smplayer vira líder de grupo e o mpv entra
-    # no mesmo grupo) → o vídeo para junto com a janela do player.
-    flatpak-spawn --host /bin/sh -c 'kill -TERM -- -"$1" 2>/dev/null' _ "$pid"
+    # kill DIRETO (util-linux) via flatpak-spawn — sem wrapper de sh: o
+    # /bin/sh do host é o dash e o builtin dele rejeita pid negativo
+    # ("Illegal number: -"). O pause congela o grupo com SIGSTOP; processo
+    # parado NÃO entrega SIGTERM, então CONT acorda e o TERM mata.
+    flatpak-spawn --host kill -CONT -- "-$pid" 2>/dev/null
+    flatpak-spawn --host kill -TERM -- "-$pid" 2>/dev/null
   fi
   exit 0
 }

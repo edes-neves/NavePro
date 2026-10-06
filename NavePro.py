@@ -48,6 +48,7 @@ from navepro.core.ambiente import (
     _ambiente_sem_appimage,
     _eh_windows,
     _eh_linux,
+    _eh_flatpak,
     _eh_appimage,
     _tornar_dpi_aware,
 )
@@ -58,9 +59,13 @@ from navepro.core.ssl_context import (
 from navepro.core.tema import _cor_clara, _OPCOES_COR_TK, _OPCOES_TEXTO
 from navepro.core.player import (
     ClienteMpvIpc,
+    MPRIS_DESTS,
+    destino_mpris,
     encerrar_arvore,
     esconder_janelas_auxiliares,
     localizar_executavel,
+    mpris_ativo,
+    mpris_status,
     nome_pipe_mpv,
     posicionar_janela_player,
 )
@@ -3223,11 +3228,8 @@ class MediaPlayer:
     _duracao_cache: Dict[str, float] = {}
     _duracao_cache_lock = threading.Lock()
     _DURACAO_CACHE_MAX: int = 256
-    # Mapeamento player -> D-Bus (constante de classe, evita dict recriado)
-    _MPRIS_DESTS: dict[str, str] = {
-        "smplayer": "org.mpris.MediaPlayer2.smplayer",
-        "vlc": "org.mpris.MediaPlayer2.vlc",
-    }
+    # Mapeamento player -> D-Bus (fonte única em navepro/core/player.py)
+    _MPRIS_DESTS: dict[str, str] = dict(MPRIS_DESTS)
 
     def __init__(self, monitor_index: int = 1, player_cmd: str = PLAYER_PADRAO,
                  telao: Optional[TelaoWindow] = None) -> None:
@@ -3447,6 +3449,12 @@ class MediaPlayer:
 
         try:
             pgid = os.getpgid(pid)
+            # Wake-up se o pause congelou o grupo (SIGSTOP): processo parado
+            # ignora SIGTERM (fica pendurado); CONT acorda e o TERM mata.
+            try:
+                os.killpg(pgid, signal.SIGCONT)
+            except OSError:
+                pass
             # SIGTERM no grupo inteiro (mata smplayer + mplayer filho)
             os.killpg(pgid, signal.SIGTERM)
             
@@ -3807,6 +3815,15 @@ class MediaPlayer:
         usa o IPC JSON do mpv — o equivalente ao MPRIS. Sem nenhum dos dois
         (macOS, ou player que não expõe canal) devolve False e o chamador
         mantém o estado interno como estava.
+
+        No Flatpak o SIGSTOP direto não serve: o player roda no HOST
+        (flatpak-spawn) e o processo na mão é só o proxy do smplayer-host —
+        ali o sinal vai pelo pidfile do shim, no grupo do player real.
+        Além disso, dentro do sandbox os MÉTODOS MPRIS (PlayPause/Pause/
+        Play) não pausam o smplayer de forma consistente — só a leitura de
+        propriedade funciona — por isso o caminho Flatpak tenta o pidfile
+        PRIMEIRO e só cai no MPRIS se o sinal falhar, e o MPRIS só afirma
+        sucesso se o PlaybackStatus realmente mudar.
         """
         if _eh_windows():
             if not self._ipc_mpv_disponivel():
@@ -3821,36 +3838,34 @@ class MediaPlayer:
                 return False
         if not _eh_linux():
             return False
-        # Tenta D-Bus com o player ativo primeiro (evita loop em ambos)
-        dest = self._MPRIS_DESTS.get(self.player_cmd)
-        if dest:
-            try:
-                subprocess.run(
-                    ['dbus-send', '--type=method_call',
-                     f'--dest={dest}',
-                     '/org/mpris/MediaPlayer2',
-                     'org.mpris.MediaPlayer2.Player.PlayPause'],
-                    timeout=1, capture_output=True, env=_ambiente_sem_appimage()
-                )
+
+        candidatos: list[str] = []
+        for nome in (self._player_em_uso, self.player_cmd):
+            dest = destino_mpris(nome or "")
+            if dest and dest not in candidatos:
+                candidatos.append(dest)
+        for dest in MPRIS_DESTS.values():
+            if dest not in candidatos:
+                candidatos.append(dest)
+
+        # Flatpak: sinal no player do HOST pelo pidfile do shim — caminho
+        # confiável (mpv congela junto com o smplayer, mesmo grupo).
+        if _eh_flatpak():
+            if self._pausar_player_flatpak():
                 return True
-            except Exception:
-                pass
+            # Se o pidfile falhou, tenta MPRIS com verificação de status.
+            dest = mpris_ativo(candidatos)
+            if dest and self._mpris_alternar(dest):
+                return True
+            return False
 
-        # Fallback: tenta o outro player
-        other_dest = "org.mpris.MediaPlayer2.vlc" if dest == "org.mpris.MediaPlayer2.smplayer" else "org.mpris.MediaPlayer2.smplayer"
-        try:
-            subprocess.run(
-                ['dbus-send', '--type=method_call',
-                 f'--dest={other_dest}',
-                 '/org/mpris/MediaPlayer2',
-                 'org.mpris.MediaPlayer2.Player.PlayPause'],
-                timeout=1, capture_output=True, env=_ambiente_sem_appimage()
-            )
+        # AppImage/código-fonte: MPRIS com verificação — o nome no
+        # barramento não basta; o PlaybackStatus precisa ter mudado.
+        dest = mpris_ativo(candidatos)
+        if dest and self._mpris_alternar(dest):
             return True
-        except Exception:
-            pass
 
-        # Fallback SIGSTOP/SIGCONT
+        # Fallback direto: o player é filho nosso.
         with self._process_lock:
             proc = self._process
         if proc is None:
@@ -3861,6 +3876,64 @@ class MediaPlayer:
             return True
         except (OSError, PermissionError):
             return False
+
+    def _mpris_alternar(self, dest: str) -> bool:
+        """PlayPause via MPRIS; True só se o PlaybackStatus mudou.
+
+        O dbus-send devolve exit 0 mesmo quando o nome não existe, e dentro
+        do Flatpak o método chega ao barramento mas não pausa o smplayer.
+        Ler o status antes e depois é o que garante que o painel não mostre
+        'pausado' com o vídeo tocando.
+        """
+        antes = mpris_status(dest)
+        try:
+            subprocess.run(
+                ['dbus-send', '--type=method_call',
+                 f'--dest={dest}',
+                 '/org/mpris/MediaPlayer2',
+                 'org.mpris.MediaPlayer2.Player.PlayPause'],
+                timeout=1, capture_output=True, env=_ambiente_sem_appimage()
+            )
+        except Exception:
+            return False
+        depois = mpris_status(dest)
+        return bool(antes and depois and depois != antes)
+
+    def _pausar_player_flatpak(self) -> bool:
+        """Pausa/continua o player do HOST (Flatpak) pelo pidfile do shim.
+
+        O `smplayer-host` grava o PID real do smplayer em
+        ~/.navepro/smplayer-host.pid — mesmo caminho dentro e fora do sandbox.
+        O sinal vai por `flatpak-spawn --host` no GRUPO de processos, o mesmo
+        mecanismo que o shim usa para repassar o TERM: smplayer e mpv param
+        juntos. SIGSTOP no proxy (o processo que o NavePro tem na mão) não
+        pausava nada — é por isso que o pause não funcionava no Flatpak.
+        """
+        pidfile = os.path.join(os.path.expanduser("~"), ".navepro",
+                               "smplayer-host.pid")
+        try:
+            with open(pidfile, "r", encoding="utf-8") as arq:
+                pid = int(arq.read().strip())
+        except (OSError, ValueError):
+            return False
+        if pid <= 0:
+            return False
+        sig = "CONT" if self.is_paused else "STOP"
+        # kill direto (util-linux), sem wrapper de sh: o /bin/sh do host é o
+        # dash, cujo builtin kill rejeita pid negativo ("Illegal number: -")
+        # e aí o mpv do grupo seguia tocando. Grupo primeiro (smplayer + mpv);
+        # PID sozinho se o grupo não existir mais.
+        for alvo in (f"-{pid}", str(pid)):
+            try:
+                resp = subprocess.run(
+                    ['flatpak-spawn', '--host', 'kill', f'-{sig}', '--', alvo],
+                    timeout=2, capture_output=True,
+                    env=_ambiente_sem_appimage())
+                if resp.returncode == 0:
+                    return True
+            except Exception:
+                continue
+        return False
 
     def obter_tempo_decorrido(self) -> float:
         """Retorna o tempo decorrido em segundos."""
@@ -3879,6 +3952,13 @@ class MediaPlayer:
         if not self.is_playing:
             return
 
+        # No Linux o pause congela o player (SIGSTOP no grupo): o servidor
+        # MPRIS dele para de responder e cada sync de D-Bus seguraria a
+        # interface ~2 s no timeout. Com pausa, o estado interno já é a
+        # fonte da verdade — não há o que sincronizar.
+        if self.is_paused and _eh_linux():
+            return
+
         if _eh_windows():
             self._sincronizar_ipc_mpv()
             return
@@ -3886,8 +3966,8 @@ class MediaPlayer:
         if not _eh_linux():
             return
 
-        dest = player or self.player_cmd
-        mpris_dest = self._MPRIS_DESTS.get(dest)
+        dest = player or self._player_em_uso or self.player_cmd
+        mpris_dest = destino_mpris(dest)
 
         if mpris_dest is None:
             return
