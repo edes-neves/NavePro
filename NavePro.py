@@ -1459,6 +1459,24 @@ def _escolher_monitor_painel(monitors: List[MonitorInfo]) -> Optional[MonitorInf
     return monitors[0]
 
 
+
+
+def _centralizar_toplevel(janela, largura=None, altura=None):
+    try:
+        janela.update_idletasks()
+        sw = janela.winfo_screenwidth()
+        sh = janela.winfo_screenheight()
+        if largura is None or altura is None:
+            geom = janela.geometry()
+            import re
+            m = re.match(r'(\d+)x(\d+)', geom)
+            if m:
+                largura = int(m.group(1)); altura = int(m.group(2))
+        if largura is None: largura=600
+        if altura is None: altura=400
+        janela.geometry(f'{largura}x{altura}+{(sw-largura)//2}+{(sh-altura)//2}')
+    except Exception: pass
+
 def _escolher_monitor_telao(monitors: List[MonitorInfo]) -> Optional[MonitorInfo]:
     """Escolhe em qual monitor o TELÃO abre.
 
@@ -1484,6 +1502,24 @@ def _escolher_monitor_telao(monitors: List[MonitorInfo]) -> Optional[MonitorInfo
             return m
     return monitors[0]
 
+
+
+
+def _centralizar_toplevel(janela, largura=None, altura=None):
+    try:
+        janela.update_idletasks()
+        sw = janela.winfo_screenwidth()
+        sh = janela.winfo_screenheight()
+        if largura is None or altura is None:
+            geom = janela.geometry()
+            import re
+            m = re.match(r'(\d+)x(\d+)', geom)
+            if m:
+                largura = int(m.group(1)); altura = int(m.group(2))
+        if largura is None: largura=600
+        if altura is None: altura=400
+        janela.geometry(f'{largura}x{altura}+{(sw-largura)//2}+{(sh-altura)//2}')
+    except Exception: pass
 
 def _normalizar_escala_tk(root) -> float:
     """Garante texto legível e consistente entre Python/Tk diferentes.
@@ -12221,6 +12257,20 @@ class AppInterface:
         janela.geometry("1100x750")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
+        try:
+            _centralizar_toplevel(janela, 1100, 750)
+        except Exception:
+            pass
+        try:
+            janela.update_idletasks()
+            sw = janela.winfo_screenwidth()
+            sh = janela.winfo_screenheight()
+            w, h = 1100, 750
+            x = (sw - w) // 2
+            y = (sh - h) // 2
+            janela.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
