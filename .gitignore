@@ -17,6 +17,17 @@
 /build
 /dist
 /tmp
+# Arquivos gerados dentro do AppDir ficam de fora (AppRun, .desktop, ícones são versionados)
+/AppDir
+/NavePro.zip
+/NavePro.AppImage
+/NavePro-*.AppImage
+/appimage-builder-*.AppImage
+/appimagetool-*.AppImage
+/.flatpak-builder/
+
+# Script auxiliar com token GitHub embutido (não versionar)
+/check-flathub.sh
 
 # Configuração local e utilitários
 /config.json

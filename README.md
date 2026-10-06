@@ -236,6 +236,24 @@ O ícone do executável vem de `img\Icon.ico` (variável `NAVEPRO_ICON`); sem
 esse arquivo o `.exe` sai sem ícone próprio, mas as janelas continuam com
 ícone.
 
+### Gerar o AppImage (Linux)
+
+```bash
+./build.sh 2.1.2          # gera NavePro-2.1.2.AppImage
+```
+
+O `build.sh` empacota com o **mesmo `NavePro.spec`** do `.exe` (os dois
+sistemas embutem os mesmos recursos e `hiddenimports` — a razão do spec
+existir é que o separador do `--add-data` é `:` no Linux e `;` no Windows),
+depois monta o `AppDir/` e comprime com o `appimagetool` da raiz
+(`APPIMAGE_TOOL` aponta para outro, se quiser). Ele usa o `.venv` do projeto
+quando existe — que já tem PyInstaller e as dependências — e só exige Tk 8.6.
+O passo a passo detalhado está no `Gerar.AppImage`.
+
+> Os releases do GitHub publicam o `.exe`; o AppImage é o caminho para rodar
+> o NavePro em Linux (o código de atualização ainda reconhece os formatos
+> AppImage e Flatpak).
+
 ### Player de mídia no Windows (mpv)
 
 No Windows o NavePro abre o vídeo em um player externo. O **mpv** é
@@ -326,10 +344,12 @@ navepro/              # Infraestrutura reutilizável (config, caminhos, temas, t
   core/player.py      # Player de mídia no Windows: acha o executável, IPC do mpv, posiciona a janela
 NavePro.spec          # Configuração do PyInstaller (fonte única do empacotamento)
 build-windows.bat     # Gera o dist\NavePro.exe
+build.sh              # Gera o AppImage do Linux (usa o mesmo NavePro.spec)
+Gerar.AppImage        # Passo a passo do empacotamento para o AppImage
 README.md             # Este documento
 LICENSE               # GPLv3
 requirements.txt      # Dependências (runtime + pyinstaller)
-Biblias/               # Bíbblias para importar (XML do Zefania e TXT): AS21, ARC, ACF, ARA…
+Biblias/               # Bíblias para importar (XML do Zefania e TXT): AS21, ARC, ACF, ARA…
   AS21.xml            #   Bíblia Almeida Século 21 (XML Zefania)
   biblia-em-txt.txt   #   Bíblia Almeida Revista e Corrigida (TXT)
 NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista

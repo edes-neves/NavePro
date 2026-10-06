@@ -1,15 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
-# NavePro.spec — configuração do PyInstaller para o NavePro.exe (Windows).
+# NavePro.spec — configuração do PyInstaller, usada pelo Windows (NavePro.exe)
+# e pelo Linux (AppImage) — a mesma configuração nos dois alvos.
 #
 # POR QUE ESTE SPEC EXISTE
 # O --add-data da linha de comando usa o os.pathsep como separador, que é ":"
 # no Linux e ";" no Windows. Com ":" no Windows o PyInstaller interpreta
 # "img/Icon.ico:img" como um nome de arquivo inteiro e o recurso não chega ao
-# pacote. As tuplas em `datas` não têm esse problema — por isso o empacotamento
-# do Windows é por aqui.
+# pacote. As tuplas em `datas` não têm esse problema — por isso o
+# empacotamento (Windows e Linux) é por aqui.
 #
 # Uso:
 #   Windows:  build-windows.bat          (gera dist\NavePro.exe)
+#   Linux:    ./build.sh <versão>         (gera NavePro-<versão>.AppImage)
 #
 # Ícone do executável: defina NAVEPRO_ICON=img/Icon.ico antes de rodar (o
 # build-windows.bat já faz isso). Sem essa variável o .exe sai sem ícone
@@ -21,7 +23,7 @@
 # monitores ("✅ screeninfo: 2 monitor(es)..."), então vale um build de
 # diagnóstico com a variável ligada.
 
-# config.json e midia.db NÃO são embutinidos, de propósito.
+# config.json e midia.db NÃO são embutidos, de propósito.
 #
 # Os dois estão no .gitignore: são arquivos de trabalho de quem compila. O
 # inicial_banco()/inicializar_config() do NavePro.py tratam os dois como
@@ -31,10 +33,10 @@
 # Embutir o config.json da máquina de build era pior do que não embutir nada:
 # ele gravava "player": "smplayer", que sobrescreve o PLAYER_PADRAO ("mpv" no
 # Windows). Toda instalação nova nascia no player que não aceita pausar, e o
-# operador ganhandava o aviso "pausar/continuar não funciona" no primeiro uso.
+# operador ganhava o aviso "pausar/continuar não funciona" no primeiro uso.
 import os
 
-# `console` e `icon` são resolvidos aqui para permitir varies por ambiente
+# `console` e `icon` são resolvidos aqui para permitir vars por ambiente
 # sem duplicar o spec.
 _CONSOLE = os.environ.get("NAVEPRO_CONSOLE", "0") == "1"
 _icone = os.environ.get("NAVEPRO_ICON", "")

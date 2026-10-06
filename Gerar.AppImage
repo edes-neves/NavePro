@@ -1,0 +1,103 @@
+# NavePro-<VERSÃO>.AppImage — como gerar (PyInstaller + appimagetool)
+
+O AppImage é **autocontido**: o binário PyInstaller embute o interpretador
+Python e o **Tk 8.6 do sistema**, então NÃO precisa de python3/tkinter
+instalados na máquina de destino — e as fontes/botões ficam iguais em
+qualquer lugar.
+
+> Por que Tk 8.6? O Tk 9.0 (ex.: do python/conda) **não resolve os aliases
+> de fonte do fontconfig**: "Arial" vira `fixed` (fonte bitmap minúscula),
+> deixando textos pequenos e botões "quadradinhos". Já o Tk 8.6 resolve
+> "Arial" → Liberation Sans, "Montserrat" (se instalada) e "Noto Sans".
+> **Empacote com o `python` do sistema (Tk 8.6)** — o mesmo que roda bem o
+> `python NavePro.py`.
+
+## Passo a passo (recomendado)
+
+O `build.sh` cuida de tudo o que há abaixo e **nomeia o AppImage com a versão**
+passada. O `APP_VERSION` que o app exibe/compara fica em `navepro/config.py`:
+grave lá a mesma versão do release antes de gerar o binário:
+
+```bash
+./build.sh 2.1.0           # usa o .venv do projeto; gera NavePro-2.1.0.AppImage
+./NavePro-2.1.0.AppImage   # testar
+```
+
+> ⚠️ **Sempre passe a mesma versão do release que vai criar.** Se o nº do
+> release no GitHub for maior que o `APP_VERSION` gravado no binário,
+> o app vai achar que está desatualizado (e vai oferecer "atualizar"
+> baixando a si mesmo).
+
+## Passo a passo (manual)
+
+1. **Empacotar com PyInstaller** (na raiz do projeto). Use um **Python que
+   tenha Tk 8.6** — o `.venv` do projeto ou o `/usr/sbin/python`:
+
+   ```bash
+   .venv/bin/python -m PyInstaller --noconfirm --clean NavePro.spec
+   ```
+   Gera `dist/NavePro` (binário único, ~24 MB).
+
+   > O `NavePro.spec` é o arquivo de configuração do PyInstaller — e é o
+   > **mesmo** usado pelo `build-windows.bat` no Windows. Ele lista os
+   > recursos (`img/Icon.ico`, `img/Icon.png`, `img/Icon.xbm`) e os
+   > `hiddenimports` (`PIL._tkinter_finder` e `PIL.ImageTk` para o logo,
+   > `screeninfo` para a detecção de monitores, `pypdf` para anúncios em
+   > PDF). `config.json` e `midia.db` ficam de fora de propósito: são
+   > arquivos locais (`.gitignore`) e o app cria os dois no primeiro
+   > arranque — embutir o `config.json` da máquina de build gravaria
+   > `"player": "smplayer"` por cima do player padrão.
+
+   > Por que um `.spec` e não `--add-data` na linha de comando? O separador
+   > do `--add-data` é o `os.pathsep` (`:` no Linux, `;` no Windows), então o
+   > mesmo comando não serve para os dois sistemas — a configuração fica no
+   > spec, compartilhado com o Windows.
+
+   > Para conferir qual Tk o python usa: `python -c "import tkinter; print(tkinter.TkVersion)"`.
+   > Se for 9.0, o AppImage terá fontes minúsculas/quadradinhos — use um com Tk 8.6.
+
+2. **Preparar o AppDir**:
+
+   ```bash
+   cp dist/NavePro AppDir/usr/bin/NavePro
+   chmod +x AppDir/usr/bin/NavePro
+   # AppDir/AppRun já executa "$APPDIR/usr/bin/NavePro"
+   ```
+
+3. **Gerar o AppImage**:
+
+   ```bash
+   rm -f NavePro-2.1.0.AppImage
+   ARCH=x86_64 appimagetool AppDir NavePro-2.1.0.AppImage
+   ```
+   Use `ARCH=$(uname -m)` se a máquina não for x86_64.
+
+4. **Testar**:
+
+   ```bash
+   chmod +x NavePro-2.1.0.AppImage
+   ./NavePro-2.1.0.AppImage
+   ```
+
+## Publicação
+
+O release do GitHub é do **`.exe`** — fluxo na seção "Como publicar uma
+versão nova" do README. Para distribuir o AppImage também, anexe-o ao mesmo
+release:
+
+```bash
+gh release upload v2.1.0 NavePro-2.1.0.AppImage
+```
+
+O app em execução detecta o `v2.1.0` e baixa o asset do formato em que está
+instalado (`.exe` no Windows, `.AppImage` no Linux).
+
+## Observações
+
+- `python NavePro.py` (código-fonte) é a forma de desenvolvimento; o
+  AppImage é apenas o pacote de distribuição. A infraestrutura vive em
+  `navepro/` (módulos importados pelo `NavePro.py`).
+- A cada mudança no código: gere um novo AppImage com `build.sh` (o binário
+  embute o fonte), **atualizando a versão**.
+- O ícone `img/Icon.xbm` é embutido dentro do binário (usado como ícone das
+  janelas do Tk).

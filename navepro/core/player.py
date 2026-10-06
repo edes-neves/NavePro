@@ -269,6 +269,11 @@ class ClienteMpvIpc:
         O mpv cria o named pipe pouco depois de subir; por isso há espera com
         `WaitNamedPipeW` em vez de uma conexão seca.
         """
+        # Named pipe é API do Windows: fora dele não existe kernel32 nem
+        # servidor para esperar. Devolver False mantém o chamador sem
+        # exceção — o IPC do mpv só é usado no Windows.
+        if not _eh_windows():
+            return False
         k = self._kernel32()
         limite = time.monotonic() + self.timeout_conexao
         while time.monotonic() < limite:

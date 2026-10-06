@@ -89,7 +89,7 @@ goto :fim
 
 :fim1
 echo.
-echo [FALHOU] See as mensagens acima.
+echo [FALHOU] Veja as mensagens acima.
 exit /b 1
 
 :fim

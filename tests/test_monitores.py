@@ -3,7 +3,7 @@
 
 Regressão do Windows: sem DPI-awareness, o Tk media a tela em pixels lógicos
 e o screeninfo em pixels físicos, e o Windows devolvia o telão para o monitor
-primário. Estes testes travam a REGRIA de escolha (telão nunca divide o
+primário. Estes testes travam a REGRA de escolha (telão nunca divide o
 monitor com o painel), inclusive quando a detecção do primário falha.
 """
 
