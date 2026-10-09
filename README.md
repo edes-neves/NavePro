@@ -55,25 +55,34 @@ para qualquer pasta (os dados do usuário ficam em `%USERPROFILE%\.navepro`).
    e compara. Não pule a versão: um release `v2.2.0` com binário em `2.1.1` faz
    o app oferecer "atualizar" baixando a si mesmo.
 
-2. Gere o `.exe` (no Windows — o PyInstaller não faz cross-compile):
+2. Gere o **AppImage** no Linux (o `.exe` e os bundles `.flatpak` são
+   construídos no GitHub Actions a partir da tag):
 
-   ```bat
-   build-windows.bat
-   dist\NavePro.exe                   # teste
+   ```bash
+   ./build.sh 2.1.4                   # gera NavePro-2.1.4.AppImage
    ```
 
-3. Publique o release, anexando **os dois formatos que o app baixa sozinho**
-   (`NavePro.exe` para o Windows e `NavePro-<versão>.AppImage` para o Linux —
-   gere-o no Linux com `./build.sh <versão>`, seção "Gerar o AppImage"):
+3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
+   `NavePro.exe` (runner Windows) e `Flatpak` (x86_64 + aarch64), que
+   **anexam os artefatos ao release** e publicam o repositório Flatpak no
+   `gh-pages`:
 
-   ```bat
-   gh release create v2.2.0 dist\NavePro.exe --title "NavePro 2.2.0" --notes "O que mudou nesta versão..."
-   gh release upload v2.2.0 NavePro-2.2.0.AppImage
+   ```bash
+   git add -A && git commit -m "NavePro 2.1.4: ..."
+   git tag v2.1.4
+   git push origin main v2.1.4
    ```
 
-   Se quiser distribuir também o Flatpak manualmente, anexe os bundles
-   `NavePro-x86_64.flatpak` / `NavePro-aarch64.flatpak` — mas quem tem o
-   Flatpak instalado se atualiza pelo `flatpak update`, não por esses arquivos.
+4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak`
+   ao mesmo release; se ele já existir, use `gh release upload`):
+
+   ```bash
+   gh release create v2.1.4 NavePro-2.1.4.AppImage \
+     --title "NavePro 2.1.4" --notes "O que mudou nesta versão..."
+   ```
+
+   Quem tem o Flatpak instalado se atualiza por `flatpak update` (repositório
+   remoto) — os bundles do release são só para distribuição manual.
 
 O app considera o `tag_name` do release mais recente como a versão a oferecer;
 o primeiro asset `*.exe` é o baixado no Windows e o primeiro `*.AppImage`, no
@@ -251,7 +260,7 @@ esse arquivo o `.exe` sai sem ícone próprio, mas as janelas continuam com
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.2          # gera NavePro-2.1.2.AppImage
+./build.sh 2.1.4          # gera NavePro-2.1.4.AppImage
 ```
 
 O `build.sh` empacota com o **mesmo `NavePro.spec`** do `.exe` (os dois
@@ -405,6 +414,17 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## Histórico recente
+
+### 2.1.4
+
+- **Janela de adicionar/editar item da Ordem de Serviço não abre mais no canto
+  superior esquerdo**: ela passa a se **centralizar sobre a janela da Ordem de
+  Serviço** e a **manter a posição** ao clicar nos campos ou arrastar (o defeito
+  aparecia no AppImage, no `.exe` e no Flatpak).
+- **Anúncios com texto + imagem deixam de sair minúsculos** e o **A−/A+ volta a
+  funcionar** em distros que não têm DejaVu/Liberation (ex.: **BigLinux/GNOME**):
+  o app procura qualquer TTF/OTF instalado no sistema e usa o tamanho real no
+  Pillow, em vez de cair na fonte padrão fixa (~10 px).
 
 ### 2.1.1
 

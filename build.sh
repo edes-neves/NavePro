@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build.sh — Gera o NavePro.AppImage (PyInstaller + appimagetool)
 #
-# Uso:  ./build.sh <versão>        ex.: ./build.sh 2.1.2
+# Uso:  ./build.sh <versão>        ex.: ./build.sh 2.1.4
 # Saída: NavePro-<versão>.AppImage (executável, pronto para distribuir)
 #
 # Empacota com o NavePro.spec — a MESMA configuração usada no Windows
@@ -100,6 +100,9 @@ echo "✅ Binário gerado: dist/$APP_NAME"
 # 2. Montar o AppDir
 # ────────────────────────────────────────────────────────────────────
 echo "📁 Atualizando AppDir/usr/bin/$APP_NAME..."
+# O AppDir versionado só traz AppRun/ícone/desktop (usr/ é ignorado no git),
+# então numa clonagem limpa a pasta usr/bin não existe e o cp falhava.
+mkdir -p AppDir/usr/bin
 cp dist/"$APP_NAME" "AppDir/usr/bin/$APP_NAME"
 chmod 755 "AppDir/usr/bin/$APP_NAME"
 

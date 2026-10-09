@@ -19,8 +19,8 @@ passada. O `APP_VERSION` que o app exibe/compara fica em `navepro/config.py`:
 grave lá a mesma versão do release antes de gerar o binário:
 
 ```bash
-./build.sh 2.1.1           # usa o .venv do projeto; gera NavePro-2.1.1.AppImage
-./NavePro-2.1.1.AppImage   # testar
+./build.sh 2.1.4           # usa o .venv do projeto; gera NavePro-2.1.4.AppImage
+./NavePro-2.1.4.AppImage   # testar
 ```
 
 > ⚠️ **Sempre passe a mesma versão do release que vai criar.** Se o nº do
@@ -59,6 +59,7 @@ grave lá a mesma versão do release antes de gerar o binário:
 2. **Preparar o AppDir**:
 
    ```bash
+   mkdir -p AppDir/usr/bin
    cp dist/NavePro AppDir/usr/bin/NavePro
    chmod +x AppDir/usr/bin/NavePro
    # AppDir/AppRun já executa "$APPDIR/usr/bin/NavePro"
@@ -67,16 +68,16 @@ grave lá a mesma versão do release antes de gerar o binário:
 3. **Gerar o AppImage**:
 
    ```bash
-   rm -f NavePro-2.1.1.AppImage
-   ARCH=x86_64 appimagetool AppDir NavePro-2.1.1.AppImage
+   rm -f NavePro-2.1.4.AppImage
+   ARCH=x86_64 appimagetool AppDir NavePro-2.1.4.AppImage
    ```
    Use `ARCH=$(uname -m)` se a máquina não for x86_64.
 
 4. **Testar**:
 
    ```bash
-   chmod +x NavePro-2.1.1.AppImage
-   ./NavePro-2.1.1.AppImage
+   chmod +x NavePro-2.1.4.AppImage
+   ./NavePro-2.1.4.AppImage
    ```
 
 ## Publicação
@@ -87,9 +88,12 @@ release precisa carregar **os dois assets que o app baixa** — sem eles, a
 atualização avisa "o release não contém um arquivo ..." em vez de falhar:
 
 ```bash
-gh release create v2.1.1 dist/NavePro.exe --title "NavePro 2.1.1" --notes "O que mudou nesta versão..."
-gh release upload v2.1.1 NavePro-2.1.1.AppImage
+gh release create v2.1.4 NavePro-2.1.4.AppImage --title "NavePro 2.1.4" --notes "O que mudou nesta versão..."
 ```
+
+O `.exe` e os bundles `.flatpak` não são mais anexados à mão: o push da tag
+`v*` dispara os workflows `NavePro.exe` e `Flatpak`, que os constroem e os
+anexam ao mesmo release (e publicam o repositório Flatpak no `gh-pages`).
 
 Os bundles `.flatpak` do release são apenas para distribuição manual; quem tem
 o Flatpak instalado atualiza pelo `flatpak update` (repositório remoto), não
