@@ -24,6 +24,13 @@ sys.path.insert(0, RAIZ)
 import navepro.core.player as player_mod
 from navepro.core.player import MPRIS_DESTS, destino_mpris, mpris_ativo, mpris_status
 
+# Suíte específica do Linux (MPRIS/D-Bus, Flatpak e mpv IPC). No Windows a
+# classe MediaPlayer tem os métodos, mas o self fake dos testes não tem
+# _ipc_mpv_disponivel — os caminhos testados não existem lá.
+if sys.platform.startswith('win'):
+    print('Pulando test_player_pause_linux (específico do Linux).')
+    sys.exit(0)
+
 falhas = []
 def check(n, cond, extra=''):
     print(f"{'OK ' if cond else 'FALHA'} {n}{(' -> ' + extra) if extra else ''}")
