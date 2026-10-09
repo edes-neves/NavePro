@@ -4893,16 +4893,26 @@ _FONTE_PIL_CACHE: Dict[str, Optional[str]] = {}
 
 
 def _procurar_fonte_no_sistema() -> Optional[str]:
-    """Procura um TTF adequado nas pastas de fontes do sistema (com fallback)."""
+    """Procura um TTF/OTF adequado nas pastas de fontes do sistema.
+
+    Primeiro pelos nomes conhecidos (DejaVu, Liberation, FreeSans, Arial).
+    Se nenhum existir — caso de distros que só trazem outra família, como
+    algumas edições do BigLinux/GNOME — aceita QUALQUER .ttf/.otf instalado,
+    preferindo peso negrito e família sans. O que não pode acontecer é cair na
+    fonte padrão do PIL (fixa em ~10 px), que deixava o texto minúsculo e sem
+    reação ao A−/A+.
+    """
     nomes = ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf",
              "LiberationSans-Bold.ttf", "LiberationSans-Regular.ttf",
              "FreeSansBold.ttf", "arialbd.ttf", "arial.ttf")
     raizes = [
         "/usr/share/fonts",
         "/usr/local/share/fonts",
+        "/opt/fonts",
         os.path.join(os.path.expanduser("~"), ".local/share/fonts"),
         os.path.join(os.path.expanduser("~"), ".fonts"),
     ]
+    avulsas: List[tuple] = []
     for raiz in raizes:
         if not os.path.isdir(raiz):
             continue
@@ -4910,6 +4920,20 @@ def _procurar_fonte_no_sistema() -> Optional[str]:
             for nome in nomes:
                 if nome in arquivos:
                     return os.path.join(dirpath, nome)
+            for arquivo in arquivos:
+                if arquivo.lower().endswith((".ttf", ".otf")):
+                    avulsas.append((dirpath, arquivo))
+    if avulsas:
+        # Preferência: negrito > sans > ordem alfabética (determinístico).
+        def _peso(item: tuple) -> tuple:
+            _dir, arquivo = item
+            baixo = arquivo.lower()
+            return (0 if "bold" in baixo else 1,
+                    0 if ("sans" in baixo or "dejavu" in baixo) else 1,
+                    baixo)
+        avulsas.sort(key=_peso)
+        dirpath, arquivo = avulsas[0]
+        return os.path.join(dirpath, arquivo)
     return None
 
 
@@ -4964,9 +4988,17 @@ def _carregar_fonte_pil(tamanho: int):
             return ImageFont.truetype(caminho, tamanho)
         except Exception:
             pass
-    # Fallback: a fonte padrão do PIL. No Pillow >= 10.1 ela aceita 'size',
-    # então o texto continua acompanhando o redimensionamento (A−/A+) mesmo
-    # quando nenhum TTF está acessível.
+    # Último recurso antes da fonte embutida: deixa o próprio Pillow procurar
+    # pelo nome da família (alguns builds resolvem via fontconfig).
+    for _nome in ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf",
+                  "LiberationSans-Bold.ttf", "arialbd.ttf"):
+        try:
+            return ImageFont.truetype(_nome, tamanho)
+        except Exception:
+            continue
+    # Fallback final: a fonte padrão do PIL. No Pillow >= 10.1 ela aceita
+    # 'size', então o texto continua acompanhando o redimensionamento (A−/A+)
+    # mesmo quando nenhum TTF está acessível.
     try:
         return ImageFont.load_default(size=tamanho)
     except TypeError:
