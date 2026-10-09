@@ -356,6 +356,7 @@ build-flatpak.sh      # Gera/instala o bundle Flatpak localmente
 Gerar.AppImage        # Passo a passo do empacotamento do AppImage
 flatpak/              # Manifestos e metainfo do Flatpak (local e Flathub)
 README.md             # Este documento
+AGENTS.md             # Guia para agentes de IA (testes, build, release, convenções)
 LICENSE               # GPLv3
 requirements.txt      # Dependências (runtime + pyinstaller)
 Biblias/              # Bíblias para importar (XML do Zefania e TXT): AS21, ARC, ACF, ARA…
