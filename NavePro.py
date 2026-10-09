@@ -4889,12 +4889,42 @@ def _migrar_anuncios_do_json() -> int:
 # usados de forma IDÊNTICA pelo editor (prévia) e pelo telão (projeção).
 
 
-def _carregar_fonte_pil(tamanho: int):
-    """Carrega uma fonte Truetype (DejaVuSans) com fallback para a padrão."""
-    try:
-        from PIL import ImageFont
-    except Exception:
-        return None
+_FONTE_PIL_CACHE: Dict[str, Optional[str]] = {}
+
+
+def _procurar_fonte_no_sistema() -> Optional[str]:
+    """Procura um TTF adequado nas pastas de fontes do sistema (com fallback)."""
+    nomes = ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf",
+             "LiberationSans-Bold.ttf", "LiberationSans-Regular.ttf",
+             "FreeSansBold.ttf", "arialbd.ttf", "arial.ttf")
+    raizes = [
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+        os.path.join(os.path.expanduser("~"), ".local/share/fonts"),
+        os.path.join(os.path.expanduser("~"), ".fonts"),
+    ]
+    for raiz in raizes:
+        if not os.path.isdir(raiz):
+            continue
+        for dirpath, _dirs, arquivos in os.walk(raiz):
+            for nome in nomes:
+                if nome in arquivos:
+                    return os.path.join(dirpath, nome)
+    return None
+
+
+def _localizar_fonte_ttf() -> Optional[str]:
+    """Localiza (e memoriza) um TTF em negrito usado para medir/desenhar texto.
+
+    Cobre Debian/Ubuntu, Arch, Fedora e a runtime do Flatpak
+    (org.freedesktop.Platform), onde o DejaVu fica em /usr/share/fonts/dejavu
+    e NÃO em /usr/share/fonts/truetype/dejavu. Antes, no Flatpak, nenhum
+    caminho existia e o PIL caía na fonte padrão de 10 px — o texto saía
+    minúsculo no telão e o A−/A+ não surtia efeito.
+    """
+    cache = _FONTE_PIL_CACHE
+    if "path" in cache:
+        return cache["path"]
     if _eh_windows():
         candidatos = [
             os.path.join(os.environ.get('WINDIR', 'C:/Windows'),
@@ -4902,18 +4932,45 @@ def _carregar_fonte_pil(tamanho: int):
             os.path.join(os.environ.get('WINDIR', 'C:/Windows'),
                          'Fonts', 'arial.ttf'),
         ]
+        encontrado = next((p for p in candidatos if os.path.exists(p)), None)
     else:
         candidatos = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/gnu-free/FreeSansBold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
         ]
-    for p in candidatos:
-        if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, tamanho)
-            except Exception:
-                continue
-    return ImageFont.load_default()
+        encontrado = next((p for p in candidatos if os.path.exists(p)), None)
+        if encontrado is None:
+            encontrado = _procurar_fonte_no_sistema()
+    cache["path"] = encontrado
+    return encontrado
+
+
+def _carregar_fonte_pil(tamanho: int):
+    """Carrega uma fonte Truetype (DejaVuSans) com fallback para a padrão."""
+    try:
+        from PIL import ImageFont
+    except Exception:
+        return None
+    caminho = _localizar_fonte_ttf()
+    if caminho:
+        try:
+            return ImageFont.truetype(caminho, tamanho)
+        except Exception:
+            pass
+    # Fallback: a fonte padrão do PIL. No Pillow >= 10.1 ela aceita 'size',
+    # então o texto continua acompanhando o redimensionamento (A−/A+) mesmo
+    # quando nenhum TTF está acessível.
+    try:
+        return ImageFont.load_default(size=tamanho)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _quebrar_linhas_medindo(draw, texto: str, largura_max: int, fonte) -> List[str]:
@@ -14563,37 +14620,18 @@ class AppInterface:
                       ).pack(side='left', padx=(3, 0))
             arquivo_frame.pack_forget()
 
-            # O sistema posiciona esta janela uma única vez, na abertura, no
-            # meio superior da tela. Quando a geometria é reaplicada só com o
-            # tamanho — o que acontece ao trocar o tipo do item —, o Tk
-            # reenvia a posição antiga e a janela salta para o canto superior
-            # esquerdo. Guardamos a posição de abertura e a reaplicamos em
-            # todos os redimensionamentos, descontando o deslocamento fixo da
-            # moldura que o gerenciador de janelas acrescenta ao pedido.
-            _geo_add_win: Dict[str, Any] = {"abertura": None, "pedido": None}
-
+            # A janela é posicionada UMA única vez, na abertura, já
+            # centralizada sobre a janela "Ordem de Serviço" (via
+            # _centralizar_sobre, acima). Ao trocar o tipo do item, aplicamos
+            # a geometria só com o TAMANHO (sem coordenadas): o Tk/gerenciador
+            # de janelas mantém a posição atual, inclusive depois de o
+            # operador arrastar a janela. Reenviar coordenadas era o que fazia
+            # a janela saltar (o pedido era reinterpretado com o deslocamento
+            # da moldura e ia parar no canto superior esquerdo).
             def _aplicar_geometria(tamanho: str) -> None:
                 """Redimensiona a janela do editor sem mudar a posição."""
                 try:
-                    if not add_win.winfo_viewable():
-                        # ainda não mapeada: o sistema posiciona ao abrir
-                        add_win.geometry(tamanho)
-                        return
-                    real = (add_win.winfo_rootx(), add_win.winfo_rooty())
-                    if _geo_add_win["abertura"] is None:
-                        _geo_add_win["abertura"] = real
-                    pedido = _geo_add_win["pedido"]
-                    if pedido is None:
-                        pedido = real
-                    else:
-                        # o pedido anterior foi obedecido com um deslocamento
-                        # fixo da moldura: recalcula o pedido que devolve a
-                        # janela exatamente ao lugar de abertura
-                        abertura = _geo_add_win["abertura"]
-                        pedido = (abertura[0] + pedido[0] - real[0],
-                                  abertura[1] + pedido[1] - real[1])
-                    _geo_add_win["pedido"] = pedido
-                    add_win.geometry(f"{tamanho}+{pedido[0]}+{pedido[1]}")
+                    add_win.geometry(tamanho)
                 except tk.TclError:
                     pass
 
@@ -14622,6 +14660,11 @@ class AppInterface:
 
             tipo_var.trace_add("write", lambda *a: _atualizar_paineis())
             _atualizar_paineis()
+            # A janela nasce com 380 de altura e cresce ao mostrar o painel do
+            # tipo inicial; centraliza de novo com o tamanho final para não
+            # abrir deslocada para baixo. Depois disto a posição nunca mais é
+            # reenviada (os redimensionamentos aplicam só o tamanho).
+            _centralizar_sobre(add_win, janela)
 
             def _salvar_item():
                 serv = _servico_atual()
