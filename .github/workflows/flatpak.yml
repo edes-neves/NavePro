@@ -76,6 +76,7 @@ jobs:
           files: |
             bundles/NavePro-flatpak-x86_64/NavePro-x86_64.flatpak
             bundles/NavePro-flatpak-aarch64/NavePro-aarch64.flatpak
+          overwrite: true
 
   # Publica o repositório Flatpak auto-hospedado (https://edes-neves.github.io/NavePro/)
   # em cada release: constrói x86_64 e adiciona o commit ao ostree publicado no gh-pages.

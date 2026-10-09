@@ -11151,7 +11151,7 @@ class AppInterface:
         """
         janela = tk.Toplevel(self.root)
         janela.title("📢 Anúncios")
-        janela.geometry("950x700")
+        janela.geometry("1000x700")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)
