@@ -61,7 +61,10 @@ tk = types.SimpleNamespace(Toplevel=Base, Frame=Base, Button=Button, Label=Base,
                            Entry=Entry, Listbox=Listbox, Scrollbar=Base,
                            END='end', TclError=TclError)
 ns = {'tk': tk, 'tkinter': tkinter, 'Optional': __import__('typing').Optional,
-      'List': list, 'Tuple': tuple}
+      'List': list, 'Tuple': tuple,
+      # Stub do helper de centralização: o diálogo real o usa para se
+      # posicionar sobre o pai; aqui não há Tk, então é no-op.
+      '_centralizar_sobre': lambda *a, **k: None}
 exec(compile(ast.get_source_segment(src, nos['_listar_pastas_arquivos_usuario']), '<l>', 'exec'), ns)
 exec(compile(ast.get_source_segment(src, nos['_escolher_arquivos_usuario']), '<s>', 'exec'), ns)
 escolher, listar = ns['_escolher_arquivos_usuario'], ns['_listar_pastas_arquivos_usuario']

@@ -1,10 +1,11 @@
 """
-NavePro - Sistema de Projeção para Igrejas
+NavePro - Sistema de Projeção Profissional
 Versão: 1.9.3
 Licença: GPLv3
-Autor: José Edes Neves - Julho 2026 edes.neves7@gmail.com
+Autor: José Edes Neves - Julho 2026 nevestecnologias@gmail.com
 Aplicação para reprodução de mídia com projeção em telão,
-busca inteligente no banco de dados e informações climáticas.
+busca inteligente no banco de dados, pastas do computador 
+e informações climáticas.
 
 """
 from __future__ import annotations
@@ -13,8 +14,10 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -26,6 +29,7 @@ import tkinter.messagebox
 import tkinter.simpledialog
 import urllib.parse
 import urllib.request
+import concurrent.futures
 from collections import OrderedDict
 from datetime import datetime
 import asyncio
@@ -748,16 +752,66 @@ class SearchWorker:
 # ────────────────────────────────────────────────────────────────────
 
 
+def _eh_loopback(ip: str) -> bool:
+    """True se o endereço for o próprio computador (127.0.0.1 / ::1)."""
+    return ip in ('127.0.0.1', '::1', 'localhost')
+
+
+def _ip_da_rede() -> str:
+    """IP local na rede local (o que o celular digita no navegador).
+
+    Abre um socket UDP para um endereço externo (sem enviar dados) só
+    para o SO escolher a rota de saída — é a forma confiável de achar o
+    IP da placa que enxerga o celular, mesmo com várias interfaces.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(('1.1.1.1', 80))
+        return sock.getsockname()[0]
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return '127.0.0.1'
+    finally:
+        sock.close()
+
+
+# Rotas POST do controle remoto → ação despachada ao AppInterface
+_ACOES_POST_REMOTO: dict = {
+    '/api/remoto/slide': 'slide',
+    '/api/remoto/hino': 'projetar_hino',
+    '/api/remoto/biblia': 'projetar_biblia',
+    '/api/remoto/midia': 'executar_midia',
+    '/api/remoto/anuncio': 'projetar_anuncio',
+    '/api/remoto/servico': 'executar_servico',
+    '/api/remoto/servico_item': 'servico_item',
+    '/api/remoto/medidor': 'medidor',
+    '/api/remoto/tamanho': 'tamanho',
+}
+
+
 class ServidorAsyncHTTP:
     """Servidor HTTP assíncrono usando asyncio.
     
     Substitui HTTPServer (bloqueante) por um servidor asyncio que não
     interfere com o event loop do Tk. Roda em uma thread separada
     com seu próprio event loop asyncio.
+
+    Além da API interna de mídias (sempre restrita ao loopback), serve o
+    CONTROLE REMOTO pelo celular (`/` e `/api/remoto/*`): quando ativado
+    nas configurações, passa a escutar na rede local protegido por token.
     """
     
     def __init__(self, port: int = BACKEND_PORT) -> None:
         self.port = port
+        self.host: str = '127.0.0.1'
+        self.token: Optional[str] = None
+        # Injetados pelo AppInterface:
+        #   ui(fn)      → executa fn na thread do Tk e devolve o resultado
+        #   remoto(a,d) → executa a ação remota `a` com dados `d` no app
+        self.ui: Optional[Callable[[Callable], Any]] = None
+        self.remoto: Optional[Callable[[str, dict], Any]] = None
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._server: Optional[asyncio.AbstractServer] = None
@@ -768,6 +822,28 @@ class ServidorAsyncHTTP:
             return
         self._thread = threading.Thread(target=self._run_async, daemon=True)
         self._thread.start()
+
+    def configurar_acesso(self, host: str, token: Optional[str]) -> None:
+        """Define bind (127.0.0.1 ou 0.0.0.0) e token do controle remoto.
+
+        Reinicia o socket de escuta se o host mudar (thread-safe).
+        """
+        self.token = token or None
+        if host == self.host:
+            return
+        self.host = host
+        if self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._reiniciar_escuta)
+
+    def _reiniciar_escuta(self) -> None:
+        """Fecha e reabre o socket de escuta no host atual (no loop asyncio)."""
+        if self._server is not None:
+            try:
+                self._server.close()
+            except Exception:
+                pass
+            self._server = None
+        self._loop.create_task(self._abrir_escuta())
 
     def _run_async(self) -> None:
         """Executa o event loop asyncio (chamado pela thread)."""
@@ -783,11 +859,34 @@ class ServidorAsyncHTTP:
 
     async def _servir(self) -> None:
         """Configura e inicia o servidor HTTP assíncrono."""
-        self._server = await asyncio.start_server(
-            self._handle_connection,
-            '127.0.0.1', self.port
-        )
-        print(f"✅ Servidor async rodando em 127.0.0.1:{self.port}")
+        await self._abrir_escuta()
+
+    async def _abrir_escuta(self) -> None:
+        """Abre o socket de escuta em self.host:self.port."""
+        try:
+            self._server = await asyncio.start_server(
+                self._handle_connection,
+                self.host, self.port
+            )
+            if self.host == '127.0.0.1':
+                print(f"✅ Servidor async rodando em 127.0.0.1:{self.port}")
+            else:
+                print(f"🌐 Controle remoto ativo em {self.host}:{self.port} "
+                      f"(token {'definido' if self.token else 'AUSENTE'})")
+        except OSError as e:
+            print(f"❌ Não consegui escutar em {self.host}:{self.port}: {e}")
+
+    # ── Ponte com a thread do Tk ──────────────────────────────────
+
+    def _na_ui(self, fn: Callable, timeout: float = 5.0) -> Any:
+        """Executa `fn` na thread do Tk e devolve o resultado.
+
+        O servidor nunca toca em widgets fora da thread do Tk: tudo que
+        envolve a interface passa por aqui (padrão root.after + Future).
+        """
+        if self.ui is None:
+            raise RuntimeError("Interface não conectada ao servidor")
+        return self.ui(fn, timeout)
 
     async def _handle_connection(self, reader: asyncio.StreamReader, 
                                   writer: asyncio.StreamWriter) -> None:
@@ -828,9 +927,14 @@ class ServidorAsyncHTTP:
             body_bytes = b''
             if body_start != -1:
                 body_bytes = request_data[body_start + 4:]
-            
+
+            # Endereço do cliente (para restringir API de mídia ao loopback)
+            peer = writer.get_extra_info('peername')
+            peer_ip = peer[0] if isinstance(peer, tuple) and peer else ''
+
             # Processar requisição
-            response = await self._process_request(method, path_line, headers, body_bytes)
+            response = await self._process_request(
+                method, path_line, headers, body_bytes, peer_ip)
             
             writer.write(response)
             await writer.drain()
@@ -856,35 +960,100 @@ class ServidorAsyncHTTP:
                 pass
 
     async def _process_request(self, method: str, path_full: str,
-                                headers: dict, body: bytes) -> bytes:
+                                headers: dict, body: bytes,
+                                peer_ip: str = '') -> bytes:
         """Processa uma requisição HTTP e retorna a resposta."""
         parsed = urllib.parse.urlparse(path_full)
         path = parsed.path
         params = dict(urllib.parse.parse_qsl(parsed.query))
-        
+
+        # A API de mídia (listar/upload/download/deletar) é do painel local:
+        # quando o servidor escuta na rede, ela NUNCA sai do loopback.
+        if path.startswith('/api/midia') and not _eh_loopback(peer_ip):
+            return self._responder_erro_bytes(
+                "API de mídia restrita ao computador local", 403)
+
         # CORS preflight
         if method == 'OPTIONS':
             return (
                 "HTTP/1.1 200 OK\r\n"
                 "Access-Control-Allow-Origin: *\r\n"
                 "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n"
-                "Access-Control-Allow-Headers: Content-Type\r\n"
+                "Access-Control-Allow-Headers: Content-Type, X-Token\r\n"
                 "Content-Length: 0\r\n"
                 "\r\n"
             ).encode()
         
         # ROTEAMENTO
         if method == 'GET':
-            return await self._handle_get(path, params)
+            return await self._handle_get(path, params, headers, peer_ip)
         elif method == 'POST':
-            return await self._handle_post(path, headers, body)
+            return await self._handle_post(path, params, headers, body, peer_ip)
         elif method == 'DELETE':
-            return await self._handle_delete(path)
+            return await self._handle_delete(path, headers, peer_ip)
         else:
             return self._responder_erro_bytes("Método não suportado", 405)
 
-    async def _handle_get(self, path: str, params: dict) -> bytes:
+    # ── Controle remoto: autenticação e despacho ──────────────────
+
+    def _remoto_autorizado(self, headers: dict, params: dict) -> bool:
+        """True se a requisição trouxer o token vigente do controle remoto."""
+        if not self.token:
+            return False
+        enviado = (headers.get('x-token')
+                   or params.get('t')
+                   or '').strip()
+        return enviado == self.token
+
+    def _remoto(self, acao: str, dados: dict) -> Any:
+        """Despacha uma ação remota para o app (na thread do Tk)."""
+        return self._na_ui(lambda: self.remoto(acao, dados))
+
+    def _exige_remoto(self, headers: dict, params: dict) -> Optional[bytes]:
+        """Retorna None se autorizado, ou a resposta de erro a enviar."""
+        if not self.token:
+            return self._responder_erro_bytes(
+                "Controle remoto desativado no computador", 403)
+        if not self._remoto_autorizado(headers, params):
+            return self._responder_erro_bytes("Token inválido", 403)
+        if self.remoto is None or self.ui is None:
+            return self._responder_erro_bytes(
+                "Aplicativo ainda inicializando", 503)
+        return None
+
+    async def _handle_get(self, path: str, params: dict, headers: dict,
+                          peer_ip: str = '') -> bytes:
         """Processa requisições GET."""
+        # ── Controle remoto ──
+        if path == '/' or path == '/index.html':
+            # A página só é servida com o token (a URL da UI já o traz em ?t=)
+            if not self._remoto_autorizado(headers, params):
+                return (
+                    "HTTP/1.1 403 Forbidden\r\n"
+                    "Content-Type: text/html; charset=utf-8\r\n"
+                    "Content-Length: 0\r\n"
+                    "\r\n"
+                ).encode()
+            from navepro.remoto_web import PAGINA
+            corpo = PAGINA.encode('utf-8')
+            return (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html; charset=utf-8\r\n"
+                "Cache-Control: no-store\r\n"
+                f"Content-Length: {len(corpo)}\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode() + corpo
+        if path.startswith('/api/remoto'):
+            bloqueio = self._exige_remoto(headers, params)
+            if bloqueio is not None:
+                return bloqueio
+            try:
+                acao, dados = self._remoto_get(path, params)
+            except KeyError:
+                return self._responder_erro_bytes("Rota não encontrada", 404)
+            return self._executar_remoto(acao, dados)
+        # ── API de mídia (somente loopback; checado no _process_request) ──
         if path == '/api/midia':
             return self._handle_get_midia_bytes(params)
         elif path == '/api/midia/contagem':
@@ -902,16 +1071,42 @@ class ServidorAsyncHTTP:
                 return self._responder_erro_bytes("Mídia não encontrada", 404)
         elif path.startswith('/api/midia/') and path.endswith('/download'):
             return await self._handle_download_bytes(path)
-        elif path == '/':
-            return (
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: text/html; charset=utf-8\r\n"
-                "Access-Control-Allow-Origin: *\r\n"
-                "\r\n"
-                "<h1>Servidor do Hinario</h1><p>API em /api/midia</p>"
-            ).encode('utf-8')
         else:
             return self._responder_erro_bytes("Rota não encontrada", 404)
+
+    def _remoto_get(self, path: str, params: dict) -> tuple:
+        """Mapeia uma rota GET do controle remoto em (ação, dados)."""
+        if path == '/api/remoto/estado':
+            return ('estado', {})
+        if path == '/api/remoto/hinos':
+            return ('buscar_hino', {'busca': params.get('busca', '')})
+        if path == '/api/remoto/midias':
+            return ('buscar_midia', {'busca': params.get('busca', '')})
+        if path == '/api/remoto/biblia':
+            return ('buscar_biblia', {'q': params.get('q', ''),
+                                      'versao': params.get('versao', '')})
+        if path == '/api/remoto/biblia_ref':
+            return ('buscar_biblia_ref', {
+                'versao': params.get('versao', ''),
+                'livro': params.get('livro', ''),
+                'cap': params.get('cap', ''),
+                'vers': params.get('vers', '')})
+        if path == '/api/remoto/livros':
+            return ('livros_biblia', {})
+        if path == '/api/remoto/anuncios':
+            return ('listar_anuncios', {})
+        if path == '/api/remoto/servicos':
+            return ('listar_servicos', {})
+        if path == '/api/remoto/servico_itens':
+            return ('servico_itens', {'servico': params.get('servico', '')})
+        raise KeyError(path)
+
+    def _executar_remoto(self, acao: str, dados: dict) -> bytes:
+        """Executa a ação remota na thread do Tk e monta a resposta."""
+        try:
+            return self._responder_json_bytes(self._remoto(acao, dados))
+        except Exception as e:
+            return self._responder_erro_bytes(str(e) or "Falha na ação", 400)
 
     def _handle_get_midia_bytes(self, params: dict) -> bytes:
         """Busca mídias (igual ao handler anterior, retorna bytes)."""
@@ -1011,12 +1206,26 @@ class ServidorAsyncHTTP:
         ).encode()
         return header + conteudo
 
-    async def _handle_post(self, path: str, headers: dict, body: bytes) -> bytes:
+    async def _handle_post(self, path: str, params: dict, headers: dict,
+                           body: bytes, peer_ip: str = '') -> bytes:
         """Processa requisições POST."""
         if path == '/api/midia/upload':
             return self._handle_upload_bytes(headers, body)
-        else:
-            return self._responder_erro_bytes("Rota não encontrada", 404)
+        if path.startswith('/api/remoto'):
+            bloqueio = self._exige_remoto(headers, params)
+            if bloqueio is not None:
+                return bloqueio
+            acao = _ACOES_POST_REMOTO.get(urllib.parse.urlparse(path).path)
+            if acao is None:
+                return self._responder_erro_bytes("Rota não encontrada", 404)
+            try:
+                dados = json.loads(body.decode('utf-8')) if body else {}
+                if not isinstance(dados, dict):
+                    raise ValueError("JSON deve ser um objeto")
+            except (ValueError, UnicodeDecodeError) as e:
+                return self._responder_erro_bytes(f"Corpo inválido: {e}", 400)
+            return self._executar_remoto(acao, dados)
+        return self._responder_erro_bytes("Rota não encontrada", 404)
 
     def _handle_upload_bytes(self, headers: dict, body: bytes) -> bytes:
         """Processa upload de arquivo."""
@@ -1094,7 +1303,8 @@ class ServidorAsyncHTTP:
             "caminho": caminho
         }, 201)
 
-    async def _handle_delete(self, path: str) -> bytes:
+    async def _handle_delete(self, path: str, headers: dict,
+                             peer_ip: str = '') -> bytes:
         """Processa requisições DELETE."""
         match = re.match(r'^/api/midia/(\d+)$', path)
         if match:
@@ -1120,7 +1330,7 @@ class ServidorAsyncHTTP:
             f"Content-Type: application/json; charset=utf-8\r\n"
             f"Access-Control-Allow-Origin: *\r\n"
             f"Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n"
-            f"Access-Control-Allow-Headers: Content-Type\r\n"
+            f"Access-Control-Allow-Headers: Content-Type, X-Token\r\n"
             f"Content-Length: {len(body)}\r\n"
             f"Connection: close\r\n"
             f"\r\n"
@@ -1446,6 +1656,55 @@ def get_monitors_config() -> List[MonitorInfo]:
     return result
 
 # ────────────────────────────────────────────────────────────────────
+# POSICIONAMENTO DE JANELAS SECUNDÁRIAS
+# ────────────────────────────────────────────────────────────────────
+
+
+def _centralizar_sobre(janela, pai=None) -> None:
+    """Posiciona `janela` centralizada sobre `pai` (ou sobre a tela).
+
+    Uma Toplevel criada só com geometry("LxA") (sem coordenadas) deixa o
+    posicionamento por conta do window manager: no Windows ele centraliza
+    sobre a janela pai, mas no Linux/Wayland ele decide sozinho e em
+    multi-monitor abre até no monitor errado (ex.: no telão). Aqui a
+    posição é explícita e igual em qualquer SO.
+
+    Mede o tamanho real da janela (com fallback para o tamanho requisitado
+    quando ainda não mapeada) e desloca o centro dela para o centro de
+    `pai`. Se `pai` não existir mais, centraliza na tela.
+    """
+    try:
+        janela.update_idletasks()
+        w = janela.winfo_width()
+        h = janela.winfo_height()
+        if w <= 1 or h <= 1:
+            w = max(w, janela.winfo_reqwidth())
+            h = max(h, janela.winfo_reqheight())
+        if pai is not None:
+            try:
+                if pai.winfo_exists():
+                    px, py = pai.winfo_x(), pai.winfo_y()
+                    pw, ph = pai.winfo_width(), pai.winfo_height()
+                else:
+                    raise tk.TclError
+            except tk.TclError:
+                px = py = 0
+                pw = janela.winfo_screenwidth()
+                ph = janela.winfo_screenheight()
+        else:
+            px = py = 0
+            pw = janela.winfo_screenwidth()
+            ph = janela.winfo_screenheight()
+        if pw <= 1 or ph <= 1:
+            return
+        x = px + max(0, (pw - w) // 2)
+        y = py + max(0, (ph - h) // 2)
+        janela.geometry(f"+{x}+{y}")
+    except tk.TclError:
+        pass
+
+
+# ────────────────────────────────────────────────────────────────────
 # TELÃO - JANELA DE PROJEÇÃO (mantido)
 # ────────────────────────────────────────────────────────────────────
 
@@ -1466,21 +1725,6 @@ def _escolher_monitor_painel(monitors: List[MonitorInfo]) -> Optional[MonitorInf
 
 
 
-def _centralizar_toplevel(janela, largura=None, altura=None):
-    try:
-        janela.update_idletasks()
-        sw = janela.winfo_screenwidth()
-        sh = janela.winfo_screenheight()
-        if largura is None or altura is None:
-            geom = janela.geometry()
-            import re
-            m = re.match(r'(\d+)x(\d+)', geom)
-            if m:
-                largura = int(m.group(1)); altura = int(m.group(2))
-        if largura is None: largura=600
-        if altura is None: altura=400
-        janela.geometry(f'{largura}x{altura}+{(sw-largura)//2}+{(sh-altura)//2}')
-    except Exception: pass
 
 def _escolher_monitor_telao(monitors: List[MonitorInfo]) -> Optional[MonitorInfo]:
     """Escolhe em qual monitor o TELÃO abre.
@@ -1510,21 +1754,6 @@ def _escolher_monitor_telao(monitors: List[MonitorInfo]) -> Optional[MonitorInfo
 
 
 
-def _centralizar_toplevel(janela, largura=None, altura=None):
-    try:
-        janela.update_idletasks()
-        sw = janela.winfo_screenwidth()
-        sh = janela.winfo_screenheight()
-        if largura is None or altura is None:
-            geom = janela.geometry()
-            import re
-            m = re.match(r'(\d+)x(\d+)', geom)
-            if m:
-                largura = int(m.group(1)); altura = int(m.group(2))
-        if largura is None: largura=600
-        if altura is None: altura=400
-        janela.geometry(f'{largura}x{altura}+{(sw-largura)//2}+{(sh-altura)//2}')
-    except Exception: pass
 
 def _normalizar_escala_tk(root) -> float:
     """Garante texto legível e consistente entre Python/Tk diferentes.
@@ -1893,6 +2122,11 @@ class TelaoWindow:
         if not self.rodando or not self._raiz_viva():
             return
 
+        if not self.mostrando_relogio:
+            # Durante projeções (slides/vídeo/texto/imagem/medidor) o relógio
+            # não deve redesenhar hora/temperatura por cima do conteúdo.
+            return
+
         # Evita chamadas Tk desnecessárias se os valores não mudaram
         texto_mudou = texto != self._current_text
         temp_mudou = temperatura != self._current_temp
@@ -2189,7 +2423,7 @@ class TelaoWindow:
             self._proj_timer = None
 
         # Guarda a temperatura exibida para restaurar depois
-        self._temp_salvo = self._current_temp
+        self._guardar_temp_para_restaurar()
 
         # Remove qualquer imagem de uma projeção anterior
         self._limpar_camada_imagem()
@@ -2280,6 +2514,11 @@ class TelaoWindow:
         self._font_letra = fonte
         self._current_text = texto
         self._current_temp = ""
+        # Projeção de texto nunca mostra a temperatura do relógio
+        try:
+            self.canvas.itemconfig(self.temp_text, text="", state="hidden")
+        except (tk.TclError, AttributeError):
+            pass
 
         self.canvas.itemconfig(
             self.overlay_text,
@@ -2357,7 +2596,7 @@ class TelaoWindow:
             self._proj_timer = None
 
         # Guarda a temperatura exibida para restaurar depois
-        self._temp_salvo = self._current_temp
+        self._guardar_temp_para_restaurar()
 
         # Remove qualquer imagem de uma projeção anterior (ex.: anúncio de
         # imagem + texto) para o novo texto aparecer limpo por cima.
@@ -2416,7 +2655,7 @@ class TelaoWindow:
         self._limpar_camada_imagem()
 
         # Guarda a temperatura exibida para restaurar depois
-        self._temp_salvo = self._current_temp
+        self._guardar_temp_para_restaurar()
 
         self.mostrando_letra = True
         self._em_slides = False
@@ -2435,8 +2674,12 @@ class TelaoWindow:
             self._current_alpha = alpha
         self._aplicar_fundo_projecao()
         self.root.lift()
+        # Dá foco de teclado ao telão assim que a projeção começa: sem isso
+        # o operador precisa clicar no telão uma vez para o teclado/passador
+        # de slides (setas, AvPag/RetPag, espaço, F5) responder.
+        self._garantir_foco_teclado()
 
-        # Esconde temperatura, referência e hora para exibir só a imagem
+        # Esconde temperatura
         self.canvas.itemconfig(self.temp_text, text="", state="hidden")
         self.canvas.itemconfig(self.ref_text, text="", state="hidden")
         self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
@@ -2575,7 +2818,7 @@ class TelaoWindow:
             self._proj_timer = None
 
         # Guarda a temperatura exibida para restaurar depois
-        self._temp_salvo = self._current_temp
+        self._guardar_temp_para_restaurar()
 
         self.mostrando_letra = True
         self._em_slides = False
@@ -2788,6 +3031,13 @@ class TelaoWindow:
             return False
         if indice < 0 or indice >= len(self._slides):
             return False
+        # Garante que a temperatura do relógio não fique sobre o slide (pode
+        # ter sido redesenhada por uma atualização de clima em andamento).
+        try:
+            self.canvas.itemconfig(self.temp_text, text="", state="hidden")
+        except (tk.TclError, AttributeError):
+            pass
+        self._current_temp = ""
         self._slide_index = indice
         slide = self._slides[indice]
         if isinstance(slide, dict):
@@ -2857,6 +3107,33 @@ class TelaoWindow:
             return "break"
         return None
 
+    def _garantir_foco_teclado(self) -> None:
+        """Traz o foco de teclado para o telão ao iniciar uma projeção.
+
+        O telão é uma janela Tk própria; como o operador costuma acionar a
+        projeção pela janela do painel, o foco fica lá e as teclas do
+        teclado/passador não chegam ao telão. Aqui o foco é forçado e
+        reforçado em alguns ciclos, porque parte dos gerenciadores de
+        janelas só o honra depois de processar o mapa/raise da janela.
+        """
+        try:
+            self.root.lift()
+            self.root.focus_force()
+            self.canvas.focus_set()
+            self.root.after_idle(self._reforcar_foco)
+            self.root.after(150, self._reforcar_foco)
+        except tk.TclError:
+            pass
+
+    def _reforcar_foco(self) -> None:
+        """Reaplica o foco no telão enquanto ele estiver vivo (best-effort)."""
+        try:
+            if not getattr(self, "_em_slides", False) or not self._raiz_viva():
+                return
+            self.root.focus_force()
+        except tk.TclError:
+            pass
+
     def _ao_pressionar_esc(self, event: object = None) -> Optional[str]:
         """Esc durante projeção encerra a projeção e volta o relógio ao telão.
 
@@ -2867,6 +3144,18 @@ class TelaoWindow:
             return "break"
         self.fechar()
         return None
+
+    def _guardar_temp_para_restaurar(self) -> None:
+        """Memoriza a temperatura do relógio para restaurá-la após a projeção.
+
+        Cada texto projetado limpa ``_current_temp`` ao ser desenhado. Em
+        projeções encadeadas (ex.: vários itens de um serviço) a projeção
+        seguinte encontraria ``_current_temp`` vazio e apagaria o valor salvo,
+        fazendo a temperatura não voltar ao encerrar. Só sobrescreve o valor
+        memorizado quando há uma temperatura real no relógio.
+        """
+        if self._current_temp:
+            self._temp_salvo = self._current_temp
 
     def _retornar_ao_relogio(self) -> None:
         """Retorna relógio + temperatura ao telão ao fim da projeção."""
@@ -2954,8 +3243,19 @@ class TelaoWindow:
             pass
 
     def _exibir_hora_inicial(self, temperatura: str = "") -> None:
-        """Exibe a hora atual e temperatura no telão logo após a criação."""
+        """Exibe a hora atual e temperatura no telão logo após a criação.
+
+        Se houver uma projeção (slides/texto/imagem/medidor) ou vídeo em
+        curso, não desenha a hora por cima do conteúdo: apenas atualiza a
+        temperatura memorizada, para que ela volte certa quando a projeção
+        terminar. O relógio só é redesenhado no modo relógio.
+        """
         if not self._raiz_viva():
+            return
+        if not getattr(self, "mostrando_relogio", True):
+            if temperatura:
+                self._current_temp = temperatura
+                self._guardar_temp_para_restaurar()
             return
         hora = datetime.now().strftime("%H:%M")
         self.canvas.itemconfig(self.overlay_text, text=hora, state="normal")
@@ -3012,7 +3312,7 @@ class TelaoWindow:
                 pass
             self._proj_timer = None
 
-        self._temp_salvo = self._current_temp
+        self._guardar_temp_para_restaurar()
         self._limpar_camada_imagem()
         self.mostrando_letra = True
         self._em_slides = False
@@ -4189,6 +4489,33 @@ def _montar_slides_letra(titulo: str, letra_completa: str) -> list:
     return slides
 
 
+def _previa_slide(slide: object) -> str:
+    """Texto curto de um slide para exibir no controle remoto."""
+    if isinstance(slide, dict):
+        return (slide.get("texto") or "").strip()
+    if isinstance(slide, tuple):
+        texto = str(slide[0]) if slide else ""
+        ref = str(slide[1]) if len(slide) > 1 and slide[1] else ""
+        return f"{ref} — {texto}" if ref else texto
+    return str(slide or "")
+
+
+def _montar_slides_anuncio(anuncio: dict) -> list:
+    """Monta os slides de um anúncio respeitando o texto digitado:
+    slide 0 é o título, os demais são os parágrafos do texto (cada
+    parágrafo = 1 slide, exatamente como o editor adiciona telas)."""
+    titulo = (anuncio.get('titulo') or '').strip()
+    texto = (anuncio.get('texto') or '').strip()
+    paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto)
+                  if seg.strip()]
+    slides = [titulo] if titulo else []
+    for paragrafo in paragrafos:
+        slides.append(paragrafo)
+    if not slides:
+        slides = [titulo or "ANÚNCIO"]
+    return slides
+
+
 def _buscar_hino_por_termo(termo: str) -> List[Dict]:
     """Busca hino por número no início do título ou por trecho (título/artista).
 
@@ -5121,6 +5448,7 @@ def _escolher_arquivos_usuario(
     dial.configure(bg='#0d1117')
     if parent is not None:
         dial.transient(parent)
+    _centralizar_sobre(dial, parent)
 
     def _encurtar(texto: str, limite: int = 58) -> str:
         return texto if len(texto) <= limite else "…" + texto[-(limite - 1):]
@@ -5337,6 +5665,13 @@ class AppInterface:
         self.placeholder_busca: str = "Buscar hino... [BD]"
         self.arquivos_encontrados: list[str] = []
         self.arquivo_atual: Optional[str] = None
+        # Estado do anúncio projetado (compartilhado entre a janela de
+        # anúncios e o controle remoto)
+        self._anuncio_proj: dict = {"id": None, "dados": {}, "config": {},
+                                    "mslides": None, "idx_map": []}
+        # Snapshot do player guardado durante um item de serviço (restaurado
+        # quando o item termina; compartilhado com o controle remoto)
+        self._snapshot_servico: dict = {"guardada": False}
         
         self.cidade_salva: str = self.config_data.get("cidade", "")
         self.estado_salvo: str = self.config_data.get("estado", "")
@@ -5427,6 +5762,12 @@ class AppInterface:
         self.root.after(100, self._inicializar_em_segundo_plano)
 
         self.root.bind('<space>', self._on_space)
+        # No Wayland o telão (janela Tk própria) não consegue roubar o foco
+        # do compositor; se o foco ficar no painel do operador, as teclas do
+        # passador de slides não chegam ao telão. Este bind_all encaminha as
+        # teclas não consumidas por nenhum widget (setas, PageUp/PageDown,
+        # F5, BackSpace) ao telão enquanto houver projeção em slides.
+        self.root.bind_all("<KeyPress>", self._encaminhar_teclas_telao)
         self.root.protocol("WM_DELETE_WINDOW", self.fechar)
 
         # Captura eventos de estado da janela (maximizar/minimizar)
@@ -5506,6 +5847,52 @@ class AppInterface:
                 return "break"  # Deixa o Entry consumir o espaço
         self.player.play_pause()
         return "break"
+
+    def _encaminhar_teclas_telao(self, event: object = None) -> Optional[str]:
+        """Encaminha as teclas do passador de slides ao telão.
+
+        Só age durante uma projeção em slides, quando o foco está no painel
+        do operador (Wayland não permite o telão se auto-focar). Espelha o
+        que _on_space já faz para o espaço. Como usa o tag "all", só é
+        chamado para teclas que nenhum widget/binding mais específico
+        consumiu (digitação em Entry, listas, janelas com atalhos próprios
+        continuam intactas).
+        """
+        if event is None:
+            return None
+        player = getattr(self, "player", None)
+        telao = getattr(player, "telao", None) if player is not None else None
+        if telao is None or not getattr(telao, "_em_slides", False):
+            return None
+        try:
+            if not telao._raiz_viva():
+                return None
+        except Exception:
+            return None
+        # Não interfere em campos de texto: neles as setas e o BackSpace
+        # pertencem à edição (o Tk pode não consumir a tecla antes do "all").
+        foco = None
+        try:
+            foco = self.root.focus_get()
+        except (KeyError, tk.TclError):
+            foco = None
+        if foco is not None:
+            try:
+                classe = str(foco.winfo_class()).lower()
+            except Exception:
+                classe = ""
+            if classe in ("entry", "tentry", "text", "spinbox", "tspinbox",
+                          "tcombobox"):
+                return None
+        keysym = str(getattr(event, "keysym", "") or "").lower()
+        if keysym in ("right", "down", "next", "page_next", "page_down", "f5"):
+            telao.slide_proximo()
+            return "break"
+        if keysym in ("left", "up", "prior", "page_prior", "page_up",
+                      "backspace"):
+            telao.slide_anterior()
+            return "break"
+        return None
 
     # ── Widgets de cidade ─────────────────────────────────────────
 
@@ -5602,13 +5989,1317 @@ class AppInterface:
     # ── Configurações ─────────────────────────────────────────────
 
     def carregar_config(self) -> dict[str, Any]:
+        dados: dict[str, Any] = {}
         try:
             if os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE, "r") as f:
-                    return json.load(f)
+                    dados = json.load(f)
         except Exception:
-            pass
-        return {}
+            dados = {}
+        if not isinstance(dados, dict):
+            dados = {}
+        remoto = dados.setdefault('remoto', {})
+        if not isinstance(remoto, dict):
+            remoto = dados['remoto'] = {}
+        remoto.setdefault('ativo', False)
+        remoto.setdefault('token', '')
+        return dados
+
+    # ── Controle remoto (celular na mesma rede) ───────────────────
+
+    def _na_thread_ui(self, fn: Callable, timeout: float = 5.0) -> Any:
+        """Executa `fn` na thread do Tk e devolve o resultado.
+
+        É a ponte usada pelo ServidorAsyncHTTP (que roda em thread
+        própria): agenda no root.after e aguarda o Future, nunca tocando
+        em widgets fora da thread do Tk.
+        """
+        fut: concurrent.futures.Future = concurrent.futures.Future()
+
+        def _executar() -> None:
+            if fut.cancelled():
+                return
+            try:
+                fut.set_result(fn())
+            except Exception as exc:  # noqa: BLE001 — repassa ao chamador
+                fut.set_exception(exc)
+
+        self.root.after(0, _executar)
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            fut.cancel()
+            raise TimeoutError(
+                "O aplicativo não respondeu a tempo") from None
+
+    def _aplicar_acesso_remoto(self) -> None:
+        """(Re)configura bind e token do servidor HTTP conforme a config."""
+        if not getattr(self, '_servidor_thread', None):
+            return
+        remoto = self.config_data.get('remoto') or {}
+        ativo = bool(remoto.get('ativo') and remoto.get('token'))
+        self._servidor_thread.configurar_acesso(
+            '0.0.0.0' if ativo else '127.0.0.1',
+            remoto.get('token') if ativo else None)
+
+    def info_controle_remoto(self) -> dict:
+        """Estado atual do remoto: ativo, token e URL para o celular."""
+        remoto = self.config_data.get('remoto') or {}
+        ativo = bool(remoto.get('ativo') and remoto.get('token'))
+        token = remoto.get('token') or ''
+        ip = _ip_da_rede() if ativo else ''
+        url = (f"http://{ip}:{BACKEND_PORT}/?t={token}" if ativo else '')
+        return {'ativo': ativo, 'token': token, 'ip': ip, 'url': url}
+
+    def alternar_controle_remoto(self, ativo: bool) -> dict:
+        """Liga/desliga o controle remoto, gerando o token se preciso."""
+        remoto = self.config_data.setdefault('remoto', {})
+        remoto['ativo'] = bool(ativo)
+        if ativo and not remoto.get('token'):
+            remoto['token'] = secrets.token_urlsafe(9)
+        if not ativo:
+            remoto['token'] = ''
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(self.config_data, f, indent=2)
+        except Exception as e:
+            print(f"Erro ao salvar config de remoto: {e}")
+        self._aplicar_acesso_remoto()
+        print(('🌐 Controle remoto ATIVADO' if ativo
+               else '📴 Controle remoto desativado')
+              + (f" — {self.info_controle_remoto()['url']}" if ativo else ''))
+        return self.info_controle_remoto()
+
+    def abrir_controle_remoto(self) -> None:
+        """Abre Configurações já na aba 🌐 Controle Remoto.
+
+        O conteúdo (ativação, token e URL) vive na própria aba — ver
+        `_conteudo_controle_remoto` — então esta janela nunca abre por
+        trás de outra: é a janela de Configurações que ganha a aba.
+        """
+        self.abrir_config_relogio_dialogo(aba='remoto')
+
+    def _conteudo_controle_remoto(self, parent) -> None:
+        """Monta dentro de `parent` (aba 🌐 Controle Remoto) os controles.
+
+        Ativação do controle remoto, URL com token, copiar e trocar token —
+        o mesmo comportamento da antiga janela separada, agora como aba da
+        janela de Configurações (aberta igual às demais abas).
+        """
+        tk.Label(
+            parent, justify='left', bg='#0d1117', fg='#c9d1d9',
+            font=("Arial", 10),
+            text=("Operar o NavePro pelo celular na mesma rede Wi-Fi:\n"
+                  "hinos, slides, Bíblia, anúncios, ordem de serviço e\n"
+                  "medidor, sem tocar no computador.")
+        ).pack(pady=(12, 10), padx=20)
+
+        estado = {'ativo': tk.BooleanVar(
+            value=bool(self.info_controle_remoto()['ativo']))}
+
+        frame_url = tk.Frame(parent, bg='#161b22')
+        frame_url.pack(fill='x', padx=20, pady=4)
+
+        entry_url = tk.Entry(frame_url, bg='#0d1117', fg='#58a6ff',
+                             insertbackground='#58a6ff', relief='flat',
+                             font=("Arial", 10), readonlybackground='#161b22')
+        entry_url.pack(side='left', fill='x', expand=True, padx=8, pady=8,
+                       ipady=4)
+        entry_url.configure(state='normal')
+
+        def _atualizar_url() -> None:
+            info = self.info_controle_remoto()
+            entry_url.configure(state='normal')
+            entry_url.delete(0, tk.END)
+            if info['url']:
+                entry_url.insert(0, info['url'])
+            entry_url.configure(state='readonly')
+
+        def _alternar() -> None:
+            self.alternar_controle_remoto(estado['ativo'].get())
+            _atualizar_url()
+
+        def _copiar(event: object = None) -> None:
+            url = entry_url.get().strip()
+            if not url:
+                return
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            btn_copiar.config(text="✅ Copiado")
+            parent.after(1500, lambda: btn_copiar.config(text="📋 Copiar"))
+
+        def _novo_token() -> None:
+            self.alternar_controle_remoto(False)
+            self.alternar_controle_remoto(True)
+            estado['ativo'].set(True)
+            _atualizar_url()
+
+        tk.Checkbutton(
+            parent, text="Ativar controle remoto", variable=estado['ativo'],
+            command=_alternar, bg='#0d1117', fg='#f0c040', selectcolor='#161b22',
+            activebackground='#0d1117', activeforeground='#f0c040',
+            font=("Arial", 11, "bold"), anchor='w'
+        ).pack(fill='x', padx=22, pady=(8, 2))
+
+        frame_botoes = tk.Frame(parent, bg='#0d1117')
+        frame_botoes.pack(fill='x', padx=20, pady=4)
+        btn_copiar = tk.Button(
+            frame_botoes, text="📋 Copiar", command=_copiar,
+            bg='#1f6feb', fg='white', activebackground='#388bfd',
+            font=("Arial", 10, "bold"), cursor='hand2', padx=10, pady=3)
+        btn_copiar.pack(side='left', padx=(0, 6))
+        tk.Button(
+            frame_botoes, text="🔄 Novo token", command=_novo_token,
+            bg='#21262d', fg='#c9d1d9', activebackground='#30363d',
+            font=("Arial", 10), cursor='hand2', padx=10, pady=3
+        ).pack(side='left')
+
+        tk.Label(
+            parent, justify='left', bg='#0d1117', fg='#8b949e',
+            font=("Arial", 9),
+            text=("Como usar:\n"
+                  "1. Ative o controle remoto (acima).\n"
+                  "2. No celular, abra a URL mostrada (mesma rede Wi-Fi).\n"
+                  "3. O acesso é protegido por token; troque o token se\n"
+                  "   alguém tiver a URL antiga.")
+        ).pack(padx=20, anchor='w', pady=(12, 0))
+
+        _atualizar_url()
+
+    # ── Projeção reutilizável (janelas + controle remoto) ─────────
+
+    def projetar_anuncio(self, anuncio_id: int,
+                         ao_atualizar: Optional[Callable] = None) -> dict:
+        """Projeta o anúncio `anuncio_id` (vídeo/áudio/imagem/slides).
+
+        Usado pela janela de Anúncios e pelo controle remoto. Não abre
+        diálogo: devolve {'ok': False, 'erro': ...} para o chamador
+        decidir o que mostrar. `ao_atualizar` é chamado após projetar
+        (ex.: atualizar o indicador de slide da janela).
+        """
+        anuncio = next(
+            (a for a in _listar_anuncios_db()
+             if int(a.get('id', 0)) == anuncio_id), None)
+        if not anuncio:
+            return {'ok': False, 'erro': 'Anúncio não encontrado.'}
+        tipo = anuncio.get('tipo_midia') or 'slide'
+        arquivo = anuncio.get('arquivo_midia') or ''
+        if tipo in ('video', 'audio') and arquivo and os.path.exists(arquivo):
+            self._anuncio_proj["id"] = None
+            self.arquivos_encontrados = [arquivo]
+            self.player.carregar_playlist([arquivo])
+            self.player.tocar_indice(0)
+            self.atualizar_lista()
+            if ao_atualizar:
+                ao_atualizar()
+            return {'ok': True, 'titulo': anuncio.get('titulo') or '',
+                    'tipo': tipo}
+        if tipo == 'imagem' and arquivo and os.path.exists(arquivo):
+            texto_anuncio = (anuncio.get('texto') or '').strip()
+            cfg_imagem: dict = {}
+            try:
+                _ci = json.loads(anuncio.get('config_midia') or '{}')
+                if isinstance(_ci, dict):
+                    cfg_imagem = _ci
+            except (ValueError, TypeError, AttributeError):
+                cfg_imagem = {}
+            self._anuncio_proj.update({
+                "id": anuncio_id, "dados": dict(anuncio),
+                "config": cfg_imagem, "mslides": None, "idx_map": []})
+            if self.player.telao.projetar_imagem_com_texto(
+                    arquivo, texto_anuncio,
+                    anuncio.get('config_midia') or ''):
+                if ao_atualizar:
+                    ao_atualizar()
+                return {'ok': True, 'titulo': anuncio.get('titulo') or '',
+                        'tipo': tipo}
+            self._anuncio_proj["id"] = None
+            # Falhou a composição projetada: tenta a imagem pura
+            if self.player.telao.projetar_imagem(arquivo):
+                if ao_atualizar:
+                    ao_atualizar()
+                return {'ok': True, 'titulo': anuncio.get('titulo') or '',
+                        'tipo': tipo}
+            return {'ok': False,
+                    'erro': f"Não foi possível projetar:\n{arquivo}"}
+        cfg_a: dict = {}
+        try:
+            _p = json.loads(anuncio.get('config_midia') or '{}')
+            if isinstance(_p, dict):
+                cfg_a = _p
+        except (ValueError, TypeError, AttributeError):
+            cfg_a = {}
+        if isinstance(cfg_a, dict) and isinstance(cfg_a.get("mslides"), list):
+            # Anúncio multi-slide texto+imagem (cada slide pode ter imagem).
+            mslides_orig = cfg_a["mslides"]
+            slides = []
+            idx_map = []
+            for i, s in enumerate(mslides_orig):
+                if not isinstance(s, dict):
+                    continue
+                texto_s = (s.get("texto") or '').strip()
+                imagem_s = (s.get("imagem") or '').strip()
+                if not texto_s and not imagem_s:
+                    continue
+                slides.append({"texto": texto_s, "imagem": imagem_s,
+                               "config": s.get("config") or ''})
+                idx_map.append(i)
+            if not slides:
+                slides = [{"texto": "ANÚNCIO", "imagem": '', "config": ''}]
+            self._anuncio_proj.update({
+                "id": anuncio_id, "dados": dict(anuncio),
+                "config": cfg_a, "mslides": mslides_orig, "idx_map": idx_map})
+        else:
+            slides = _montar_slides_anuncio(dict(anuncio))
+            self._anuncio_proj.update({
+                "id": None, "dados": {}, "config": {},
+                "mslides": None, "idx_map": []})
+        self.player.telao.projetar_slides(slides)
+        if ao_atualizar:
+            ao_atualizar()
+        return {'ok': True, 'titulo': anuncio.get('titulo') or '',
+                'tipo': tipo}
+
+    def executar_proximo_item_servico(self, servico: Optional[dict], *,
+                                      escolhido: Optional[int] = None,
+                                      ao_destacar: Optional[Callable] = None
+                                      ) -> dict:
+        """Reproduz APENAS o próximo item de `servico` e para.
+
+        A escolha do operador (`escolhido`) vale uma única vez: se informado,
+        a próxima reprodução começa nele e a partir daí o avanço é item a item
+        até o fim da lista, voltando ao primeiro ao terminar — a escolha
+        anterior é esquecida. Sem seleção, segue do começo ao fim. Independente
+        do tipo (hino/vídeo/áudio/texto): reproduz/projeta só o item e fica
+        aguardando a próxima chamada. Não altera a playlist nem a opção de
+        repetição da janela principal — o estado anterior é restaurado quando
+        o item termina.
+
+        Não abre diálogo (usado pelo controle remoto na thread do servidor):
+        devolve {'ok': True, 'indice', 'id', 'titulo'} ou
+        {'ok': False, 'codigo' ('sem_servico'|'vazio'|'falha'), 'erro'}.
+        `ao_destacar(item)` é chamado para a janela realçar o item na lista.
+        """
+        if not servico:
+            return {'ok': False, 'codigo': 'sem_servico',
+                    'erro': 'Nenhum serviço selecionado.'}
+        itens = list(servico.get("itens") or [])
+        if not itens:
+            return {'ok': False, 'codigo': 'vazio',
+                    'erro': 'Serviço sem itens.'}
+        chave = servico.get("id") or servico.get("nome") or "?"
+        prox = _SERVICO_PROXIMO_ITEM.get(chave)
+        if escolhido is not None:
+            idx_escolhido = next((i for i, it in enumerate(itens)
+                                  if it.get("id") == escolhido), None)
+            if idx_escolhido is not None:
+                prox = idx_escolhido
+        if prox is None or prox < 0 or prox >= len(itens):
+            prox = 0
+        item = itens[prox]
+        tipo = (item.get('tipo') or '').strip().lower()
+        titulo_item = (item.get('titulo_custom') or '').strip()
+        letra = (item.get('letra_snapshot') or '').strip()
+
+        # Destaque do item em execução na lista da janela de serviço.
+        # Não é escolha do operador: não registra nada em _item_escolhido.
+        if ao_destacar:
+            try:
+                ao_destacar(item)
+            except Exception:
+                pass
+
+        iniciado = False
+        # Resolve o caminho de mídia do item: 1ª o arquivo escolhido
+        # diretamente no editor (vídeo/áudio/PowerPoint/Impress); 2ª o
+        # vídeo/áudio do acervo (tabela midia); 3ª a mídia (vídeo/áudio)
+        # anexada a um anúncio.
+        caminho_media = None
+        _caminho_direto = (item.get('caminho_arquivo') or '').strip()
+        if tipo in ('video', 'audio', 'sermao') and _caminho_direto \
+                and os.path.exists(_caminho_direto):
+            caminho_media = _caminho_direto
+        else:
+            if tipo in ('video', 'audio') and item.get('referencia_id'):
+                try:
+                    rows_m = db_query(
+                        "SELECT caminho_arquivo FROM midia WHERE id = ? AND ativo = 1",
+                        (item['referencia_id'],))
+                    if rows_m:
+                        caminho_media = rows_m[0].get('caminho_arquivo') or ''
+                except Exception:
+                    caminho_media = None
+            elif tipo == 'anuncio' and item.get('referencia_id'):
+                anun = _buscar_anuncio_por_ref(item['referencia_id'])
+                if anun and (anun.get('tipo_midia') or '').strip().lower() in ('video', 'audio'):
+                    caminho_media = (anun.get('arquivo_midia') or '')
+        if caminho_media and os.path.exists(caminho_media):
+            caminho = caminho_media
+            _ext = os.path.splitext(caminho)[1].lower()
+            if _ext in ('.ppt', '.pptx', '.pps', '.ppsx', '.odp', '.pdf'):
+                # Apresentação (PowerPoint/Impress) ou PDF: abre no
+                # aplicativo do sistema (LibreOffice --show para
+                # apresentação, visualizador padrão para PDF), escondendo
+                # o telão enquanto estiver aberta.
+                self.player._matar_processo()
+                self.player.telao.preparar_video()
+                if _eh_windows():
+                    _cmd_apres = ['cmd', '/c', 'start', '', caminho]
+                elif _ext == '.pdf':
+                    # PDF: visualizador padrão do sistema (o LibreOffice
+                    # em modo apresentação não serve para PDF).
+                    _cmd_apres = ['xdg-open', caminho]
+                else:
+                    _cmd_apres = ['xdg-open', caminho]
+                    for _so in ('libreoffice', 'soffice'):
+                        if self.player._player_existe(_so):
+                            _cmd_apres = [_so, '--show', caminho]
+                            break
+                try:
+                    _proc_apres = subprocess.Popen(
+                        _cmd_apres, start_new_session=True,
+                        env=_ambiente_sem_appimage())
+                except Exception as e:
+                    print(f"❌ Erro ao abrir apresentação/PDF: {e}")
+                    iniciado = False
+                else:
+                    iniciado = True
+                    if _cmd_apres[0] in ('libreoffice', 'soffice'):
+                        # Monitora o fim da apresentação e restaura o telão
+                        def _monitor_apres():
+                            _rc = _proc_apres.poll()
+                            if _rc is not None:
+                                try:
+                                    self.player.telao.restaurar_tela()
+                                except Exception:
+                                    pass
+                                return
+                            try:
+                                self.player.telao.root.after(1000, _monitor_apres)
+                            except tk.TclError:
+                                pass
+                        try:
+                            self.player.telao.root.after(1000, _monitor_apres)
+                        except tk.TclError:
+                            pass
+            else:
+                # Snapshot da janela principal capturado UMA vez por
+                # sessão (restaurado quando o item termina).
+                if not self._snapshot_servico["guardada"]:
+                    self._snapshot_servico["guardada"] = True
+                    self._snapshot_servico["playlist"] = list(self.player.playlist or [])
+                    self._snapshot_servico["index"] = self.player.index
+                    self._snapshot_servico["arquivos"] = list(
+                        getattr(self, 'arquivos_encontrados', []) or [])
+                    self._snapshot_servico["atual"] = getattr(
+                        self, 'arquivo_atual', None)
+
+                def _fim_item_servico(estado: object = None):
+                    # Restaura o handler e o estado anteriores ao item
+                    self.player.on_state_change = self.quando_midia_terminar
+                    if self._snapshot_servico["guardada"] and self.player.playlist == [caminho]:
+                        self._snapshot_servico["guardada"] = False
+                        self.player.playlist = self._snapshot_servico["playlist"]
+                        self.player.index = self._snapshot_servico["index"]
+                        self.arquivos_encontrados = self._snapshot_servico["arquivos"]
+                        self.arquivo_atual = self._snapshot_servico["atual"]
+
+                self.player.on_state_change = _fim_item_servico
+                self.player.carregar_playlist([caminho])
+                if self.player.tocar_indice(0):
+                    iniciado = True
+                else:
+                    self.player.on_state_change = self.quando_midia_terminar
+
+        if not iniciado:
+            # Itens sem mídia (hino/anúncio/texto): projeta e para.
+            if tipo == 'hino' and (titulo_item or letra):
+                self.player.telao.projetar_slides(
+                    _montar_slides_letra(titulo_item, letra))
+                iniciado = True
+            elif tipo == 'anuncio':
+                anun = _buscar_anuncio_por_ref(item.get('referencia_id'))
+                if anun:
+                    if _projetar_anuncio_ordserv(self.player.telao, anun):
+                        iniciado = True
+                else:
+                    texto = letra or titulo_item
+                    if texto:
+                        self.player.telao.projetar_texto(texto)
+                        iniciado = True
+            else:
+                if tipo == 'versiculo' and letra:
+                    # Projeta como slide persistente (igual janela Bíblia):
+                    # fica no telão até o operador parar (Esc/fechar).
+                    # Item com faixa (ex.: "1-7") sai um versículo por
+                    # slide, navegável com ◀/▶; versículo único e
+                    # capítulo inteiro seguem em um slide só.
+                    self.player.telao.projetar_slides(
+                        _slides_versiculo_item(item), indice_inicial=0)
+                else:
+                    texto = letra or titulo_item
+                    if texto:
+                        self.player.telao.projetar_texto(texto)
+                iniciado = True if (letra if tipo == 'versiculo'
+                                    else (letra or titulo_item)) else False
+
+        if not iniciado:
+            return {'ok': False, 'codigo': 'falha',
+                    'erro': f"Não foi possível reproduzir o item {prox + 1}."}
+        _SERVICO_PROXIMO_ITEM[chave] = prox + 1
+        return {'ok': True, 'indice': prox, 'id': item.get('id'),
+                'titulo': titulo_item}
+
+    # ── Controle remoto: ações do celular ─────────────────────────
+
+    def _persistir_escala_texto(self, escala: float) -> None:
+        """Grava a nova escala de fonte ('ts') no anúncio em projeção.
+
+        Anúncio de imagem única: grava 'ts' no JSON de config_midia.
+        Anúncio multi-slide com imagem: grava 'ts' no config do slide
+        atualmente exibido. Não faz nada se não houver anúncio sendo
+        projetado ou se o slide em exibição não tiver imagem.
+        """
+        pid = self._anuncio_proj.get("id")
+        if not pid:
+            return
+        try:
+            cfg_dic = self._anuncio_proj.get("config") or {}
+            if not isinstance(cfg_dic, dict):
+                cfg_dic = {}
+            c: dict = {}
+            texto_local = ""
+            mslides: list = []
+            idx_ms = -1
+            if self._anuncio_proj.get("mslides") is not None:
+                idx_map = self._anuncio_proj.get("idx_map") or []
+                tela_index = int(
+                    getattr(self.player.telao, "_slide_index", 0) or 0)
+                if not (0 <= tela_index < len(idx_map)):
+                    return
+                mslides = cfg_dic.get("mslides") or []
+                idx_ms = idx_map[tela_index]
+                if not (0 <= idx_ms < len(mslides)) or not isinstance(
+                        mslides[idx_ms], dict):
+                    return
+                try:
+                    c = json.loads(mslides[idx_ms].get("config") or "{}")
+                    if not isinstance(c, dict):
+                        c = {}
+                except (ValueError, TypeError, AttributeError):
+                    c = {}
+                texto_local = (mslides[idx_ms].get("texto") or "").strip()
+            else:
+                c = cfg_dic
+                texto_local = (self._anuncio_proj.get("dados") or {}).get(
+                    "texto") or ""
+            tw = int(c.get("tw") or 0)
+            th = int(c.get("th") or 0)
+            if tw <= 0 or th <= 0:
+                # Config sem caixa de texto (legada): cria a caixa padrão
+                # para a nova escala 'ts' valer na próxima projeção também.
+                mh = int(1440 * 0.04) or 40
+                mv = int(1080 * 0.06) or 60
+                caixa = _caixa_texto_padrao(
+                    texto_local, 1440 - mh * 2, 1080 - mv * 2, mh, mv,
+                    aspect_imagem=float(getattr(
+                        self.player.telao, "_composicao_aspect_imagem", 0.0)
+                        or 0.0))
+                c.update({"tx": int(caixa["x"]), "ty": int(caixa["y"]),
+                          "tw": int(caixa["w"]), "th": int(caixa["h"])})
+            c["ts"] = round(escala, 3)
+            if self._anuncio_proj.get("mslides") is not None:
+                mslides[idx_ms]["config"] = json.dumps(c, ensure_ascii=False)
+            dados_proj = dict(self._anuncio_proj.get("dados") or {})
+            dados_proj["config_midia"] = json.dumps(
+                cfg_dic, ensure_ascii=False)
+            self._anuncio_proj["dados"] = dados_proj
+            self._anuncio_proj["config"] = cfg_dic
+            _atualizar_anuncio_db(pid, dados_proj)
+        except Exception as _e_persist:
+            import traceback as _tb_persist
+            _tb_persist.print_exc()
+            print(f"⚠️ Falha ao autosalvar escala do anúncio {pid}: {_e_persist}")
+
+    def _persistir_escala_imagem(self, escala: float) -> None:
+        """Grava a nova escala de imagem ('img_escala') no anúncio em projeção.
+
+        Anúncio de imagem única: grava 'img_escala' no JSON de config_midia.
+        Anúncio multi-slide com imagem: grava 'img_escala' no config do slide
+        atualmente exibido. Não faz nada se não houver anúncio sendo projetado.
+        """
+        pid = self._anuncio_proj.get("id")
+        if not pid:
+            return
+        try:
+            cfg_dic = self._anuncio_proj.get("config") or {}
+            if not isinstance(cfg_dic, dict):
+                cfg_dic = {}
+            c: dict = {}
+            mslides: list = []
+            idx_ms = -1
+            if self._anuncio_proj.get("mslides") is not None:
+                idx_map = self._anuncio_proj.get("idx_map") or []
+                tela_index = int(
+                    getattr(self.player.telao, "_slide_index", 0) or 0)
+                if not (0 <= tela_index < len(idx_map)):
+                    return
+                mslides = cfg_dic.get("mslides") or []
+                idx_ms = idx_map[tela_index]
+                if not (0 <= idx_ms < len(mslides)) or not isinstance(
+                        mslides[idx_ms], dict):
+                    return
+                try:
+                    c = json.loads(mslides[idx_ms].get("config") or "{}")
+                    if not isinstance(c, dict):
+                        c = {}
+                except (ValueError, TypeError, AttributeError):
+                    c = {}
+            else:
+                c = cfg_dic
+            c["img_escala"] = round(escala, 3)
+            if self._anuncio_proj.get("mslides") is not None:
+                mslides[idx_ms]["config"] = json.dumps(c, ensure_ascii=False)
+            dados_proj = dict(self._anuncio_proj.get("dados") or {})
+            dados_proj["config_midia"] = json.dumps(
+                cfg_dic, ensure_ascii=False)
+            self._anuncio_proj["dados"] = dados_proj
+            self._anuncio_proj["config"] = cfg_dic
+            _atualizar_anuncio_db(pid, dados_proj)
+        except Exception as _e_persist_img:
+            import traceback as _tb_persist_img
+            _tb_persist_img.print_exc()
+            print(f"⚠️ Falha ao autosalvar escala da imagem do anúncio "
+                  f"{pid}: {_e_persist_img}")
+
+    def _tamanho_projecao(self) -> dict:
+        """Estado atual das escalas de texto e imagem do telão."""
+        telao = getattr(self.player, 'telao', None)
+        if not (telao and telao._raiz_viva()):
+            return {'texto_pct': 5.0, 'texto_escala': 1.0,
+                    'imagem_escala': 1.0, 'composicao': False}
+        cfg = getattr(telao, '_proj_cfg', None) or {}
+        return {
+            'texto_pct': float(cfg.get('tamanho_pct', 5.0)),
+            'texto_escala': float(getattr(telao, '_texto_escala', 1.0) or 1.0),
+            'imagem_escala': float(
+                getattr(telao, '_imagem_escala', 1.0) or 1.0),
+            'composicao': bool(
+                getattr(telao, '_mostrando_imagem_com_texto', False)),
+        }
+
+    def _remoto_tamanho(self, dados: dict) -> dict:
+        """Ajusta ao vivo o tamanho do texto/imagem projetado.
+
+        Mesma lógica dos botões A−/A+ e 🖼️−/+ do painel do operador
+        (inclusive a persistência no anúncio/projeção salva), acionada
+        pelo celular: {'qual': 'texto'|'imagem',
+        'acao': 'mais'|'menos'|'zerar'}.
+        """
+        qual = str(dados.get('qual') or '').strip().lower()
+        acao = str(dados.get('acao') or '').strip().lower()
+        if acao not in ('mais', 'menos', 'zerar'):
+            return {'ok': False, 'erro': f'Ação de tamanho inválida: {acao}'}
+        telao = self.player._garantir_telao()
+        if qual == 'imagem':
+            if not getattr(telao, '_mostrando_imagem', False):
+                return {'ok': False,
+                        'erro': 'Nenhuma imagem projetada no telão.'}
+            if acao == 'mais':
+                telao.imagem_aumentar()
+            elif acao == 'menos':
+                telao.imagem_diminuir()
+            else:
+                telao._imagem_escala = 1.0
+                telao._renderizar_imagem_projetada()
+            self._persistir_escala_imagem(
+                float(getattr(telao, '_imagem_escala', 1.0) or 1.0))
+        elif qual == 'texto':
+            delta = 0.8 if acao == 'mais' else -0.8 if acao == 'menos' else 0.0
+            if getattr(telao, '_mostrando_imagem_com_texto', False):
+                texto = getattr(telao, '_current_text', '')
+                if texto:
+                    if acao == 'zerar':
+                        telao._texto_escala = 1.0
+                    else:
+                        escala = float(
+                            getattr(telao, '_texto_escala', 1.0) or 1.0)
+                        telao._texto_escala = min(
+                            2.5, max(0.25, escala + delta * 0.1))
+                    telao._desenhar_texto_anuncio(texto)
+                    self._persistir_escala_texto(
+                        float(telao._texto_escala))
+            else:
+                cfg = getattr(telao, '_proj_cfg', None)
+                if cfg is None:
+                    telao.configurar_projecao()
+                    cfg = telao._proj_cfg
+                if acao == 'zerar':
+                    cfg['tamanho_pct'] = 5.0
+                else:
+                    cfg['tamanho_pct'] = min(
+                        15.0, max(1.0,
+                                 float(cfg.get('tamanho_pct', 5.0)) + delta))
+                telao._proj_cfg = cfg
+                if getattr(telao, '_em_slides', False) and telao._slides:
+                    telao._mostrar_slide(telao._slide_index)
+                elif getattr(telao, 'mostrando_letra', False) \
+                        and telao._current_text:
+                    telao._desenhar_texto_no_canvas(telao._current_text)
+                self.salvar_config_projecao(dict(cfg))
+        else:
+            return {'ok': False,
+                    'erro': f'Parâmetro de tamanho inválido: {qual}'}
+        return {'ok': True, 'tamanho': self._tamanho_projecao()}
+
+    def _remoto_despacho(self, acao: str, dados: dict) -> Any:
+        """Executa uma ação vinda do ServidorAsyncHTTP (na thread do Tk).
+
+        O servidor chama isto via `_na_ui` (root.after + Future). Nunca
+        abre diálogo e nunca deixa exceção escapar: devolve sempre dicts
+        serializáveis — erro vira {'ok': False, 'erro': ...} (com o
+        próprio JSON da resposta; o HTTP segue 200).
+        """
+        dados = dados if isinstance(dados, dict) else {}
+        try:
+            # ── Leituras (GET) ──
+            if acao == 'estado':
+                return self._remoto_estado()
+            if acao == 'buscar_hino':
+                return self._remoto_buscar_hino(str(dados.get('busca') or ''))
+            if acao == 'buscar_midia':
+                return self._remoto_buscar_midia(str(dados.get('busca') or ''))
+            if acao == 'buscar_biblia':
+                return self._remoto_buscar_biblia(
+                    str(dados.get('q') or ''),
+                    str(dados.get('versao') or ''))
+            if acao == 'buscar_biblia_ref':
+                return self._remoto_buscar_biblia_ref(dados)
+            if acao == 'livros_biblia':
+                return {'ok': True, 'livros': list(self.LIVROS_BIBLIA)}
+            if acao == 'listar_anuncios':
+                return {'ok': True, 'anuncios': [
+                    {'id': a.get('id'), 'titulo': a.get('titulo') or '',
+                     'tipo': a.get('tipo_midia') or 'slide'}
+                    for a in _listar_anuncios_db()]}
+            if acao == 'listar_servicos':
+                servicos = (_carregar_servicos_json().get('servicos') or [])
+                return {'ok': True, 'servicos': [
+                    {'id': s.get('id'), 'nome': s.get('nome') or '',
+                     'itens': len(s.get('itens') or [])}
+                    for s in servicos]}
+            if acao == 'servico_itens':
+                return self._remoto_servico_itens(dados)
+            # ── Ações (POST) ──
+            if acao == 'slide':
+                return self._remoto_slide(str(dados.get('acao') or ''))
+            if acao == 'tamanho':
+                return self._remoto_tamanho(dados)
+            if acao == 'projetar_hino':
+                return self._remoto_projetar_hino(dados)
+            if acao == 'projetar_biblia':
+                return self._remoto_projetar_biblia(dados)
+            if acao == 'executar_midia':
+                return self._remoto_executar_midia(dados)
+            if acao == 'projetar_anuncio':
+                self.player._garantir_telao()
+                return self.projetar_anuncio(int(dados.get('id') or 0))
+            if acao == 'executar_servico':
+                return self._remoto_executar_servico(dados)
+            if acao == 'servico_item':
+                return self._remoto_servico_item(dados)
+            if acao == 'medidor':
+                return self._remoto_medidor(dados)
+            return {'ok': False, 'erro': f'Ação desconhecida: {acao}'}
+        except Exception as exc:  # noqa: BLE001 — vira JSON de erro
+            print(f"❌ Erro na ação remota '{acao}': {exc}")
+            return {'ok': False, 'erro': str(exc) or type(exc).__name__}
+
+    def _remoto_estado(self) -> dict:
+        """Snapshot do estado do app para a tela do celular."""
+        telao = getattr(self.player, 'telao', None)
+        vivo = bool(telao and telao._raiz_viva())
+        info_telao = {'vivo': vivo, 'modo': 'desligado'}
+        if vivo:
+            modo = ('slides' if getattr(telao, '_em_slides', False)
+                    else 'relogio' if getattr(telao, 'mostrando_relogio', False)
+                    else 'midia')
+            info_telao = {
+                'vivo': True, 'modo': modo,
+                'slide': int(getattr(telao, '_slide_index', 0) or 0),
+                'total': len(getattr(telao, '_slides', None) or []),
+            }
+            slides = getattr(telao, '_slides', None) or []
+            idx = getattr(telao, '_slide_index', 0) or 0
+            if modo == 'slides' and 0 <= idx < len(slides):
+                info_telao['previa'] = _previa_slide(slides[idx])
+        info_telao['tamanho'] = self._tamanho_projecao()
+        pl = list(getattr(self.player, 'playlist', None) or [])
+        idx_m = int(getattr(self.player, 'index', 0) or 0)
+        info_midia = {
+            'arquivo': os.path.basename(self.arquivo_atual)
+            if self.arquivo_atual else '',
+            'indice': idx_m, 'total': len(pl),
+        }
+        return {'ok': True, 'versao': APP_VERSION,
+                'telao': info_telao, 'midia': info_midia,
+                'medidor': self._remoto_medidor_estado(),
+                'proximos_servico': dict(_SERVICO_PROXIMO_ITEM)}
+
+    def _remoto_medidor_estado(self) -> dict:
+        """Estado do cronômetro e da contagem regressiva."""
+        agora = time.time()
+        c = self._crono
+        acum = c["acumulado"] + ((agora - c["inicio"])
+                                 if c["rodando"] and not c["pausado"] else 0.0)
+        g = self._contagem
+        rest = (g["fim"] - agora) if (g["rodando"] and not g["pausado"]) \
+            else g["restante"]
+        return {
+            'cronometro': {'rodando': bool(c["rodando"]),
+                           'pausado': bool(c["pausado"]),
+                           'tempo': self._formatar_cronometro(acum)},
+            'contagem': {'rodando': bool(g["rodando"]),
+                         'pausado': bool(g["pausado"]),
+                         'restante': max(0.0, float(rest or 0.0)),
+                         'titulo': g.get("titulo") or ''},
+        }
+
+    def _remoto_buscar_hino(self, busca: str) -> dict:
+        """Lista hinos para o celular (resumo; sem a letra completa)."""
+        busca = busca.strip()
+        if busca:
+            rows = _buscar_hino_por_termo(busca)
+        else:
+            rows = db_query("SELECT * FROM letras WHERE ativo = 1 "
+                            "ORDER BY titulo LIMIT 50")
+        return {'ok': True, 'hinos': [
+            {'id': r.get('id'), 'titulo': r.get('titulo') or '',
+             'artista': r.get('artista') or '',
+             'numero': _numero_do_titulo(r.get('titulo') or '')}
+            for r in rows[:50]]}
+
+    def _remoto_projetar_hino(self, dados: dict) -> dict:
+        rows = db_query("SELECT * FROM letras WHERE id = ? AND ativo = 1",
+                        (int(dados.get('id') or 0),))
+        if not rows:
+            return {'ok': False, 'erro': 'Hino não encontrado.'}
+        hino = rows[0]
+        slides = _montar_slides_letra(hino.get('titulo') or '',
+                                      hino.get('letra_completa') or '')
+        self.player._garantir_telao()
+        self.player.telao.projetar_slides(slides)
+        return {'ok': True, 'titulo': hino.get('titulo') or '',
+                'total': len(slides)}
+
+    def _versoes_biblia(self) -> List[str]:
+        return [r.get('versao') or '' for r in db_query(
+            "SELECT DISTINCT versao FROM versiculos ORDER BY versao")]
+
+    def _remoto_buscar_biblia(self, q: str, versao: str) -> dict:
+        """Busca versículos (ou só lista as versões, se a busca vier vazia)."""
+        versoes = self._versoes_biblia()
+        if not versao:
+            versao = versoes[0] if versoes else ''
+        if not versao:
+            return {'ok': True, 'versao': '', 'versoes': [], 'resultados': [],
+                    'erro': 'Nenhuma Bíblia importada.'}
+        if not q.strip():
+            return {'ok': True, 'versao': versao, 'versoes': versoes,
+                    'resultados': []}
+        rows = db_query(
+            "SELECT * FROM versiculos WHERE versao = ? AND texto LIKE ? "
+            "ORDER BY livro, capitulo, versiculo LIMIT 50",
+            (versao, f"%{q.strip()}%"))
+        return {'ok': True, 'versao': versao, 'versoes': versoes,
+                'resultados': [
+                    {'livro': r.get('livro'), 'capitulo': r.get('capitulo'),
+                     'versiculo': r.get('versiculo'), 'texto': r.get('texto')}
+                    for r in rows]}
+
+    def _remoto_projetar_biblia(self, dados: dict) -> dict:
+        """Projeta versículos por texto (LIKE) ou por referência (livro/cap/V:)."""
+        if (str(dados.get('livro') or '').strip()
+                or str(dados.get('cap') or '').strip()):
+            return self._remoto_projetar_biblia_ref(dados)
+        res = self._remoto_buscar_biblia(str(dados.get('q') or ''),
+                                         str(dados.get('versao') or ''))
+        if not res.get('resultados'):
+            return {'ok': False,
+                    'erro': res.get('erro') or 'Nenhum versículo encontrado.'}
+        slides = [(r['texto'], f"{r['livro']} {r['capitulo']}:{r['versiculo']}")
+                  for r in res['resultados']]
+        self.player._garantir_telao()
+        self.player.telao.projetar_slides(slides)
+        return {'ok': True, 'versao': res['versao'], 'total': len(slides),
+                'primeiro': slides[0][1]}
+
+    def _remoto_buscar_biblia_ref(self, dados: dict) -> dict:
+        """Busca versículos por referência (livro + cap + V:), como no app.
+
+        O campo "V:" segue a mesma regra da janela Bíblia
+        (`_analisar_faixa_versiculos`):
+          - vazio ou "1" → o capítulo inteiro
+          - "7"          → do versículo 7 até o fim do capítulo
+          - "1-7"        → somente os versículos de 1 a 7
+        """
+        versao = str(dados.get('versao') or '').strip()
+        livro = str(dados.get('livro') or '').strip()
+        cap_t = str(dados.get('cap') or '').strip()
+        vers_t = str(dados.get('vers') or '').strip()
+        versoes = self._versoes_biblia()
+        if not versao:
+            versao = versoes[0] if versoes else ''
+        if not versao:
+            return {'ok': True, 'versao': '', 'versoes': [], 'resultados': [],
+                    'erro': 'Nenhuma Bíblia importada.'}
+        if not livro or not cap_t.isdigit():
+            return {'ok': True, 'versao': versao, 'versoes': versoes,
+                    'resultados': [], 'inicio': None,
+                    'erro': 'Informe o livro e o capítulo.'}
+        cap = int(cap_t)
+        ok, msg, ini, fim = _analisar_faixa_versiculos(vers_t)
+        if not ok:
+            return {'ok': False, 'versao': versao, 'versoes': versoes,
+                    'resultados': [], 'erro': msg}
+        if ini is None:
+            v_ini, v_fim = 1, 9999
+        elif '-' in vers_t:
+            # Faixa explícita: respeita o fim digitado (16-16 = só o 16).
+            v_ini, v_fim = ini, fim
+        else:
+            # Número único é o ponto de partida: vai até o fim do capítulo.
+            v_ini, v_fim = ini, 9999
+        rows = db_query(
+            "SELECT * FROM versiculos WHERE versao = ? AND livro = ? "
+            "AND capitulo = ? AND versiculo >= ? AND versiculo <= ? "
+            "ORDER BY versiculo",
+            (versao, livro, cap, v_ini, v_fim))
+        return {'ok': True, 'versao': versao, 'versoes': versoes,
+                'livro': livro, 'capitulo': cap, 'inicio': ini,
+                'resultados': [
+                    {'livro': r.get('livro'), 'capitulo': r.get('capitulo'),
+                     'versiculo': r.get('versiculo'), 'texto': r.get('texto')}
+                    for r in rows]}
+
+    def _remoto_projetar_biblia_ref(self, dados: dict) -> dict:
+        """Projeta o trecho por referência, versículo a versículo (slides)."""
+        res = self._remoto_buscar_biblia_ref(dados)
+        if not res.get('resultados'):
+            return {'ok': False,
+                    'erro': res.get('erro') or 'Nenhum versículo encontrado.'}
+        livro = res['livro']
+        cap = res['capitulo']
+        rows = res['resultados']
+        numeros = [r['versiculo'] for r in rows]
+        ini = res.get('inicio')
+        if ini is None:
+            ini = numeros[0] if numeros else 1
+        slides = [(r['texto'], f"{livro} {cap}:{r['versiculo']}") for r in rows]
+        inicio = numeros.index(ini) if ini in numeros else 0
+        self.player._garantir_telao()
+        self.player.telao.projetar_slides(slides, indice_inicial=inicio)
+        return {'ok': True, 'versao': res['versao'], 'livro': livro,
+                'capitulo': cap, 'total': len(slides),
+                'primeiro': slides[inicio][1]}
+
+    def _remoto_buscar_midia(self, busca: str) -> dict:
+        """Busca músicas/vídeos na tabela `midia`, como o campo da tela
+        principal do app ("Buscar hino... [BD]")."""
+        termo = (busca or '').strip()
+        if not termo:
+            return {'ok': True, 'midias': []}
+        resultados = self.db.search(termo)
+        return {'ok': True, 'midias': [
+            {'id': r.get('id'),
+             'nome': (r.get('nome_exibicao') or r.get('nome_original')
+                      or os.path.basename(r.get('caminho_arquivo') or '')),
+             'tipo': r.get('tipo') or '',
+             'numero': _numero_do_titulo(r.get('nome_exibicao') or '')}
+            for r in resultados[:50]]}
+
+    def _remoto_executar_midia(self, dados: dict) -> dict:
+        """Toca no telão a música/vídeo encontrado (áudio ou vídeo)."""
+        rows = db_query("SELECT * FROM midia WHERE id = ? AND ativo = 1",
+                        (int(dados.get('id') or 0),))
+        if not rows:
+            return {'ok': False, 'erro': 'Mídia não encontrada.'}
+        caminho = rows[0].get('caminho_arquivo') or ''
+        if not caminho or not os.path.exists(caminho):
+            return {'ok': False, 'erro': 'Arquivo não encontrado no disco.'}
+        self.player._garantir_telao()
+        self.arquivo_atual = caminho
+        self.player.carregar_playlist([caminho])
+        self.player.tocar_indice(0)
+        return {'ok': True, 'arquivo': os.path.basename(caminho),
+                'tipo': rows[0].get('tipo') or ''}
+
+    def _remoto_slide(self, acao: str) -> dict:
+        """Navega/encerra a projeção em slides do telão."""
+        telao = self.player._garantir_telao()
+        if acao in ('prox', 'proximo'):
+            telao.slide_proximo()
+        elif acao in ('ant', 'anterior'):
+            telao.slide_anterior()
+        elif acao in ('parar', 'stop', 'relogio'):
+            telao.parar_projecao()
+        else:
+            return {'ok': False, 'erro': f'Ação de slide inválida: {acao}'}
+        vivo = telao._raiz_viva()
+        em_slides = bool(vivo and getattr(telao, '_em_slides', False))
+        idx = int(getattr(telao, '_slide_index', 0) or 0) if vivo else 0
+        previa = ''
+        if em_slides:
+            slides = getattr(telao, '_slides', None) or []
+            if 0 <= idx < len(slides):
+                previa = _previa_slide(slides[idx])
+        return {'ok': True, 'em_slides': em_slides, 'slide': idx,
+                'total': len(getattr(telao, '_slides', None) or []) if vivo else 0,
+                'previa': previa}
+
+    def _remoto_executar_servico(self, dados: dict) -> dict:
+        """Roda o próximo item de um serviço (ou o `item` escolhido)."""
+        alvo = str(dados.get('id') or '')
+        servicos = _carregar_servicos_json().get('servicos') or []
+        serv = next((s for s in servicos
+                     if str(s.get('id') or '') == alvo
+                     or str(s.get('nome') or '') == alvo), None)
+        if serv is None:
+            return {'ok': False, 'erro': 'Serviço não encontrado.'}
+        item = dados.get('item')
+        escolhido = int(item) if item is not None else None
+        self.player._garantir_telao()
+        return self.executar_proximo_item_servico(serv, escolhido=escolhido)
+
+    def _remoto_servico_itens(self, dados: dict) -> dict:
+        """Lista os itens de UM serviço para a aba Serviço do celular."""
+        serv = self._localizar_servico(str(dados.get('servico') or ''))
+        if serv is None:
+            return {'ok': False, 'erro': 'Serviço não encontrado.'}
+        itens = serv.get('itens') or []
+        return {'ok': True,
+                'servico': {'id': serv.get('id'),
+                            'nome': serv.get('nome') or ''},
+                'itens': [self._resumo_item_servico(it, i)
+                          for i, it in enumerate(itens)]}
+
+    @staticmethod
+    def _localizar_servico(alvo: str) -> Optional[Dict]:
+        """Acha um serviço pelo id ou nome (mesma regra da execução)."""
+        servicos = _carregar_servicos_json().get('servicos') or []
+        return next((s for s in servicos
+                     if str(s.get('id') or '') == alvo
+                     or str(s.get('nome') or '') == alvo), None)
+
+    @staticmethod
+    def _resumo_item_servico(item: dict, indice: int) -> dict:
+        """Resumo de um item de serviço para exibir no celular."""
+        tipo = (item.get('tipo') or 'slide').lower()
+        titulo = item.get('titulo_custom') or f'Item {indice + 1}'
+        detalhe = ''
+        if tipo == 'versiculo':
+            detalhe = _faixa_versiculo_item(item)
+        elif tipo in ('video', 'audio', 'sermao'):
+            caminho = item.get('caminho_arquivo') or ''
+            if caminho:
+                detalhe = os.path.basename(caminho)
+        elif tipo == 'anuncio':
+            detalhe = 'anúncio'
+        ref = None
+        if tipo == 'versiculo':
+            primeira = (item.get('letra_snapshot') or '').split('\n', 1)[0].strip()
+            if primeira:
+                if ':' in primeira:
+                    cabeca, vers_txt = primeira.rsplit(':', 1)
+                else:
+                    cabeca, vers_txt = primeira, ''
+                cabeca = cabeca.strip()
+                if ' ' in cabeca:
+                    liv, cap = cabeca.rsplit(' ', 1)
+                    ref = {'livro': liv.strip(), 'cap': cap.strip(),
+                           'vers': vers_txt.strip()}
+        return {'id': item.get('id'), 'ordem': indice, 'tipo': tipo,
+                'titulo': titulo,
+                'duracao': item.get('duracao_estimada_segundos') or 0,
+                'detalhe': detalhe,
+                'caminho_arquivo': item.get('caminho_arquivo') or '',
+                'ref': ref}
+
+    def _remoto_resolver_item(self, dados: dict) -> tuple:
+        """Resolve um item da Ordem de Serviço vindo do celular.
+
+        Replica, sem Tk, a lógica da janela "Adicionar Item" do aplicativo
+        (hino/versículo/vídeo/áudio/sermão/anúncio/slide). Retorna
+        (ok, msg_erro, campos), já com as chaves prontas para gravar em
+        servicos.json (inclui 'versiculos' quando for uma faixa).
+        """
+        tipo = str(dados.get('tipo') or 'hino').strip().lower()
+        titulo = str(dados.get('titulo') or '').strip()
+        termo = str(dados.get('termo') or '').strip()
+        caminho_arquivo = str(dados.get('caminho_arquivo') or '').strip()
+        try:
+            duracao = int(dados.get('duracao') or 0)
+        except (TypeError, ValueError):
+            duracao = 0
+        if tipo not in ('hino', 'versiculo', 'video', 'audio', 'slide',
+                        'anuncio', 'sermao'):
+            return (False, f'Tipo de item inválido: "{tipo}".', {})
+        if tipo not in ('video', 'audio', 'sermao'):
+            caminho_arquivo = ''
+
+        ref = dados.get('ref') if isinstance(dados.get('ref'), dict) else {}
+        versao = str(ref.get('versao') or '').strip()
+        livro = str(ref.get('livro') or '').strip()
+        cap_t = str(ref.get('cap') or '').strip()
+        vers = str(ref.get('vers') or '').strip()
+        hino_termo = str(dados.get('hino') or '').strip()
+        anuncio_t = str(dados.get('anuncio') or '').strip()
+        _usou_painel_biblia = bool(
+            tipo == 'versiculo' and versao and livro and cap_t.isdigit())
+        _usou_painel_hino = bool(tipo == 'hino' and hino_termo)
+        _usou_painel_anuncio = bool(
+            tipo == 'anuncio' and (anuncio_t or dados.get('referencia_id')))
+
+        ref_id = dados.get('referencia_id')
+        if isinstance(ref_id, str) and ref_id.strip().isdigit():
+            ref_id = int(ref_id)
+        letra_snap = ''
+        vers_salvos = []
+        _usou_titulo_como_busca = (not termo)
+        if not termo:
+            termo = titulo
+
+        if tipo == 'hino':
+            buscar = hino_termo if _usou_painel_hino else termo
+            rows = _buscar_hino_por_termo(buscar)
+            if not rows and buscar.isdigit():
+                rows = db_query(
+                    "SELECT * FROM letras WHERE id = ? AND ativo = 1", (buscar,))
+            if not rows:
+                return (False, f'Nenhum hino encontrado para: "{buscar}".', {})
+            h = rows[0]
+            ref_id = h.get('id')
+            letra_snap = h.get('letra_completa', '')
+            if not titulo or _usou_titulo_como_busca:
+                titulo = h.get('titulo', '') or 'Item (Hino)'
+        elif tipo in ('video', 'audio', 'sermao') and caminho_arquivo:
+            if not os.path.exists(caminho_arquivo):
+                return (False, f'Arquivo não encontrado:\n{caminho_arquivo}', {})
+            if not titulo or _usou_titulo_como_busca:
+                titulo = (os.path.splitext(os.path.basename(caminho_arquivo))[0]
+                          or f'Item ({tipo.title()})')
+        elif tipo in ('video', 'audio'):
+            rows = _buscar_midia_por_termo(termo, tipo=tipo)
+            if not rows and termo.isdigit():
+                rows = db_query(
+                    "SELECT * FROM midia WHERE id = ? AND ativo = 1", (termo,))
+            if not rows:
+                return (False,
+                        f'Nenhuma {tipo.title()} encontrada para: "{termo}".', {})
+            m = rows[0]
+            ref_id = m.get('id')
+            if not titulo or _usou_titulo_como_busca:
+                titulo = m.get('nome_exibicao', '') or f'Item ({tipo.title()})'
+        elif tipo == 'sermao':
+            return (False, 'Informe o caminho do arquivo do sermão.', {})
+        elif tipo == 'anuncio' and _usou_painel_anuncio:
+            ref_an = _buscar_anuncio_por_ref(dados.get('referencia_id'))
+            if ref_an is None and anuncio_t:
+                ref_an = next((a for a in _listar_anuncios_db()
+                               if (a.get('titulo') or '').strip() == anuncio_t),
+                              None)
+            if ref_an is None:
+                return (False, 'O anúncio selecionado não foi encontrado.', {})
+            ref_id = ref_an.get('id')
+            letra_snap = ref_an.get('texto') or ''
+            if not titulo or _usou_titulo_como_busca:
+                titulo = ref_an.get('titulo') or 'Item (Anúncio)'
+        elif tipo == 'anuncio':
+            rows = _buscar_anuncio_por_termo(termo)
+            if not rows:
+                return (False,
+                        f'Nenhum anúncio encontrado para: "{termo}".', {})
+            ref_an = rows[0]
+            ref_id = ref_an.get('id')
+            letra_snap = ref_an.get('texto') or ''
+            if not titulo or _usou_titulo_como_busca:
+                titulo = ref_an.get('titulo') or 'Item (Anúncio)'
+        elif tipo == 'versiculo' and _usou_painel_biblia:
+            ok_f, msg_f, v_ini, v_fim = _analisar_faixa_versiculos(vers)
+            if not ok_f:
+                return (False, msg_f, {})
+            cap = int(cap_t)
+            if v_ini is None:
+                v_ini, v_fim = 1, 9999
+            elif '-' not in vers:
+                v_fim = 9999
+            rows = db_query(
+                "SELECT * FROM versiculos WHERE versao = ? AND livro = ? "
+                "AND capitulo = ? AND versiculo >= ? AND versiculo <= ? "
+                "ORDER BY versiculo",
+                (versao, livro, cap, v_ini, v_fim))
+            if not rows:
+                return (False, 'Nenhum versículo encontrado para '
+                               f'{livro} {cap}:{vers or "*"} ({versao}).', {})
+            if v_ini == v_fim:
+                r = rows[0]
+                letra_snap = f"{livro} {cap}:{vers}\n\n{r['texto']}"
+                ref_display = f"{livro} {cap}:{vers}"
+                ref_id = r['id']
+            elif v_ini == 1 and v_fim == 9999:
+                partes = [f"{r['versiculo']}. {r['texto']}" for r in rows]
+                letra_snap = f"{livro} {cap}\n\n" + "\n\n".join(partes)
+                ref_display = f"{livro} {cap}"
+                ref_id = rows[0]['id']
+            else:
+                faixa_ref = f"{livro} {cap}:{v_ini}-{v_fim}"
+                partes = [f"{r['versiculo']}. {r['texto']}" for r in rows]
+                letra_snap = f"{faixa_ref}\n\n" + "\n\n".join(partes)
+                ref_display = faixa_ref
+                ref_id = rows[0]['id']
+                vers_salvos = [[r['versiculo'], r['texto']] for r in rows]
+            if not titulo or _usou_titulo_como_busca:
+                titulo = ref_display
+        elif tipo == 'versiculo':
+            return (False,
+                    'Selecione a versão, o livro e informe o capítulo.', {})
+        elif termo.isdigit() and ref_id is None:
+            ref_id = int(termo)
+
+        if not titulo:
+            titulo = f'Item ({tipo.title()})'
+        if tipo == 'versiculo' and ref_id and not _usou_painel_biblia:
+            rows_v = db_query("SELECT * FROM versiculos WHERE id = ?", (ref_id,))
+            if rows_v:
+                r = rows_v[0]
+                letra_snap = (f"{r['livro']} {r['capitulo']}:{r['versiculo']}"
+                              f"\n\n{r['texto']}")
+                if titulo.startswith('Item'):
+                    titulo = f"{r['livro']} {r['capitulo']}:{r['versiculo']}"
+
+        campos = {
+            'tipo': tipo,
+            'referencia_id': ref_id,
+            'titulo_custom': titulo,
+            'letra_snapshot': letra_snap,
+            'caminho_arquivo': caminho_arquivo,
+            'duracao_estimada_segundos': duracao,
+        }
+        if vers_salvos:
+            campos['versiculos'] = vers_salvos
+        return (True, '', campos)
+
+    def _remoto_servico_item(self, dados: dict) -> dict:
+        """Adiciona/edita/apaga/move um item de um serviço (aba Serviço)."""
+        operacao = str(dados.get('operacao') or '').strip().lower()
+        alvo = str(dados.get('servico') or '')
+        todos = _carregar_servicos_json()
+        serv = next((s for s in (todos.get('servicos') or [])
+                     if str(s.get('id') or '') == alvo
+                     or str(s.get('nome') or '') == alvo), None)
+        if serv is None:
+            return {'ok': False, 'erro': 'Serviço não encontrado.'}
+        itens = serv.setdefault('itens', [])
+        item_id = dados.get('id')
+
+        if operacao in ('add', 'adicionar', 'editar', 'edit'):
+            ok, erro, campos = self._remoto_resolver_item(dados)
+            if not ok:
+                return {'ok': False, 'erro': erro}
+            if operacao in ('editar', 'edit'):
+                idx = next((i for i, x in enumerate(itens)
+                            if str(x.get('id') or '') == str(item_id)), None)
+                if idx is None:
+                    return {'ok': False, 'erro': 'Item não encontrado.'}
+                itens[idx].pop('versiculos', None)
+                itens[idx].update(campos)
+                novo_id = itens[idx].get('id')
+            else:
+                novo_id = int(todos.get('_proximo_id_item') or 1)
+                todos['_proximo_id_item'] = novo_id + 1
+                itens.append(dict(campos, id=novo_id))
+            if not _salvar_servicos_json(todos):
+                return {'ok': False,
+                        'erro': 'Não foi possível salvar em servicos.json.'}
+            return {'ok': True, 'id': novo_id, 'total': len(itens)}
+
+        if operacao in ('apagar', 'excluir', 'delete', 'remover'):
+            antes = len(itens)
+            serv['itens'] = [x for x in itens
+                             if str(x.get('id') or '') != str(item_id)]
+            if len(serv['itens']) == antes:
+                return {'ok': False, 'erro': 'Item não encontrado.'}
+            if not _salvar_servicos_json(todos):
+                return {'ok': False,
+                        'erro': 'Não foi possível salvar em servicos.json.'}
+            return {'ok': True, 'total': len(serv['itens'])}
+
+        if operacao in ('mover', 'mover_item', 'subir', 'descer'):
+            direcao = str(dados.get('direcao') or operacao).strip().lower()
+            idx = next((i for i, x in enumerate(itens)
+                        if str(x.get('id') or '') == str(item_id)), None)
+            if idx is None:
+                return {'ok': False, 'erro': 'Item não encontrado.'}
+            movido = idx
+            if direcao in ('subir', 'cima', 'up') and idx > 0:
+                itens[idx - 1], itens[idx] = itens[idx], itens[idx - 1]
+                movido = idx - 1
+            elif direcao in ('descer', 'baixo', 'down') and idx < len(itens) - 1:
+                itens[idx], itens[idx + 1] = itens[idx + 1], itens[idx]
+                movido = idx + 1
+            if not _salvar_servicos_json(todos):
+                return {'ok': False,
+                        'erro': 'Não foi possível salvar em servicos.json.'}
+            return {'ok': True, 'total': len(itens), 'indice': movido}
+
+        return {'ok': False, 'erro': f'Operação inválida: "{operacao}".'}
+
+    def _remoto_medidor(self, dados: dict) -> dict:
+        """Cronômetro/contagem: iniciar, parar, continuar, encerrar."""
+        qual = str(dados.get('qual') or 'cronometro').strip().lower()
+        acao = str(dados.get('acao') or '').strip().lower()
+        if qual == 'cronometro':
+            label = self._crono.get('label')
+            if acao in ('iniciar', 'inicia'):
+                self.cronometro_iniciar(label)
+            elif acao in ('parar', 'pausar'):
+                self.cronometro_parar()
+            elif acao in ('continuar', 'retomar'):
+                self.cronometro_continuar()
+            elif acao in ('encerrar', 'zerar'):
+                self.cronometro_encerrar()
+            elif acao == 'projetar':
+                self.cronometro_projetar(label)
+            else:
+                return {'ok': False,
+                        'erro': f'Ação de cronômetro inválida: {acao}'}
+        else:  # contagem regressiva
+            label = self._contagem.get('label')
+            if acao in ('iniciar', 'inicia'):
+                seg = int(dados.get('seg') or 0)
+                if seg <= 0:
+                    return {'ok': False,
+                            'erro': 'Informe o tempo da contagem (segundos).'}
+                self.contagem_iniciar(seg, str(dados.get('titulo') or ''),
+                                      label)
+            elif acao in ('parar', 'pausar'):
+                self.contagem_parar()
+            elif acao in ('continuar', 'retomar'):
+                self.contagem_continuar()
+            elif acao in ('encerrar', 'zerar'):
+                self.contagem_encerrar()
+            elif acao == 'projetar':
+                g = self._contagem
+                total = max(0, int(g.get('total') or 0))
+                tempo = (f"{total // 60:02d}:{total % 60:02d}"
+                         if total < 3600 else
+                         f"{total // 3600:02d}:{(total % 3600) // 60:02d}"
+                         f":{total % 60:02d}")
+                self.contagem_projetar(g.get('titulo') or '', tempo, label)
+            else:
+                return {'ok': False,
+                        'erro': f'Ação de contagem inválida: {acao}'}
+        return {'ok': True, 'medidor': self._remoto_medidor_estado()}
 
     def salvar_config_projecao(self, cfg: dict) -> None:
         """Persiste a configuração de aparência da projeção e aplica ao telão."""
@@ -5645,6 +7336,7 @@ class AppInterface:
         cfg_win.geometry("620x760")
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(janela)
+        _centralizar_sobre(cfg_win, janela)
         cfg_win.after(50, cfg_win.grab_set)
 
         c_main = tk.Frame(cfg_win, bg='#0d1117')
@@ -5811,7 +7503,7 @@ class AppInterface:
         if self.player and self.player.telao:
             self.player.telao.configurar_relogio(cfg)
 
-    def abrir_config_relogio_dialogo(self) -> None:
+    def abrir_config_relogio_dialogo(self, aba: Optional[str] = None) -> None:
         """Abre a janela de configuração do relógio, cronômetro e contagem regressiva.
 
         Abas:
@@ -5822,6 +7514,9 @@ class AppInterface:
             Iniciar/Parar/Continuar/Encerrar no monitor do operador.
           - ⏳ Contagem regressiva: projeta nome/frase + tempo contando para
             baixo, com controles Iniciar/Parar/Continuar/Encerrar.
+          - 🌐 Controle Remoto: ativação, token e URL do celular.
+
+        Com `aba='remoto'` abre já selecionada na aba 🌐 Controle Remoto.
         """
         lista_cores = [
             ("Amarelo", "#F5BE08"), ("Branco", "#FFFFFF"),
@@ -5870,6 +7565,7 @@ class AppInterface:
         cfg_win.geometry("680x980")
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(self.root)
+        _centralizar_sobre(cfg_win, self.root)
         cfg_win.after(50, cfg_win.grab_set)
 
         c_main = tk.Frame(cfg_win, bg='#0d1117')
@@ -6116,6 +7812,11 @@ class AppInterface:
         tab_cont = tk.Frame(notebook, bg='#0d1117')
         notebook.add(tab_cont, text="⏳ Contagem regressiva")
 
+        # ── Aba 🌐 Controle Remoto (mesmo conteúdo da janela antiga) ──
+        tab_remoto = tk.Frame(notebook, bg='#0d1117')
+        notebook.add(tab_remoto, text="🌐 Controle Remoto")
+        self._conteudo_controle_remoto(tab_remoto)
+
         tab_cont.var_cor_hora = tk.StringVar(value=str(cfg_cont["cor_hora"]))
         tab_cont.var_cor_temp = tk.StringVar(value=str(cfg_cont["cor_temp"]))
         tab_cont.var_cor_fundo = tk.StringVar(value=str(cfg_cont["cor_fundo"]))
@@ -6332,6 +8033,9 @@ class AppInterface:
         }}
         self._marcar_botoes_contagem()
 
+        if aba == 'remoto':
+            notebook.select(tab_remoto)
+
     def _temperatura_valida(self, temp: Optional[str] = None) -> bool:
         """Verifica se a string de temperatura é válida para exibição."""
         t = temp if temp is not None else self.temperatura_atual
@@ -6533,6 +8237,8 @@ class AppInterface:
                                 command=self.abrir_config_relogio_dialogo)
         menu_config.add_command(label="Configurar Projeção",
                                 command=self.abrir_config_projecao_dialogo)
+        menu_config.add_command(label="🌐 Controle Remoto",
+                                command=self.abrir_controle_remoto)
         menu_config.add_separator()
         menu_config.add_command(label="Gerenciar Banco",
                                 command=self.abrir_gerenciador)
@@ -6893,14 +8599,14 @@ class AppInterface:
         """Exibe a janela Sobre com informações do programa."""
         tkinter.messagebox.showinfo(
             "Sobre o NavePro",
-            "NavePro - Sistema de Projeção para Igrejas\n"
+            "NavePro - Sistema de Projeção Profissional\n"
             f"Versão: {APP_VERSION}\n"
             "Licença: GPLv3\n"
             "Autor: José Edes Neves - Julho 2026\n"
-            "edes.neves7@gmail.com\n\n"
+            "nevestecnologias@gmail.com\n\n"
             "Aplicação para reprodução de mídia com projeção em\n"
-            "telão, busca inteligente no banco de dados e\n"
-            "informações climáticas.",
+            "telão, busca inteligente no banco de dados, pastas\n"
+            "do computador e informações climáticas.",
             parent=self.root
         )
 
@@ -6987,6 +8693,7 @@ class AppInterface:
         janela.geometry("560x300")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
+        _centralizar_sobre(janela, self.root)
         janela.grab_set()
 
         saida = tk.Text(janela, height=9, font=("monospace", 9),
@@ -7062,10 +8769,7 @@ class AppInterface:
         janela.geometry("440x150")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        try:
-            _centralizar_toplevel(janela, 440, 150)
-        except Exception:
-            pass
+        _centralizar_sobre(janela, self.root)
         janela.grab_set()
 
         def _atualizar_progresso(pct: int, baixado: int, total: int) -> None:
@@ -7222,7 +8926,7 @@ class AppInterface:
         # Título
         tk.Label(
             main_frame,
-            text="Sistema de Projeção Multimídia",
+            text="Sistema de Projeção Profissional",
             font=("Adventist Sans", 20, "bold"),
             fg='#f0c040', bg='#0d1117'
         ).pack(pady=(10, 5))
@@ -8210,10 +9914,7 @@ class AppInterface:
         janela.geometry("800x900")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        try:
-            _centralizar_toplevel(janela, 800, 900)
-        except Exception:
-            pass
+        _centralizar_sobre(janela, self.root)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -8636,6 +10337,7 @@ class AppInterface:
         janela.geometry("700x500")
         janela.configure(bg='#0d1117')
         janela.transient(janela_pai)
+        _centralizar_sobre(janela, janela_pai)
         janela.after(50, janela.grab_set)
 
         # Caminho atual
@@ -8717,10 +10419,7 @@ class AppInterface:
         cancelar_btn.pack(side='right', padx=2)
 
         # Centraliza
-        janela.update_idletasks()
-        x = janela_pai.winfo_x() + 50
-        y = janela_pai.winfo_y() + 50
-        janela.geometry(f"+{x}+{y}")
+        _centralizar_sobre(janela, janela_pai)
 
         # Carrega conteúdo inicial
         atualizar_conteudo()
@@ -8803,10 +10502,7 @@ class AppInterface:
         janela.geometry("950x750")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        try:
-            _centralizar_toplevel(janela, 950, 750)
-        except Exception:
-            pass
+        _centralizar_sobre(janela, self.root)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -9247,22 +10943,6 @@ class AppInterface:
         self.root.bind("<Down>", _slide_proximo)
         self.root.bind("<Escape>", _parar_projecao)
 
-        def _montar_slides_hino(hino: dict) -> list:
-            """Monta os slides de um hino em MAIÚSCULAS: slide 0 é o título,
-            os demais são uma linha de verso por slide."""
-            titulo = (hino.get('titulo') or '').strip().upper()
-            letra = (hino.get('letra_completa') or '').strip()
-            versos = [seg.strip() for seg in re.split(r'\n\s*\n', letra) if seg.strip()]
-            slides = [titulo] if titulo else []
-            for verso in versos:
-                for linha in verso.split('\n'):
-                    linha = linha.strip().upper()
-                    if linha:
-                        slides.append(linha)
-            if not slides:
-                slides = [titulo or "HINO"]
-            return slides
-
         def _projetar_hino_selecionado():
             """Inicia a projeção em slides (título + versos) no telão.
 
@@ -9278,7 +10958,8 @@ class AppInterface:
             if not rows:
                 return
             hino = rows[0]
-            slides = _montar_slides_hino(dict(hino))
+            slides = _montar_slides_letra(hino.get('titulo', ''),
+                                          hino.get('letra_completa', ''))
             self.player.telao.projetar_slides(slides)
             _atualizar_indicador_slide()
 
@@ -9289,6 +10970,7 @@ class AppInterface:
             editar_win.geometry("600x600")
             editar_win.configure(bg='#0d1117')
             editar_win.transient(janela)
+            _centralizar_sobre(editar_win, janela)
             editar_win.after(50, editar_win.grab_set)
 
             e_main = tk.Frame(editar_win, bg='#0d1117')
@@ -9383,10 +11065,7 @@ class AppInterface:
         janela.geometry("950x700")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        try:
-            _centralizar_toplevel(janela, 950, 700)
-        except Exception:
-            pass
+        _centralizar_sobre(janela, self.root)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -9832,78 +11511,9 @@ class AppInterface:
 
         # Anúncio atualmente projetado (para gravar ao vivo o tamanho da fonte
         # em anúncios de imagem + texto, do mesmo jeito que o modo só-texto já
-        # grava a configuração de projeção em config.json).
-        _anuncio_proj = {"id": None, "dados": {}, "config": {},
-                         "mslides": None, "idx_map": []}
-
-        def _persistir_escala_texto(escala: float) -> None:
-            """Grava a nova escala de fonte ('ts') no anúncio em projeção.
-
-            Anúncio de imagem única: grava 'ts' no JSON de config_midia.
-            Anúncio multi-slide com imagem: grava 'ts' no config do slide
-            atualmente exibido. Não faz nada se não houver anúncio sendo
-            projetado ou se o slide em exibição não tiver imagem.
-            """
-            pid = _anuncio_proj.get("id")
-            if not pid:
-                return
-            try:
-                cfg_dic = _anuncio_proj.get("config") or {}
-                if not isinstance(cfg_dic, dict):
-                    cfg_dic = {}
-                c: dict = {}
-                texto_local = ""
-                mslides: list = []
-                idx_ms = -1
-                if _anuncio_proj.get("mslides") is not None:
-                    idx_map = _anuncio_proj.get("idx_map") or []
-                    tela_index = int(
-                        getattr(self.player.telao, "_slide_index", 0) or 0)
-                    if not (0 <= tela_index < len(idx_map)):
-                        return
-                    mslides = cfg_dic.get("mslides") or []
-                    idx_ms = idx_map[tela_index]
-                    if not (0 <= idx_ms < len(mslides)) or not isinstance(
-                            mslides[idx_ms], dict):
-                        return
-                    try:
-                        c = json.loads(mslides[idx_ms].get("config") or "{}")
-                        if not isinstance(c, dict):
-                            c = {}
-                    except (ValueError, TypeError, AttributeError):
-                        c = {}
-                    texto_local = (mslides[idx_ms].get("texto") or "").strip()
-                else:
-                    c = cfg_dic
-                    texto_local = (_anuncio_proj.get("dados") or {}).get(
-                        "texto") or ""
-                tw = int(c.get("tw") or 0)
-                th = int(c.get("th") or 0)
-                if tw <= 0 or th <= 0:
-                    # Config sem caixa de texto (legada): cria a caixa padrão
-                    # para a nova escala 'ts' valer na próxima projeção também.
-                    mh = int(1440 * 0.04) or 40
-                    mv = int(1080 * 0.06) or 60
-                    caixa = _caixa_texto_padrao(
-                        texto_local, 1440 - mh * 2, 1080 - mv * 2, mh, mv,
-                        aspect_imagem=float(getattr(
-                            self.player.telao, "_composicao_aspect_imagem", 0.0)
-                            or 0.0))
-                    c.update({"tx": int(caixa["x"]), "ty": int(caixa["y"]),
-                              "tw": int(caixa["w"]), "th": int(caixa["h"])})
-                c["ts"] = round(escala, 3)
-                if _anuncio_proj.get("mslides") is not None:
-                    mslides[idx_ms]["config"] = json.dumps(c, ensure_ascii=False)
-                dados_proj = dict(_anuncio_proj.get("dados") or {})
-                dados_proj["config_midia"] = json.dumps(
-                    cfg_dic, ensure_ascii=False)
-                _anuncio_proj["dados"] = dados_proj
-                _anuncio_proj["config"] = cfg_dic
-                _atualizar_anuncio_db(pid, dados_proj)
-            except Exception as _e_persist:
-                import traceback as _tb_persist
-                _tb_persist.print_exc()
-                print(f"⚠️ Falha ao autosalvar escala do anúncio {pid}: {_e_persist}")
+        # grava a configuração de projeção em config.json). O estado vive em
+        # self._anuncio_proj (criado no __init__), compartilhado com o
+        # controle remoto — não reatribuir aqui para não apagá-lo.
 
         def _ajustar_fonte(delta: float):
             telao = self.player.telao
@@ -9915,7 +11525,7 @@ class AppInterface:
                     escala = float(getattr(telao, "_texto_escala", 1.0) or 1.0)
                     telao._texto_escala = min(2.5, max(0.25, escala + delta * 0.1))
                     telao._desenhar_texto_anuncio(texto)
-                    _persistir_escala_texto(float(telao._texto_escala))
+                    self._persistir_escala_texto(float(telao._texto_escala))
                 _atualizar_indicador_slide()
                 return
             cfg = getattr(telao, "_proj_cfg", None)
@@ -9940,7 +11550,7 @@ class AppInterface:
                 if texto:
                     telao._texto_escala = 1.0
                     telao._desenhar_texto_anuncio(texto)
-                    _persistir_escala_texto(1.0)
+                    self._persistir_escala_texto(1.0)
                 _atualizar_indicador_slide()
                 return
             cfg = getattr(telao, "_proj_cfg", None)
@@ -9955,57 +11565,6 @@ class AppInterface:
                 telao._desenhar_texto_no_canvas(telao._current_text)
             self.salvar_config_projecao(dict(cfg))
             _atualizar_indicador_slide()
-
-        def _persistir_escala_imagem(escala: float) -> None:
-            """Grava a nova escala de imagem ('img_escala') no anúncio em projeção.
-
-            Anúncio de imagem única: grava 'img_escala' no JSON de config_midia.
-            Anúncio multi-slide com imagem: grava 'img_escala' no config do slide
-            atualmente exibido. Não faz nada se não houver anúncio sendo projetado.
-            """
-            pid = _anuncio_proj.get("id")
-            if not pid:
-                return
-            try:
-                cfg_dic = _anuncio_proj.get("config") or {}
-                if not isinstance(cfg_dic, dict):
-                    cfg_dic = {}
-                c: dict = {}
-                mslides: list = []
-                idx_ms = -1
-                if _anuncio_proj.get("mslides") is not None:
-                    idx_map = _anuncio_proj.get("idx_map") or []
-                    tela_index = int(
-                        getattr(self.player.telao, "_slide_index", 0) or 0)
-                    if not (0 <= tela_index < len(idx_map)):
-                        return
-                    mslides = cfg_dic.get("mslides") or []
-                    idx_ms = idx_map[tela_index]
-                    if not (0 <= idx_ms < len(mslides)) or not isinstance(
-                            mslides[idx_ms], dict):
-                        return
-                    try:
-                        c = json.loads(mslides[idx_ms].get("config") or "{}")
-                        if not isinstance(c, dict):
-                            c = {}
-                    except (ValueError, TypeError, AttributeError):
-                        c = {}
-                else:
-                    c = cfg_dic
-                c["img_escala"] = round(escala, 3)
-                if _anuncio_proj.get("mslides") is not None:
-                    mslides[idx_ms]["config"] = json.dumps(c, ensure_ascii=False)
-                dados_proj = dict(_anuncio_proj.get("dados") or {})
-                dados_proj["config_midia"] = json.dumps(
-                    cfg_dic, ensure_ascii=False)
-                _anuncio_proj["dados"] = dados_proj
-                _anuncio_proj["config"] = cfg_dic
-                _atualizar_anuncio_db(pid, dados_proj)
-            except Exception as _e_persist_img:
-                import traceback as _tb_persist_img
-                _tb_persist_img.print_exc()
-                print(f"⚠️ Falha ao autosalvar escala da imagem do anúncio "
-                      f"{pid}: {_e_persist_img}")
 
         def _ajustar_imagem(aumentar: bool):
             """Redimensiona SOMENTE a imagem já projetada no telão (ao vivo).
@@ -10022,7 +11581,7 @@ class AppInterface:
                 telao.imagem_aumentar()
             else:
                 telao.imagem_diminuir()
-            _persistir_escala_imagem(
+            self._persistir_escala_imagem(
                 float(getattr(telao, "_imagem_escala", 1.0) or 1.0))
 
         # Setas do teclado e Esc (janela de anúncios), mesmo esquema da de hinos.
@@ -10072,100 +11631,16 @@ class AppInterface:
         for _seq in ("<Next>", "<Prior>", "<F5>", "<BackSpace>"):
             self.root.bind(_seq, _navegar_passador)
 
-        def _montar_slides_anuncio(anuncio: dict) -> list:
-            """Monta os slides de um anúncio respeitando o texto digitado:
-            slide 0 é o título, os demais são os parágrafos do texto (cada
-            parágrafo = 1 slide, exatamente como o editor adiciona telas)."""
-            titulo = (anuncio.get('titulo') or '').strip()
-            texto = (anuncio.get('texto') or '').strip()
-            paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto) if seg.strip()]
-            slides = [titulo] if titulo else []
-            for paragrafo in paragrafos:
-                slides.append(paragrafo)
-            if not slides:
-                slides = [titulo or "ANÚNCIO"]
-            return slides
-
         def _projetar_anuncio_selecionado():
             sel = tree.selection()
             if not sel:
                 tkinter.messagebox.showwarning("Seleção", "Selecione um anúncio.", parent=janela)
                 return
-            anuncio_id = int(sel[0])
-            anuncio = next(
-                (a for a in _listar_anuncios_db()
-                 if int(a.get('id', 0)) == anuncio_id), None)
-            if not anuncio:
-                return
-            tipo = anuncio.get('tipo_midia') or 'slide'
-            arquivo = anuncio.get('arquivo_midia') or ''
-            if tipo in ('video', 'audio') and arquivo and os.path.exists(arquivo):
-                _anuncio_proj["id"] = None
-                self.arquivos_encontrados = [arquivo]
-                self.player.carregar_playlist([arquivo])
-                self.player.tocar_indice(0)
-                self.atualizar_lista()
-                _atualizar_indicador_slide()
-                return
-            if tipo == 'imagem' and arquivo and os.path.exists(arquivo):
-                texto_anuncio = (anuncio.get('texto') or '').strip()
-                cfg_imagem: dict = {}
-                try:
-                    _ci = json.loads(anuncio.get('config_midia') or '{}')
-                    if isinstance(_ci, dict):
-                        cfg_imagem = _ci
-                except (ValueError, TypeError, AttributeError):
-                    cfg_imagem = {}
-                _anuncio_proj.update({
-                    "id": anuncio_id, "dados": dict(anuncio),
-                    "config": cfg_imagem, "mslides": None, "idx_map": []})
-                if self.player.telao.projetar_imagem_com_texto(
-                        arquivo, texto_anuncio,
-                        anuncio.get('config_midia') or ''):
-                    _atualizar_indicador_slide()
-                    return
-                _anuncio_proj["id"] = None
-                # Falhou a composição projetada: tenta a imagem pura
-                if self.player.telao.projetar_imagem(arquivo):
-                    _atualizar_indicador_slide()
-                    return
+            res = self.projetar_anuncio(
+                int(sel[0]), ao_atualizar=_atualizar_indicador_slide)
+            if not res.get('ok'):
                 tkinter.messagebox.showwarning(
-                    "Imagem", f"Não foi possível projetar:\n{arquivo}", parent=janela)
-                return
-            cfg_a: dict = {}
-            try:
-                _p = json.loads(anuncio.get('config_midia') or '{}')
-                if isinstance(_p, dict):
-                    cfg_a = _p
-            except (ValueError, TypeError, AttributeError):
-                cfg_a = {}
-            if isinstance(cfg_a, dict) and isinstance(cfg_a.get("mslides"), list):
-                # Anúncio multi-slide texto+imagem (cada slide pode ter imagem).
-                mslides_orig = cfg_a["mslides"]
-                slides = []
-                idx_map = []
-                for i, s in enumerate(mslides_orig):
-                    if not isinstance(s, dict):
-                        continue
-                    texto_s = (s.get("texto") or '').strip()
-                    imagem_s = (s.get("imagem") or '').strip()
-                    if not texto_s and not imagem_s:
-                        continue
-                    slides.append({"texto": texto_s, "imagem": imagem_s,
-                                   "config": s.get("config") or ''})
-                    idx_map.append(i)
-                if not slides:
-                    slides = [{"texto": "ANÚNCIO", "imagem": '', "config": ''}]
-                _anuncio_proj.update({
-                    "id": anuncio_id, "dados": dict(anuncio),
-                    "config": cfg_a, "mslides": mslides_orig, "idx_map": idx_map})
-            else:
-                slides = _montar_slides_anuncio(dict(anuncio))
-                _anuncio_proj.update({
-                    "id": None, "dados": {}, "config": {},
-                    "mslides": None, "idx_map": []})
-            self.player.telao.projetar_slides(slides)
-            _atualizar_indicador_slide()
+                    "Anúncio", res.get('erro', ''), parent=janela)
 
         # ── Editor de anúncio ──
         def _abrir_editor_anuncio(anuncio_id: Optional[int] = None):
@@ -10174,6 +11649,7 @@ class AppInterface:
             editar_win.geometry("680x860")
             editar_win.configure(bg='#0d1117')
             editar_win.transient(janela)
+            _centralizar_sobre(editar_win, janela)
             editar_win.after(50, editar_win.grab_set)
 
             e_main = tk.Frame(editar_win, bg='#0d1117')
@@ -11084,6 +12560,7 @@ class AppInterface:
                     prev_win.geometry("700x760")
                     prev_win.configure(bg='#0d1117')
                     prev_win.transient(editar_win)
+                    _centralizar_sobre(prev_win, editar_win)
 
                     def _salvar_previa():
                         slide["texto"] = \
@@ -11336,10 +12813,7 @@ class AppInterface:
         janela.geometry("950x700")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        try:
-            _centralizar_toplevel(janela, 950, 700)
-        except Exception:
-            pass
+        _centralizar_sobre(janela, self.root)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -12357,20 +13831,7 @@ class AppInterface:
         janela.geometry("1100x750")
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        try:
-            _centralizar_toplevel(janela, 1100, 750)
-        except Exception:
-            pass
-        try:
-            janela.update_idletasks()
-            sw = janela.winfo_screenwidth()
-            sh = janela.winfo_screenheight()
-            w, h = 1100, 750
-            x = (sw - w) // 2
-            y = (sh - h) // 2
-            janela.geometry(f"{w}x{h}+{x}+{y}")
-        except Exception:
-            pass
+        _centralizar_sobre(janela, self.root)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -12613,6 +14074,7 @@ class AppInterface:
                 nome_win.geometry("350x120")
                 nome_win.configure(bg='#0d1117')
                 nome_win.transient(janela)
+                _centralizar_sobre(nome_win, janela)
                 nome_win.after(50, nome_win.grab_set)
                 tk.Label(nome_win, text="Nome do serviço:", fg='#f0c040', bg='#0d1117',
                          font=("Arial", 11)).pack(pady=5)
@@ -12682,6 +14144,7 @@ class AppInterface:
             add_win.geometry("700x380")
             add_win.configure(bg='#0d1117')
             add_win.transient(janela)
+            _centralizar_sobre(add_win, janela)
             add_win.after(50, add_win.grab_set)
 
             add_main = tk.Frame(add_win, bg='#0d1117')
@@ -13389,8 +14852,9 @@ class AppInterface:
             tree.focus(str(itens[idx_novo].get("id")))
 
         # Snapshot da janela principal p/ restauração após cada item do
-        # serviço (capturado uma única vez por sessão desta janela).
-        snapshot_servico: dict = {"guardada": False}
+        # serviço vive em self._snapshot_servico (criado no __init__:
+        # capturado uma única vez por sessão, compartilhado com o
+        # controle remoto — não reatribuir aqui).
 
         def _executar_servico():
             """Reproduz APENAS o próximo item da lista e para.
@@ -13399,186 +14863,29 @@ class AppInterface:
             item na lista, a próxima reprodução começa nele e o botão passa a
             avançar item a item até o fim da lista, voltando ao primeiro ao
             terminar — a escolha anterior é esquecida. Sem seleção, segue o
-            mesmo avanço item a item, do começo ao fim. independente
-            do tipo (hino/vídeo/áudio/texto): reproduz/projeta só ele e fica
-            aguardando o próximo clique. Não altera a playlist nem a opção de
-            repetição da janela principal — o estado anterior é restaurado
-            quando o item termina.
+            mesmo avanço item a item, do começo ao fim. A lógica real está em
+            `executar_proximo_item_servico` (reutilizada pelo controle
+            remoto); aqui ficam só a seleção da lista e os diálogos.
             """
             serv = _servico_atual()
             if not serv:
                 return
-            itens = list(serv.get("itens") or [])
-            if not itens:
-                tkinter.messagebox.showinfo("Vazio", "Serviço sem itens.", parent=janela)
-                return
-            chave = serv.get("id") or serv.get("nome") or "?"
-            prox = _SERVICO_PROXIMO_ITEM.get(chave)
+            escolhido = _item_escolhido["id"]
             # Consome a escolha do operador (uma única vez). A partir daqui a
             # seleção da lista é ignorada: o botão só avança item a item e, ao
             # terminar, volta ao primeiro — nunca mais volta ao item escolhido.
-            escolhido = _item_escolhido["id"]
             _item_escolhido["id"] = None
-            if escolhido is not None:
-                idx_escolhido = next((i for i, it in enumerate(itens)
-                                      if it.get("id") == escolhido), None)
-                if idx_escolhido is not None:
-                    prox = idx_escolhido
-            if prox is None or prox < 0 or prox >= len(itens):
-                prox = 0
-            item = itens[prox]
-            tipo = (item.get('tipo') or '').strip().lower()
-            titulo_item = (item.get('titulo_custom') or '').strip()
-            letra = (item.get('letra_snapshot') or '').strip()
-
-            # Destaque do item em execução na lista da janela de serviço.
-            # Não é escolha do operador: não registra nada em _item_escolhido.
-            try:
-                tree.selection_set(str(item.get('id')))
-                tree.see(str(item.get('id')))
-            except Exception:
-                pass
-
-            iniciado = False
-            # Resolve o caminho de mídia do item: 1ª o arquivo escolhido
-            # diretamente no editor (vídeo/áudio/PowerPoint/Impress); 2ª o
-            # vídeo/áudio do acervo (tabela midia); 3ª a mídia (vídeo/áudio)
-            # anexada a um anúncio.
-            caminho_media = None
-            _caminho_direto = (item.get('caminho_arquivo') or '').strip()
-            if tipo in ('video', 'audio', 'sermao') and _caminho_direto \
-                    and os.path.exists(_caminho_direto):
-                caminho_media = _caminho_direto
-            else:
-                if tipo in ('video', 'audio') and item.get('referencia_id'):
-                    try:
-                        rows_m = db_query(
-                            "SELECT caminho_arquivo FROM midia WHERE id = ? AND ativo = 1",
-                            (item['referencia_id'],))
-                        if rows_m:
-                            caminho_media = rows_m[0].get('caminho_arquivo') or ''
-                    except Exception:
-                        caminho_media = None
-                elif tipo == 'anuncio' and item.get('referencia_id'):
-                    anun = _buscar_anuncio_por_ref(item['referencia_id'])
-                    if anun and (anun.get('tipo_midia') or '').strip().lower() in ('video', 'audio'):
-                        caminho_media = (anun.get('arquivo_midia') or '')
-            if caminho_media and os.path.exists(caminho_media):
-                caminho = caminho_media
-                _ext = os.path.splitext(caminho)[1].lower()
-                if _ext in ('.ppt', '.pptx', '.pps', '.ppsx', '.odp', '.pdf'):
-                    # Apresentação (PowerPoint/Impress) ou PDF: abre no
-                    # aplicativo do sistema (LibreOffice --show para
-                    # apresentação, visualizador padrão para PDF), escondendo
-                    # o telão enquanto estiver aberta.
-                    self.player._matar_processo()
-                    self.player.telao.preparar_video()
-                    if _eh_windows():
-                        _cmd_apres = ['cmd', '/c', 'start', '', caminho]
-                    elif _ext == '.pdf':
-                        # PDF: visualizador padrão do sistema (o LibreOffice
-                        # em modo apresentação não serve para PDF).
-                        _cmd_apres = ['xdg-open', caminho]
-                    else:
-                        _cmd_apres = ['xdg-open', caminho]
-                        for _so in ('libreoffice', 'soffice'):
-                            if self.player._player_existe(_so):
-                                _cmd_apres = [_so, '--show', caminho]
-                                break
-                    try:
-                        _proc_apres = subprocess.Popen(
-                            _cmd_apres, start_new_session=True,
-                            env=_ambiente_sem_appimage())
-                    except Exception as e:
-                        print(f"❌ Erro ao abrir apresentação/PDF: {e}")
-                        iniciado = False
-                    else:
-                        iniciado = True
-                        if _cmd_apres[0] in ('libreoffice', 'soffice'):
-                            # Monitora o fim da apresentação e restaura o telão
-                            def _monitor_apres():
-                                _rc = _proc_apres.poll()
-                                if _rc is not None:
-                                    try:
-                                        self.player.telao.restaurar_tela()
-                                    except Exception:
-                                        pass
-                                    return
-                                try:
-                                    self.player.telao.root.after(1000, _monitor_apres)
-                                except tk.TclError:
-                                    pass
-                            try:
-                                self.player.telao.root.after(1000, _monitor_apres)
-                            except tk.TclError:
-                                pass
+            res = self.executar_proximo_item_servico(
+                serv, escolhido=escolhido,
+                ao_destacar=lambda it: (tree.selection_set(str(it.get('id'))),
+                                        tree.see(str(it.get('id')))))
+            if not res.get('ok'):
+                if res.get('codigo') == 'vazio':
+                    tkinter.messagebox.showinfo(
+                        "Vazio", res.get('erro', ''), parent=janela)
                 else:
-                    # Snapshot da janela principal capturado UMA vez por
-                    # sessão (restaurado quando o item termina).
-                    if not snapshot_servico["guardada"]:
-                        snapshot_servico["guardada"] = True
-                        snapshot_servico["playlist"] = list(self.player.playlist or [])
-                        snapshot_servico["index"] = self.player.index
-                        snapshot_servico["arquivos"] = list(
-                            getattr(self, 'arquivos_encontrados', []) or [])
-                        snapshot_servico["atual"] = getattr(
-                            self, 'arquivo_atual', None)
-
-                    def _fim_item_servico(estado: object = None):
-                        # Restaura o handler e o estado anteriores ao item
-                        self.player.on_state_change = self.quando_midia_terminar
-                        if snapshot_servico["guardada"] and self.player.playlist == [caminho]:
-                            snapshot_servico["guardada"] = False
-                            self.player.playlist = snapshot_servico["playlist"]
-                            self.player.index = snapshot_servico["index"]
-                            self.arquivos_encontrados = snapshot_servico["arquivos"]
-                            self.arquivo_atual = snapshot_servico["atual"]
-
-                    self.player.on_state_change = _fim_item_servico
-                    self.player.carregar_playlist([caminho])
-                    if self.player.tocar_indice(0):
-                        iniciado = True
-                    else:
-                        self.player.on_state_change = self.quando_midia_terminar
-
-            if not iniciado:
-                # Itens sem mídia (hino/anúncio/texto): projeta e para.
-                if tipo == 'hino' and (titulo_item or letra):
-                    self.player.telao.projetar_slides(
-                        _montar_slides_letra(titulo_item, letra))
-                    iniciado = True
-                elif tipo == 'anuncio':
-                    anun = _buscar_anuncio_por_ref(item.get('referencia_id'))
-                    if anun:
-                        if _projetar_anuncio_ordserv(self.player.telao, anun):
-                            iniciado = True
-                    else:
-                        texto = letra or titulo_item
-                        if texto:
-                            self.player.telao.projetar_texto(texto)
-                            iniciado = True
-                else:
-                    if tipo == 'versiculo' and letra:
-                        # Projeta como slide persistente (igual janela Bíblia):
-                        # fica no telão até o operador parar (Esc/fechar).
-                        # Item com faixa (ex.: "1-7") sai um versículo por
-                        # slide, navegável com ◀/▶; versículo único e
-                        # capítulo inteiro seguem em um slide só.
-                        self.player.telao.projetar_slides(
-                            _slides_versiculo_item(item), indice_inicial=0)
-                    else:
-                        texto = letra or titulo_item
-                        if texto:
-                            self.player.telao.projetar_texto(texto)
-                    iniciado = True if (letra if tipo == 'versiculo'
-                                        else (letra or titulo_item)) else False
-
-            if iniciado:
-                _SERVICO_PROXIMO_ITEM[chave] = prox + 1
-            else:
-                tkinter.messagebox.showwarning(
-                    "Executar", f"Não foi possível reproduzir o item {prox + 1}.",
-                    parent=janela)
+                    tkinter.messagebox.showwarning(
+                        "Executar", res.get('erro', ''), parent=janela)
 
         tk.Button(btn_frame, text="➕ Novo Serviço", font=("Arial", 11, "bold"),
                   bg='#238636', fg='white', activebackground='#2ea043',
@@ -13691,6 +14998,7 @@ class AppInterface:
         janela.configure(bg='#0d1117')
         if parent is not None:
             janela.transient(parent)
+        _centralizar_sobre(janela, parent if parent is not None else self.root)
         _aplicar_icone_janela(janela)
 
         estado = {"ocupado": False}
@@ -13930,8 +15238,11 @@ class AppInterface:
         """Tarefas de inicialização que rodam após a interface aparecer."""
         # Registra no banco os arquivos de mídia da pasta uploads
         _sincronizar_uploads_midia()
-        # Inicia servidor HTTP
+        # Inicia servidor HTTP (API de mídia local + controle remoto)
         self._servidor_thread = ServidorAsyncHTTP()
+        self._servidor_thread.ui = self._na_thread_ui
+        self._servidor_thread.remoto = self._remoto_despacho
+        self._aplicar_acesso_remoto()
         self._servidor_thread.iniciar()
         print(f"✅ Servidor async rodando em {BACKEND_URL}")
         

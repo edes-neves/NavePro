@@ -1,5 +1,5 @@
 """
-NavePro - Sistema de Projeção para Igrejas.
+NavePro - Sistema de Projeção Profissional.
 
 Pacote da aplicação NavePro. Nesta etapa (Passo 1 da modularização)
 contém a camada de infraestrutura pura (navepro.core) e as configurações

@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.edes_neves.NavePro</id>
   <name>NavePro</name>
-  <summary>Sistema de projeção multimídia para igreja</summary>
+  <summary>Sistema de projeção profissional</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <developer id="io.github.edesneves">
@@ -11,9 +11,9 @@
   <description>
     <p>
       NavePro é um aplicativo desktop (Python/Tkinter) para projeção multimídia
-      em dois monitores: o monitor principal controla tudo e o segundo monitor
-      exibe o telão (letras de hinos, versículos bíblicos e mídias) em tela
-      cheia para a congregação.
+      profissional em dois monitores: o monitor principal controla tudo e o
+      segundo monitor exibe o telão (letras de hinos, versículos bíblicos e
+      mídias) em tela cheia para o público.
     </p>
     <ul>
       <li>Hinos com CRUD, importação XML/TXT (OpenLyrics) e projeção por slides</li>
@@ -40,6 +40,17 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.3" date="2026-10-08">
+      <description>
+        <ul>
+          <li>Controle remoto pelo celular: nova aba "Controle Remoto" em Configurações liga um servidor HTTP local (protegido por token) para operar o telão de qualquer aparelho na mesma rede</li>
+          <li>Projete hinos (letra), Bíblia, anúncios e itens da Ordem de Serviço, e controle medidor, passe de slides e o tamanho do conteúdo ao vivo</li>
+          <li>Bíblia pelo celular: busca por referência (livro + Cap + V:), igual à janela do app, projetando versículo a versículo navegável pelos slides</li>
+          <li>Hinos pelo celular: busca músicas/vídeos no banco de dados (como o campo principal do app) e executa no telão</li>
+          <li>Janelas auxiliares passam a se centralizar por um helper único, sobre o monitor da janela-mãe</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.2" date="2026-10-06">
       <description>
         <ul>

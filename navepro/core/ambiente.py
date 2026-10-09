@@ -1,4 +1,4 @@
-"""NavePro - Sistema de Projeção para Igrejas.
+"""NavePro - Sistema de Projeção Profissional.
 
 Camada de infraestrutura pura (Python + stdlib/tkinter), sem dependência
 da interface (AppInterface), do player ou do servidor HTTP.

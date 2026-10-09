@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=NavePro
-GenericName=Projeção para Igreja
-Comment=Sistema de projeção multimídia para igreja (hinos, Bíblia, mídias)
+GenericName=Projeção Profissional
+Comment=Sistema de projeção profissional (hinos, Bíblia, mídias)
 Exec=navepro
 Icon=io.github.edes_neves.NavePro
 Terminal=false

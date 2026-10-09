@@ -1,4 +1,4 @@
-# NavePro — Sistema de Projeção para Igreja
+# NavePro — Sistema de Projeção Profissional
 
 Aplicativo desktop (Python/Tkinter) para **projeção multimídia em dois monitores**: o monitor principal (1) controla tudo e o segundo monitor (2) exibe o **telão** (letras de hinos, Bíblia, mídias) em tela cheia para a congregação.
 
