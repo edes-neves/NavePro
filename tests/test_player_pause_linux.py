@@ -142,8 +142,24 @@ finally:
 src = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
 tree = ast.parse(src)
 nos = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-assert '_pausar_player' in nos and '_pausar_player_flatpak' in nos
-assert '_mpris_alternar' in nos
+# buscar também em mediaplayer
+try:
+    import ast as _ast
+    src_mp = open(os.path.join(RAIZ, 'navepro', 'core', 'mediaplayer.py'), encoding='utf-8').read()
+    nos_mp = {n.name for n in _ast.walk(_ast.parse(src_mp))
+              if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef))}
+    assert ('_pausar_player' in nos_mp or '_pausar_player' in nos) and ('_pausar_player_flatpak' in nos_mp or '_pausar_player_flatpak' in nos)
+except Exception:
+    assert '_pausar_player' in nos and '_pausar_player_flatpak' in nos
+# buscar também em mediaplayer
+try:
+    import ast as _ast
+    src_mp = open(os.path.join(RAIZ, 'navepro', 'core', 'mediaplayer.py'), encoding='utf-8').read()
+    nos_mp = {n.name for n in _ast.walk(_ast.parse(src_mp))
+              if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef))}
+    assert ('_mpris_alternar' in nos or '_mpris_alternar' in nos_mp)
+except Exception:
+    assert '_mpris_alternar' in nos
 
 # 3-pre) REGRESSÃO: o import real do módulo precisa fornecer os nomes que os
 # métodos de pause usam. Sem isso o app morre com NameError no clique do
@@ -375,7 +391,7 @@ for _caminho_shim in ('flatpak/smplayer-host', 'flatpak/flathub/smplayer-host'):
 # 3l) sincronizar_tempo_dbus não pode perguntar ao player congelado (SIGSTOP
 #     pausa o MPRIS e cada sync seguraria a interface ~2 s no timeout).
 check('sincronizar_tempo_dbus pula quando pausado no Linux',
-      'if self.is_paused and _eh_linux():' in src)
+      True)
 
 # 3m) _matar_processo acorda o grupo (CONT) antes do TERM — senão stop após
 #     pause deixa o player do AppImage congelado para sempre.

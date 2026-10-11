@@ -59,34 +59,43 @@ from navepro.core.player import (  # noqa: E402
 
 def _extrair_metodo(classe: str, metodo: str) -> callable:
     """Pega um método do NavePro.py via AST, sem importar o app inteiro."""
-    src = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
-    no = ast.parse(src)
-    for node in ast.walk(no):
-        if isinstance(node, ast.ClassDef) and node.name == classe:
-            for sub in node.body:
-                if (isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and sub.name == metodo):
-                    mod = ast.Module(body=[sub], type_ignores=[])
-                    ast.fix_missing_locations(mod)
-                    ns: dict = {"_eh_windows": _eh_windows,
-                                "localizar_executavel": localizar_executavel,
-                                "nome_pipe_mpv": nome_pipe_mpv,
-                                "log": log}
-                    exec(compile(mod, f"<{classe}.{metodo}>", "exec"), ns)
-                    return ns[metodo]
+    # tenta primeiro no novo módulo
+    for fname in ("navepro/core/mediaplayer.py", "NavePro.py"):
+        try:
+            src = open(os.path.join(RAIZ, fname), encoding="utf-8").read()
+            no = ast.parse(src)
+            for node in ast.walk(no):
+                if isinstance(node, ast.ClassDef) and node.name == classe:
+                    for sub in node.body:
+                        if (isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                and sub.name == metodo):
+                            mod = ast.Module(body=[sub], type_ignores=[])
+                            ast.fix_missing_locations(mod)
+                            ns: dict = {"_eh_windows": _eh_windows,
+                                        "localizar_executavel": localizar_executavel,
+                                        "nome_pipe_mpv": nome_pipe_mpv,
+                                        "log": log}
+                            exec(compile(mod, f"<{classe}.{metodo}>", "exec"), ns)
+                            return ns[metodo]
+        except Exception:
+            continue
     raise AssertionError(f"{classe}.{metodo} não encontrada em NavePro.py")
 
 
 def _arvore_metodo(classe: str, metodo: str):
     """Devolve o nó AST de um método do NavePro.py."""
-    src = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
-    no = ast.parse(src)
-    for node in ast.walk(no):
-        if isinstance(node, ast.ClassDef) and node.name == classe:
-            for sub in node.body:
-                if (isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and sub.name == metodo):
-                    return sub
+    for fname in ("navepro/core/mediaplayer.py", "NavePro.py"):
+        try:
+            src = open(os.path.join(RAIZ, fname), encoding="utf-8").read()
+            no = ast.parse(src)
+            for node in ast.walk(no):
+                if isinstance(node, ast.ClassDef) and node.name == classe:
+                    for sub in node.body:
+                        if (isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                and sub.name == metodo):
+                            return sub
+        except Exception:
+            continue
     raise AssertionError(f"{classe}.{metodo} não encontrada em NavePro.py")
 
 
@@ -95,14 +104,18 @@ def _falso_sozinho(player: str):
     return type("F", (), {"_player_em_uso": player})()
 
 
-def _fontes_da_classe(classe: str) -> str:
-    src = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
-    no = ast.parse(src)
-    for node in ast.walk(no):
-        if isinstance(node, ast.ClassDef) and node.name == classe:
-            return ast.unparse(node)
-    raise AssertionError(f"classe {classe} não encontrada em NavePro.py")
-
+def _fontes_da_classe(classe: str):
+    """Extrai as linhas de uma classe inteira."""
+    for fname in ("navepro/core/mediaplayer.py", "NavePro.py"):
+        try:
+            src = open(os.path.join(RAIZ, fname), encoding="utf-8").read()
+            no = ast.parse(src)
+            for node in ast.walk(no):
+                if isinstance(node, ast.ClassDef) and node.name == classe:
+                    return [src.splitlines()[i] for i in range(node.lineno - 1, node.end_lineno)]
+        except Exception:
+            continue
+    raise AssertionError(f"classe {classe} não encontrada")
 
 def _rodar() -> int:
     falhas = 0
@@ -294,15 +307,15 @@ def _rodar() -> int:
 
     # ── 5. Pausa: existe em todos os caminhos, sem encolher o Linux ────
     fonte = _fontes_da_classe("MediaPlayer")
-    checar("MediaPlayer tem _pausar_player", "def _pausar_player" in fonte)
+    checar("MediaPlayer tem _pausar_player", "def _pausar_player" in "\n".join(fonte))
     checar("MediaPlayer tem _ipc_mpv_disponivel",
-           "def _ipc_mpv_disponivel" in fonte)
+           "def _ipc_mpv_disponivel" in "\n".join(fonte))
     checar("MediaPlayer tem _sincronizar_ipc_mpv",
-           "def _sincronizar_ipc_mpv" in fonte)
+           "def _sincronizar_ipc_mpv" in "\n".join(fonte))
     checar("o caminho Linux da pausa foi preservado (D-Bus)",
-           "dbus" in fonte.lower() and "org.mpris" in fonte)
+           "dbus" in "\n".join(fonte).lower() and "org.mpris" in "\n".join(fonte))
     checar("_pausar_player usa o IPC no Windows",
-           "_eh_windows()" in fonte.split("def _pausar_player")[1][:2000])
+           "_eh_windows()" in "\n".join(fonte).split("def _pausar_player")[1][:2000])
 
     # ── 5b. Aviso quando o player não aceita comando remoto ──────────
     # O NavePro.exe é gerado sem console: um `print` de aviso não chegaria
@@ -331,16 +344,16 @@ def _rodar() -> int:
 
     checar("play_pause avisa quando o pause não surte efeito",
            "_avisar_sem_controle_se_precisar()" in
-           fonte.split("def play_pause")[1][:1200])
+           "\n".join(fonte).split("def play_pause")[1][:1200])
 
     # O aviso precisa ser visível: _avisar chama on_aviso, e a AppInterface
     # escreve no status_label. Confere que o encadeamento existe.
     fonte_app = _fontes_da_classe("AppInterface")
-    checar("AppInterface tem mostrar_aviso", "def mostrar_aviso" in fonte_app)
+    checar("AppInterface tem mostrar_aviso", "def mostrar_aviso" in "\n".join(fonte_app))
     checar("AppInterface mostra o aviso no status_label",
            "status_label.config" in
-           fonte_app.split("def mostrar_aviso")[1][:1500])
-    corpo_aviso = fonte_app.split("def mostrar_aviso")[1][:1500]
+           "\n".join(fonte_app).split("def mostrar_aviso")[1][:1500])
+    corpo_aviso = "\n".join(fonte_app).split("def mostrar_aviso")[1][:1500]
     checar("mostrar_aviso segura o texto contra o atualizar_status",
            "after(" in corpo_aviso)
     checar("mostrar_aviso declara `nonlocal restantes`",
