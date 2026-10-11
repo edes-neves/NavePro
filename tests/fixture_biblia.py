@@ -51,7 +51,8 @@ def limpar_biblia(raiz: str) -> None:
 
 def _criar_schema(db: str, uploads: str) -> None:
     """Executa o `init_db` real do NavePro.py apontando para o banco temporário."""
-    src = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
+    mod_path = os.path.join(RAIZ, 'navepro', 'core', 'inicializacao.py')
+    src = open(mod_path, encoding='utf-8').read()
     no = [n for n in ast.walk(ast.parse(src))
           if isinstance(n, ast.FunctionDef) and n.name == 'init_db'][0]
     ns = {'os': os, 'sqlite3': sqlite3, 'DB_PATH': db, 'UPLOAD_FOLDER': uploads}
