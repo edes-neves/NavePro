@@ -71,6 +71,9 @@ NavePro.py          # interface + projeção + importadores (banco, Hinos, Bíbl
 navepro/
   config.py         # APP_VERSION, GITHUB_USER/REPO, BACKEND_PORT=5897, APP_ID_FLATPAK, EXTENSOES_*
   core/ambiente.py  # _eh_windows(), _tornar_dpi_aware()
+  core/atualizacao.py  # verificação e atualização via GitHub Releases / Flatpak
+  core/banco.py     # DatabaseManager (SQLite + cache), db_query/db_execute, reuso de IDs
+  core/fontes_pil.py  # localização de fonte, caixas de texto e medição PIL (anúncios)
   core/log.py       # logging central (nível por NAVEPRO_LOG), usado por NavePro.py e navepro/
   core/paths.py     # _caminho_base/_caminho_recurso (suporta PyInstaller), DATA_USER_DIR, DB_PATH
   core/player.py    # player no Windows (mpv IPC JSON, VLC/SMPlayer detectados, posiciona janela)

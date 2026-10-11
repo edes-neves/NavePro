@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Concorrência do DatabaseManager (NavePro.py).
+"""Concorrência do DatabaseManager (navepro/core/banco.py).
 
 A MESMA conexão SQLite atende três threads ao mesmo tempo: a do Tk (interface e
 ações do controle remoto), a do servidor HTTP (upload/download/mídia) e a do
@@ -32,16 +32,16 @@ if RAIZ not in sys.path:
 
 from fixture_log import log  # noqa: E402
 
-_SRC = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+_SRC = open(os.path.join(RAIZ, "navepro", "core", "banco.py"), encoding="utf-8").read()
 _TREE = ast.parse(_SRC)
 
 
 def _fonte_classe(nome: str) -> str:
-    """Pega a classe do NavePro.py via AST, sem importar o app inteiro."""
+    """Pega a classe do navepro/core/banco.py via AST, sem importar o app."""
     for no in _TREE.body:
         if isinstance(no, ast.ClassDef) and no.name == nome:
             return ast.get_source_segment(_SRC, no)
-    raise AssertionError(f"classe {nome} não encontrada em NavePro.py")
+    raise AssertionError(f"classe {nome} não encontrada em navepro/core/banco.py")
 
 
 def _carregar_classe(db_path: str):
