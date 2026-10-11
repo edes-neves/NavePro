@@ -1327,10 +1327,22 @@ class AppInterface:
         self.player._root_after = self.root
 
         # Aplica configuração de aparência da projeção (letra/versículo)
-        self.player.telao.configurar_projecao(self.config_data.get("projecao", {}))
-
-        # Aplica configuração de aparência do relógio/temperatura
-        self.player.telao.configurar_relogio(self.config_data.get("relogio", {}))
+        # Garante telão
+        try:
+            if getattr(self.player, "telao", None) is None:
+                try:
+                    self.player._garantir_telao()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        t = getattr(self.player, "telao", None)
+        if t is not None:
+            try:
+                t.configurar_projecao(self.config_data.get("projecao", {}))
+                t.configurar_relogio(self.config_data.get("relogio", {}))
+            except Exception:
+                pass
 
         # Estado dos medidores (cronômetro / contagem regressiva)
         self._crono = {
@@ -1377,7 +1389,18 @@ class AppInterface:
         self._aplicar_tema()
 
         # Mostra hora inicial no telão (sem temperatura ainda)
-        self.player.telao._exibir_hora_inicial()
+        t = getattr(self.player, "telao", None)
+        if t is None:
+            try:
+                self.player._garantir_telao()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        t = getattr(self.player, "telao", None)
+        if t is not None:
+            try:
+                t._exibir_hora_inicial()
+            except Exception:
+                pass
 
         # ============================================================
         # Tarefas pesadas executadas APÓS a interface aparecer
@@ -3710,7 +3733,18 @@ class AppInterface:
         """Aplica temperatura na interface e agenda próxima atualização."""
         self.temperatura_atual = temp
         if self._temperatura_valida():
-            self.player.telao._exibir_hora_inicial(temp)
+            t = getattr(self.player, "telao", None)
+            if t is None:
+                try:
+                    self.player._garantir_telao()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                t = getattr(self.player, "telao", None)
+            if t is not None:
+                try:
+                    t._exibir_hora_inicial(temp)
+                except Exception:
+                    pass
             self.temp_label.config(
                 text=f"🌡️ {self.cidade_salva}: {temp}"
             )
@@ -10834,7 +10868,18 @@ class AppInterface:
         self.temperatura_atual = temp
         log.info(f"🌡️ Temperatura carregada: {temp}")
         if self._temperatura_valida():
-            self.player.telao._exibir_hora_inicial(temp)
+            t = getattr(self.player, "telao", None)
+            if t is None:
+                try:
+                    self.player._garantir_telao()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                t = getattr(self.player, "telao", None)
+            if t is not None:
+                try:
+                    t._exibir_hora_inicial(temp)
+                except Exception:
+                    pass
             self.temp_label.config(
                 text=f"🌡️ {self.cidade_salva}: {temp}"
             )
@@ -10880,7 +10925,17 @@ class AppInterface:
         (mostrando_relogio=False), pula o ciclo desnecessário.
         """
         def _update_telao_lazy() -> None:
-            if self.player and self.player.telao.rodando:
+            rod = False
+            if self.player:
+                t = getattr(self.player, "telao", None)
+                if t is None:
+                    try:
+                        self.player._garantir_telao()  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    t = getattr(self.player, "telao", None)
+                rod = getattr(t, "rodando", False)
+            if rod:
                 # Só atualiza se o telão estiver no modo relógio
                 # (quando vídeo está tocando, telão está oculto)
                 if self.player.telao.mostrando_relogio:

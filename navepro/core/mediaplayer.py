@@ -13,6 +13,7 @@ import tkinter as tk
 from collections.abc import Callable
 
 from navepro.config import EXTENSOES_VIDEO, PLAYER_PADRAO
+from navepro.core import telao as telao_mod
 from navepro.core.ambiente import (
     _ambiente_sem_appimage,
     _eh_flatpak,
@@ -102,17 +103,23 @@ class MediaPlayer:
         self._ja_avisou_sem_controle: bool = False
         # Referência para o root da janela principal (setado externamente)
         self._root_after: tk.Misc | None = None
+        # Garante existência do telão antes de monitorar
+        self._garantir_telao()
         # Inicia monitoramento assíncrono
         self._monitorar()
         # Garante que o telão fique com alpha e lower desde o início
-        self.telao.root.lower()
+        t = self._garantir_telao()
+        try:
+            t.root.lower()
+        except Exception:
+            pass
 
     @property
     def process(self) -> subprocess.Popen | None:
         """Retorna o processo do player (somente leitura)."""
         return self._process
 
-    def _garantir_telao(self) -> TelaoWindow:  # noqa: F821
+    def _garantir_telao(self):  # noqa: F821
         """Garante que o telão existe; recria se tiver sido fechado.
 
         O telão é um tk.Tk() separado e pode ser destruído em execução
@@ -125,11 +132,14 @@ class MediaPlayer:
             return telao
         log.info("🖥️ Telão fechado — recriando automaticamente...")
         try:
-            novo = 'TelaoWindow'  # noqa: F821# noqa: F821
+            novo = telao_mod.TelaoWindow()
         except Exception as e:
             log.warning(f"⚠️ Falha ao recriar telão: {e}")
-            return telao if telao is not None else 'TelaoWindow'  # noqa: F821# noqa: F821
-        novo.root.lower()
+            return telao if telao is not None else None
+        try:
+            novo.root.lower()
+        except Exception:
+            pass
         self.telao = novo
         cb = getattr(self, "on_telao_recriado", None)
         if cb:
@@ -161,14 +171,20 @@ class MediaPlayer:
 
         if processo_terminou:
             self.telao = self._garantir_telao()
-            self.telao.restaurar_tela()
+            t2 = self.telao
+            if t2 is not None:
+                try:
+                    t2.restaurar_tela()
+                except Exception:
+                    pass
             # Só dispara "ended" se o processo NÃO foi morto intencionalmente
             # (stop, próximo, anterior, tocar_indice já tratam a transição)
             if self.on_state_change and not self._killed_intentionally:
                 self.on_state_change("ended")
             self._killed_intentionally = False  # Reset para próxima execução
 
-        if self.telao.rodando:
+        t = self._garantir_telao()
+        if t is not None and t.rodando:
             # Aguarda 500ms entre verificações (usa try para ser seguro)
             # Usa o after da janela principal (AppInterface.root) se disponível,
             # senão usa o do telão
@@ -176,7 +192,7 @@ class MediaPlayer:
                 if hasattr(self, '_root_after') and self._root_after:
                     self._root_after.after(500, self._monitorar)
                 else:
-                    self.telao.root.after(500, self._monitorar)
+                    t.root.after(500, self._monitorar)
             except tk.TclError:
                 pass
 
