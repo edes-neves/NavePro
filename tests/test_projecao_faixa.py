@@ -21,8 +21,10 @@ class TclError(Exception): pass
 tkinter.TclError = TclError
 
 # ---------- TelaoWindow real (só a navegação de slides) ----------
-corpo_telao = '\n'.join(
-    ast.get_source_segment(src, nos[n]) for n in ('_mostrar_slide','slide_proximo','slide_anterior'))
+src_telao = open(os.path.join(RAIZ,'navepro/core/telao.py'),encoding='utf-8').read()
+tree_telao = ast.parse(src_telao)
+nos_telao = {n.name:n for n in ast.walk(tree_telao) if isinstance(n,ast.FunctionDef)}
+corpo_telao = '\n'.join(ast.get_source_segment(src_telao, nos_telao[n]) for n in ('_mostrar_slide','slide_proximo','slide_anterior'))
 fabrica_telao = f'''
 class Telao:
     _em_slides = False

@@ -12,6 +12,22 @@ ARQ = os.path.join(RAIZ, 'NavePro.py')
 src = open(ARQ, encoding='utf-8').read()
 tree = ast.parse(src)
 nos = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+# telao
+try:
+    ARQ_T = os.path.join(RAIZ, 'navepro/core/telao.py')
+    src_t = open(ARQ_T, encoding='utf-8').read()
+    nos.update({n.name: n for n in ast.walk(ast.parse(src_t)) if isinstance(n, ast.FunctionDef)})
+except Exception:
+    src_t = src
+# also look in telao module
+try:
+    ARQ_T = os.path.join(RAIZ, 'navepro', 'core', 'telao.py')
+    src_t = open(ARQ_T, encoding='utf-8').read()
+    tree_t = ast.parse(src_t)
+    nos_t = {n.name: n for n in ast.walk(tree_t) if isinstance(n, ast.FunctionDef)}
+    nos.update(nos_t)
+except Exception:
+    pass
 ARQ_SERV = os.path.join(RAIZ, 'navepro', 'core', 'servicos.py')
 src_serv = open(ARQ_SERV, encoding='utf-8').read()
 tree_serv = ast.parse(src_serv)
@@ -21,8 +37,16 @@ class TclError(Exception): pass
 tkinter.TclError = TclError
 
 # ---------- TelaoWindow real (só a navegação de slides) ----------
-corpo_telao = '\n'.join(
-    ast.get_source_segment(src, nos[n]) for n in ('_mostrar_slide','slide_proximo','slide_anterior'))
+# get source segments from combined
+src_all = src
+try:
+    src_all += '\n' + open(os.path.join(RAIZ, 'navepro/core/telao.py'), encoding='utf-8').read()
+except Exception:
+    pass
+src_use = src_t if any(k in locals().get('src_t','') or True for k in []) else src
+# easier: use src_t for those if in nos from telao?
+# find which source has the node
+corpo_telao = '\n'.join(ast.get_source_segment(src_t if n in {nn for nn in nos if False} else (src_t if open(os.path.join(RAIZ,'navepro/core/telao.py')).read().find(n+'(')>=0 or open(os.path.join(RAIZ,'navepro/core/telao.py')).read().find('def '+n)>=0 else src), nos[n]) for n in ('_mostrar_slide','slide_proximo','slide_anterior'))
 fabrica_telao = f'''
 class Telao:
     _em_slides = False
