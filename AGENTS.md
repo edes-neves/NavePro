@@ -74,11 +74,20 @@ navepro/
   core/anuncios.py  # anúncios: JSON legado + CRUD SQLite, uploads, migração
   core/atualizacao.py  # verificação e atualização via GitHub Releases / Flatpak
   core/banco.py     # DatabaseManager (SQLite + cache), db_query/db_execute, reuso de IDs
+  core/clima.py     # geolocalização (Nominatim) e temperatura
   core/fontes_pil.py  # localização de fonte, caixas de texto e medição PIL (anúncios)
+  core/inicializacao.py  # init_db, inicializar_banco/config, uploads, _sincronizar_uploads_midia
   core/log.py       # logging central (nível por NAVEPRO_LOG), usado por NavePro.py e navepro/
+  core/mediaplayer.py  # MediaPlayer: mpv IPC, VLC/SMPlayer, pausa, MPRIS
+  core/monitores.py  # MonitorInfo, get_monitors_config (screeninfo)
   core/paths.py     # _caminho_base/_caminho_recurso (suporta PyInstaller), DATA_USER_DIR, DB_PATH
   core/player.py    # player no Windows (mpv IPC JSON, VLC/SMPlayer detectados, posiciona janela)
+  core/rede.py      # _eh_loopback, _ip_da_rede
+  core/servidor_http.py  # ServidorAsyncHTTP: API de mídia + controle remoto (asyncio)
   core/servicos.py  # Ordens de Serviço (servicos.json), migração e helpers de itens
+  core/slides.py    # montagem de slides (letra/anúncio) e busca por termo
+  core/telao.py     # TelaoWindow: janela de projeção (monitor secundário)
+  core/util_tk.py   # _centralizar_sobre, _normalizar_escala_tk
 assets/
   Biblias/, NHA/, HASD/    # bíblias XML/TXT e hinários OpenLyrics para importação
 tests/                     # suítes headless (ver acima)
