@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Instala o ruff (pinned: mudanças de default quebram o lint)
+      - name: Instala o ruff (versão fixada p/ evitar quebra por default novo)
         run: python -m pip install --quiet 'ruff==0.17.0'
 
       - name: Roda o ruff (config em pyproject.toml)
