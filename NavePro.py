@@ -157,30 +157,42 @@ class DatabaseManager:
         return cls._instance
 
     def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-        self._conn: sqlite3.Connection | None = None
-        self._cache: list[dict[str, Any]] = []
-        self._cache_loaded: bool = False
-        self._reload_lock = threading.Lock()
-        self._result_cache: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
-        self._load_cache()
+        with DatabaseManager._lock:
+            if self._initialized:
+                return
+            self._initialized = True
+            self._conn: sqlite3.Connection | None = None
+            # A MESMA conexão é usada pela thread do Tk e pela do servidor HTTP
+            # (e pelo worker de busca). Com check_same_thread=False, serializamos
+            # todo acesso a ela — sem isso dois `execute` concorrentes podem se
+            # entrelaçar no commit ou na criação preguiçosa da conexão.
+            self._conn_lock = threading.RLock()
+            self._cache: list[dict[str, Any]] = []
+            self._cache_loaded: bool = False
+            # `search` roda na thread do worker de busca E na do Tk (via controle
+            # remoto): a troca de _cache e o LRU de _result_cache precisam ser
+            # atômicos, então tudo isso fica sob este lock.
+            self._cache_lock = threading.RLock()
+            self._result_cache: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+            self._load_cache()
 
     def _connect(self) -> sqlite3.Connection:
         """Retorna uma conexão persistente (cria se não existir)."""
-        if self._conn is None:
-            self._conn = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT,
-                                         check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA synchronous=NORMAL")
-        return self._conn
+        with self._conn_lock:
+            if self._conn is None:
+                self._conn = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT,
+                                             check_same_thread=False)
+                self._conn.row_factory = sqlite3.Row
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
+            return self._conn
 
     def _load_cache(self) -> None:
         """Carrega todos os registros ativos em memória com seus campos normalizados."""
-        with self._reload_lock:
-            try:
+        carregado = False
+        nova: list[dict[str, Any]] = []
+        try:
+            with self._conn_lock:
                 conn = self._connect()
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -189,24 +201,31 @@ class DatabaseManager:
                     WHERE ativo = 1
                 """)
                 rows = cursor.fetchall()
-                self._cache = []
-                # Verifica existência dos arquivos em lote (reduz chamadas stat)
-                caminhos = tuple({row['caminho_arquivo'] for row in rows})
-                caminhos_existem = {c: os.path.exists(c) for c in caminhos}
-                for row in rows:
-                    if not caminhos_existem.get(row['caminho_arquivo'], False):
-                        continue
-                    record = dict(row)
-                    record['nome_exibicao_norm'] = normalizar_texto(record['nome_exibicao'])
-                    record['nome_original_norm'] = normalizar_texto(record['nome_original'])
-                    # Pré-calcular chave de ordenação
-                    record['sort_key'] = self._compute_sort_key(record['nome_exibicao'])
-                    self._cache.append(record)
-                self._cache_loaded = True
-            except Exception as e:
-                print(f"Erro ao carregar cache: {e}")
-                self._cache = []
-                self._cache_loaded = False
+            # Verifica existência dos arquivos em lote (reduz chamadas stat)
+            # FORA do lock da conexão: I/O de disco não deve segurá-la.
+            caminhos = tuple({row['caminho_arquivo'] for row in rows})
+            caminhos_existem = {c: os.path.exists(c) for c in caminhos}
+            for row in rows:
+                if not caminhos_existem.get(row['caminho_arquivo'], False):
+                    continue
+                record = dict(row)
+                record['nome_exibicao_norm'] = normalizar_texto(record['nome_exibicao'])
+                record['nome_original_norm'] = normalizar_texto(record['nome_original'])
+                # Pré-calcular chave de ordenação
+                record['sort_key'] = self._compute_sort_key(record['nome_exibicao'])
+                nova.append(record)
+            carregado = True
+        except Exception as e:
+            print(f"Erro ao carregar cache: {e}")
+            nova = []
+            carregado = False
+        # Troca atômica: quem lê _cache vê o conjunto antigo ou o novo, nunca
+        # um cache pela metade. Invalida o LRU de buscas (senão um resultado
+        # antigo sobrevive a um upload/remoção de mídia).
+        with self._cache_lock:
+            self._cache = nova
+            self._cache_loaded = carregado
+            self._result_cache.clear()
 
     @staticmethod
     def _compute_sort_key(nome: str) -> tuple[int, int, str]:
@@ -230,46 +249,47 @@ class DatabaseManager:
 
     def search(self, term: str) -> list[dict[str, Any]]:
         """Busca síncrona em memória usando normalização com cache LRU."""
-        if not self._cache_loaded or not term:
-            return []
-        term_norm = normalizar_texto(term)
-        if not term_norm:
-            return []
+        with self._cache_lock:
+            if not self._cache_loaded or not term:
+                return []
+            term_norm = normalizar_texto(term)
+            if not term_norm:
+                return []
 
-        # Verifica cache LRU (usa term_norm como chave para consistência)
-        if term_norm in self._result_cache:
-            self._result_cache.move_to_end(term_norm)
-            return self._result_cache[term_norm]
+            # Verifica cache LRU (usa term_norm como chave para consistência)
+            if term_norm in self._result_cache:
+                self._result_cache.move_to_end(term_norm)
+                return self._result_cache[term_norm]
 
-        results: list[dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
 
-        # Se termo é número, busca exata e por prefixo
-        if term.isdigit():
-            num = term
-            for rec in self._cache:
-                if (rec['nome_exibicao'] == num or
-                    rec['nome_exibicao'].startswith(num + ' -') or
-                    rec['nome_exibicao'].startswith(num + '-') or
-                    rec['nome_original'] == num or
-                    rec['nome_original'].startswith(num + ' -') or
-                    rec['nome_original'].startswith(num + '-')):
-                    results.append(rec)
-        else:
-            # Busca textual
-            for rec in self._cache:
-                if (term_norm in rec['nome_exibicao_norm'] or
-                    term_norm in rec['nome_original_norm']):
-                    results.append(rec)
+            # Se termo é número, busca exata e por prefixo
+            if term.isdigit():
+                num = term
+                for rec in self._cache:
+                    if (rec['nome_exibicao'] == num or
+                        rec['nome_exibicao'].startswith(num + ' -') or
+                        rec['nome_exibicao'].startswith(num + '-') or
+                        rec['nome_original'] == num or
+                        rec['nome_original'].startswith(num + ' -') or
+                        rec['nome_original'].startswith(num + '-')):
+                        results.append(rec)
+            else:
+                # Busca textual
+                for rec in self._cache:
+                    if (term_norm in rec['nome_exibicao_norm'] or
+                        term_norm in rec['nome_original_norm']):
+                        results.append(rec)
 
-        # Ordenar por chave de ordenação
-        results.sort(key=lambda x: x['sort_key'])
+            # Ordenar por chave de ordenação
+            results.sort(key=lambda x: x['sort_key'])
 
-        # Atualiza cache LRU (armazena referência, não cópia)
-        self._result_cache[term_norm] = results
-        if len(self._result_cache) > CACHE_LRU_MAXSIZE:
-            self._result_cache.popitem(last=False)
+            # Atualiza cache LRU (armazena referência, não cópia)
+            self._result_cache[term_norm] = results
+            if len(self._result_cache) > CACHE_LRU_MAXSIZE:
+                self._result_cache.popitem(last=False)
 
-        return results
+            return results
 
     def get_all_ids(self) -> list[int]:
         """Retorna todos os IDs em cache."""
@@ -290,29 +310,29 @@ class DatabaseManager:
     # Métodos para operações de banco (INSERT/UPDATE/DELETE) – usam conexão persistente
     def execute(self, query: str, params: tuple = ()) -> int | None:
         """Executa INSERT/UPDATE/DELETE e retorna lastrowid."""
-        conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        return cursor.lastrowid
+        with self._conn_lock:
+            conn = self._connect()
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            conn.commit()
+            return cursor.lastrowid
 
     def query(self, query: str, params: tuple = ()) -> list[dict[str, Any]]:
         """Executa SELECT e retorna lista de dicionários."""
-        conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+        with self._conn_lock:
+            conn = self._connect()
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
 # ────────────────────────────────────────────────────────────────────
 # FUNÇÕES DE BANCO LEGADAS (PARA COMPATIBILIDADE COM API E GERENCIADOR)
 # ────────────────────────────────────────────────────────────────────
 
-# As funções db_query e db_execute são mantidas para uso em threads separadas
-# (API REST e gerenciador) para evitar concorrência com a conexão persistente.
-
-# Pool de conexões SQLite (thread-safe) para db_query/db_execute
-# Reduz abertura/fechamento de conexões em requisições concorrentes
+# As funções db_query e db_execute delegam ao DatabaseManager (singleton), que
+# serializa o acesso à conexão persistente compartilhada com um RLock — assim a
+# thread do Tk e a do servidor HTTP podem consultar o banco sem se atropelar.
 
 
 def db_query(query: str, params: tuple = ()) -> list[dict]:
