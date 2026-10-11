@@ -40,24 +40,15 @@ from tkinter import font as tkfont
 from tkinter import ttk
 from typing import Any
 
-try:
-    from screeninfo import get_monitors as _get_monitors
-    _HAS_SCREENINFO = True
-except ImportError:
-    _HAS_SCREENINFO = False
-
 # ────────────────────────────────────────────────────────────────────
 # IMPORTS INTERNOS (infraestrutura modularizada)
 # ────────────────────────────────────────────────────────────────────
-
 from navepro.config import (
     APP_VERSION,
     BACKEND_PORT,
     BACKEND_URL,
-    CACHE_TTL_SEGUNDOS,
     EXTENSOES_AUDIO,
     EXTENSOES_VIDEO,
-    MAPA_ESTADOS,
     PLAYER_PADRAO,
     SEGUNDOS_PARA_VERIFICAR_ATUALIZACAO,
     SQLITE_TIMEOUT,
@@ -100,6 +91,9 @@ from navepro.core.banco import (
     db_execute,
     db_query,
 )
+from navepro.core.clima import (
+    obter_temperatura,
+)
 from navepro.core.fontes_pil import (
     _PCT_FONTE_CAIXA,
     _caixa_texto_config,
@@ -108,6 +102,10 @@ from navepro.core.fontes_pil import (
     _fonte_familia_do_pil,
 )
 from navepro.core.log import configurar_logging, get_logger
+from navepro.core.monitores import (
+    MonitorInfo,
+    get_monitors_config,
+)
 from navepro.core.paths import (
     CONFIG_FILE,
     DB_EMBUTIDO,
@@ -143,6 +141,13 @@ from navepro.core.servicos import (
     _salvar_servicos_json,
     _slides_versiculo_item,
 )
+from navepro.core.slides import (
+    _buscar_hino_por_termo,
+    _buscar_midia_por_termo,
+    _montar_slides_anuncio,
+    _montar_slides_letra,
+    _previa_slide,
+)
 from navepro.core.ssl_context import (
     _baixar,
     _ssl_context,
@@ -151,7 +156,6 @@ from navepro.core.tema import _OPCOES_COR_TK, _OPCOES_TEXTO, _cor_clara
 from navepro.core.textos import (
     _numero_do_titulo,
     detectar_tipo_arquivo,
-    normalizar_texto,
     remover_acentos,
 )
 from navepro.core.transferencia import (
@@ -1142,303 +1146,17 @@ class ServidorAsyncHTTP:
         self.iniciar()
 
 
-def _estado_para_nome(estado: str) -> str:
-    """Converte sigla UF para nome completo."""
-    return MAPA_ESTADOS.get(estado.upper(), estado)
+# ────────────────────────────────────────────────────────────────────
+# CLIMA - GEOLOCALIZAÇÃO E TEMPERATURA
+# ────────────────────────────────────────────────────────────────────
+# (movido para navepro/core/clima.py — ver "IMPORTS INTERNOS" no topo)
 
-
-def _estado_bate(texto: str, estado_sigla: str, estado_nome: str) -> bool:
-    """Verifica se o texto menciona o estado."""
-    if not estado_sigla:
-        return True
-    texto_norm = normalizar_texto(texto)
-    if not texto_norm:
-        return False
-    valores = {
-        normalizar_texto(estado_sigla),
-        normalizar_texto(estado_nome),
-    }
-    return any(v and v in texto_norm for v in valores)
-
-
-def _cidade_estado_especial(cidade: str, estado: str) -> bool:
-    """Verifica se é 'Mundo Novo' que existe em múltiplos estados."""
-    return (
-        normalizar_texto(cidade) == 'mundo novo'
-        and normalizar_texto(estado) in {'ms', 'ba', 'go'}
-    )
-
-
-def _resultado_aceitavel_nominatim(
-    item: dict, cidade: str, estado: str, estado_nome: str
-) -> bool:
-    """Filtra resultados do Nominatim para evitar locais inadequados."""
-    if not item:
-        return False
-
-    nome = normalizar_texto(item.get('name', ''))
-    cidade_norm = normalizar_texto(cidade)
-    display_name = normalizar_texto(item.get('display_name', ''))
-
-    nome_bate = nome == cidade_norm
-    tokens_cidade = set(cidade_norm.split())
-    tokens_nome = set(nome.split())
-    tokens_batem = bool(tokens_cidade and tokens_cidade.issubset(tokens_nome))
-
-    if not (nome_bate or tokens_batem):
-        return False
-
-    if _cidade_estado_especial(cidade, estado):
-        return bool(estado and _estado_bate(display_name, estado, estado_nome))
-
-    classe = normalizar_texto(item.get('class', ''))
-    tipo = normalizar_texto(item.get('type', ''))
-
-    if classe in {'landuse', 'water', 'amenity', 'natural'}:
-        return False
-    if tipo in {'building', 'peak', 'river', 'city_district',
-                 'hamlet', 'suburb', 'neighbourhood', 'isolated_dwelling',
-                 'farm', 'residential', 'locality'}:
-        return False
-
-    if estado and not _estado_bate(display_name, estado, estado_nome):
-        return False
-
-    return True
-
-
-def obter_temperatura(cidade: str, estado: str) -> str:
-    """
-    Obtém a temperatura atual usando Open-Meteo.
-    Retorna string formatada como '25°C' ou mensagem de erro.
-    """
-    try:
-        cidade = cidade.strip()
-        estado = estado.strip().upper()
-        estado_nome = _estado_para_nome(estado)
-
-        # Tenta consultas com e sem estado
-        consultas: list[str] = []
-        if estado:
-            consultas.append(f"{cidade}, {estado_nome}, Brasil")
-            consultas.append(f"{cidade}, {estado}, Brasil")
-            consultas.append(f"{cidade}, {estado_nome}")
-        consultas.append(cidade)
-
-        for consulta in consultas:
-            geo_url = (
-                f"https://geocoding-api.open-meteo.com/v1/search?"
-                f"name={urllib.parse.quote(consulta)}&count=8&language=pt&format=json"
-                f"&country=BR"
-            )
-            if estado:
-                geo_url += f"&admin1={urllib.parse.quote(estado_nome)}"
-
-            try:
-                with _baixar(geo_url, timeout=8) as response:
-                    geo_data = json.loads(response.read().decode())
-            except Exception as e:
-                log.warning(f"⚠️ Geocoding falhou ({consulta!r}): {e}")
-                continue
-
-            if 'results' not in geo_data or not geo_data['results']:
-                continue
-
-            resultado = None
-            for item in geo_data['results']:
-                if normalizar_texto(item.get('name', '')) != normalizar_texto(cidade):
-                    continue
-                if not estado:
-                    resultado = item
-                    break
-                if _estado_bate(item.get('admin1', ''), estado, estado_nome):
-                    resultado = item
-                    break
-
-            if resultado is None:
-                log.warning(f"⚠️ Geocoding sem resultado válido para {consulta!r}")
-                continue
-
-            lat = resultado.get('latitude')
-            lon = resultado.get('longitude')
-            if lat is None or lon is None:
-                continue
-
-            weather_url = (
-                f"https://api.open-meteo.com/v1/forecast?"
-                f"latitude={lat}&longitude={lon}&current_weather=true"
-            )
-            try:
-                with _baixar(weather_url, timeout=8) as response:
-                    weather_data = json.loads(response.read().decode())
-            except Exception as e:
-                log.warning(f"⚠️ Weather falhou ({cidade!r} {lat},{lon}): {e}")
-                continue
-
-            if 'current_weather' in weather_data:
-                temp = weather_data['current_weather']['temperature']
-                return f"{temp}°C"
-
-            return "ERRO AO OBTER TEMPERATURA"
-
-        # Fallback para Nominatim
-        try:
-            geo_url = (
-                f"https://nominatim.openstreetmap.org/search?"
-                f"q={urllib.parse.quote(f'{cidade}, {estado_nome}, Brasil')}"
-                f"&format=json&limit=3"
-            )
-            req = urllib.request.Request(geo_url, headers={'User-Agent': 'HinarioApp/1.0'})
-            with _baixar(req, timeout=8) as response:
-                geo_data = json.loads(response.read().decode())
-
-            for item in geo_data:
-                if not _resultado_aceitavel_nominatim(item, cidade, estado, estado_nome):
-                    continue
-                lat = float(item['lat'])
-                lon = float(item['lon'])
-                weather_url = (
-                    f"https://api.open-meteo.com/v1/forecast?"
-                    f"latitude={lat}&longitude={lon}&current_weather=true"
-                )
-                with _baixar(weather_url, timeout=8) as response:
-                    weather_data = json.loads(response.read().decode())
-                if 'current_weather' in weather_data:
-                    return f"{weather_data['current_weather']['temperature']}°C"
-        except Exception as e:
-            log.warning(f"⚠️ Nominatim falhou ({cidade!r}): {e}")
-            pass
-
-        if estado:
-            estado_upper = remover_acentos(estado_nome).upper()
-            return f"NAO PERTENCE AO ESTADO DE: {estado_upper}."
-        return "NAO ENCONTRADA"
-
-    except Exception as e:
-        log.exception(f"Erro ao obter temperatura: {e}")
-        return "ERRO"
 
 # ────────────────────────────────────────────────────────────────────
-# MONITORES - DETECÇÃO (mantido)
+# MONITORES - DETECÇÃO
 # ────────────────────────────────────────────────────────────────────
+# (movido para navepro/core/monitores.py — ver "IMPORTS INTERNOS" no topo)
 
-
-class MonitorInfo:
-    """Informações de um monitor detectado."""
-    def __init__(self, x: int, y: int, w: int, h: int, name: str = "Monitor",
-                 primary: bool = False) -> None:
-        self.x = x
-        self.y = y
-        self.width = w
-        self.height = h
-        self.name = name
-        self.primary = primary
-
-    def __repr__(self) -> str:
-        return (f"Monitor({self.name}: {self.width}x{self.height} em ({self.x},{self.y})"
-                f"{' [primário]' if self.primary else ''})")
-
-
-# Cache global de monitores com TTL
-_MONITORS_CACHE: tuple[float, list[MonitorInfo]] | None = None
-
-def get_monitors_config() -> list[MonitorInfo]:
-    """
-    Detecta monitores com cache TTL (60s).
-    Prioriza screeninfo > xrandr (geometria real) > heurística tkinter.
-    """
-    global _MONITORS_CACHE
-    # Verifica cache
-    if _MONITORS_CACHE is not None:
-        timestamp, cached = _MONITORS_CACHE
-        if time.time() - timestamp < CACHE_TTL_SEGUNDOS:
-            return cached
-        _MONITORS_CACHE = None
-
-    # Método 1: screeninfo (biblioteca Python, multiplataforma)
-    if _HAS_SCREENINFO:
-        try:
-            monitors = _get_monitors()
-            if monitors:
-                result = [
-                    MonitorInfo(m.x, m.y, m.width, m.height,
-                                m.name or f"Monitor {i+1}",
-                                primary=getattr(m, 'is_primary', False))
-                    for i, m in enumerate(monitors)
-                ]
-                _MONITORS_CACHE = (time.time(), result)
-                log.info(f"✅ screeninfo: {len(monitors)} monitor(es) detectado(s)")
-                return result
-        except ImportError:
-            pass
-        except Exception as e:
-            log.warning(f"⚠️ screeninfo: {e}")
-
-    # Método 2: xrandr (Linux X11) - geometria REAL dos monitores,
-    # evita o palpite de metades iguais quando há telões com resoluções
-    # diferentes (ex.: 1920x1080 + 1280x720).
-    # No Windows nenhuma dessas ferramentas existe — o screeninfo/cTk dão conta.
-    if _eh_linux():
-        try:
-            result = subprocess.run(
-                ['xrandr'], capture_output=True, text=True, timeout=5,
-                env=_ambiente_sem_appimage()
-            )
-            connected: list[MonitorInfo] = []
-            for line in result.stdout.split('\n'):
-                if ' connected' in line and '+' in line:
-                    parts = line.split()
-                    primary = ' primary' in line
-                    for p in parts:
-                        if 'x' in p and '+' in p:
-                            size_pos = p.split('+')
-                            if len(size_pos) >= 3:
-                                size = size_pos[0].split('x')
-                                x, y = int(size_pos[1]), int(size_pos[2])
-                                w, h = int(size[0]), int(size[1])
-                                connected.append(
-                                    MonitorInfo(x, y, w, h, parts[0], primary=primary)
-                                )
-                            break
-            if connected:
-                connected.sort(key=lambda m: (m.x, m.y))
-                _MONITORS_CACHE = (time.time(), connected)
-                log.info(f"✅ xrandr: {len(connected)} monitor(es) detectado(s)")
-                return connected
-        except Exception as e:
-            log.warning(f"⚠️ xrandr: {e}")
-
-    # Método 3: tkinter + heurística de largura (apenas último recurso)
-    try:
-        root = tk.Tk(className="NavePro_monitor")
-        root.withdraw()
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        root.destroy()
-
-        if screen_width > 2500:
-            half = screen_width // 2
-            result = [
-                MonitorInfo(0, 0, half, screen_height, "Monitor 1"),
-                MonitorInfo(half, 0, screen_width - half, screen_height, "Monitor 2"),
-            ]
-            result.sort(key=lambda m: (m.x, m.y))
-        else:
-            result = [MonitorInfo(0, 0, screen_width, screen_height, "Monitor 1")]
-        _MONITORS_CACHE = (time.time(), result)
-        return result
-    except Exception as e:
-        log.warning(f"⚠️ tkinter fallback: {e}")
-
-    # Fallback
-    log.warning("⚠️ Usando fallback: dual-monitor 1920x1080")
-    result = [
-        MonitorInfo(0, 0, 1920, 1080, "Monitor 1"),
-        MonitorInfo(1920, 0, 1920, 1080, "Monitor 2"),
-    ]
-    result.sort(key=lambda m: (m.x, m.y))
-    _MONITORS_CACHE = (time.time(), result)
-    return result
 
 # ────────────────────────────────────────────────────────────────────
 # POSICIONAMENTO DE JANELAS SECUNDÁRIAS
@@ -4252,102 +3970,11 @@ class MediaPlayer:
 # ────────────────────────────────────────────────────────────────────
 
 
-def _montar_slides_letra(titulo: str, letra_completa: str) -> list:
-    """Monta os slides de uma letra de hino (título + uma linha de verso por
-    slide, em maiúsculas), no mesmo formato usado pela janela Hinos/Letras."""
-    slides = []
-    titulo = (titulo or "").strip().upper()
-    if titulo:
-        slides.append(titulo)
-    letra = (letra_completa or "").strip()
-    for verso in re.split(r'\n\s*\n', letra):
-        for linha in verso.split('\n'):
-            linha = linha.strip().upper()
-            if linha:
-                slides.append(linha)
-    if not slides:
-        slides = [titulo or "HINO"]
-    return slides
+# ────────────────────────────────────────────────────────────────────
+# SLIDES / HINOS (helpers compartilhados)
+# ────────────────────────────────────────────────────────────────────
+# (movido para navepro/core/slides.py — ver "IMPORTS INTERNOS" no topo)
 
-
-def _previa_slide(slide: object) -> str:
-    """Texto curto de um slide para exibir no controle remoto."""
-    if isinstance(slide, dict):
-        return (slide.get("texto") or "").strip()
-    if isinstance(slide, tuple):
-        texto = str(slide[0]) if slide else ""
-        ref = str(slide[1]) if len(slide) > 1 and slide[1] else ""
-        return f"{ref} — {texto}" if ref else texto
-    return str(slide or "")
-
-
-def _montar_slides_anuncio(anuncio: dict) -> list:
-    """Monta os slides de um anúncio respeitando o texto digitado:
-    slide 0 é o título, os demais são os parágrafos do texto (cada
-    parágrafo = 1 slide, exatamente como o editor adiciona telas)."""
-    titulo = (anuncio.get('titulo') or '').strip()
-    texto = (anuncio.get('texto') or '').strip()
-    paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto)
-                  if seg.strip()]
-    slides = [titulo] if titulo else []
-    for paragrafo in paragrafos:
-        slides.append(paragrafo)
-    if not slides:
-        slides = [titulo or "ANÚNCIO"]
-    return slides
-
-
-def _buscar_hino_por_termo(termo: str) -> list[dict]:
-    """Busca hino por número no início do título ou por trecho (título/artista).
-
-    Ex.: '46' ou '46 - Dia de Chuva' encontra o hino cujo título começa com o
-    número 46; qualquer outro termo busca por título/artista/letra (LIKE).
-    """
-    termo = (termo or "").strip()
-    if not termo:
-        return []
-    m = re.match(r"^\s*(\d+)", termo)
-    if m:
-        num = int(m.group(1))
-        rows = [r for r in db_query("SELECT * FROM letras WHERE ativo = 1 ORDER BY titulo")
-                if _numero_do_titulo(r["titulo"]) == num]
-        if rows:
-            return rows
-    busca_like = f"%{termo}%"
-    return db_query(
-        "SELECT * FROM letras WHERE ativo = 1 AND "
-        "(titulo LIKE ? OR artista LIKE ? OR letra_completa LIKE ?) "
-        "ORDER BY titulo", (busca_like, busca_like, busca_like))
-
-
-def _buscar_midia_por_termo(termo: str, tipo: str = 'video') -> list[dict]:
-    """Busca mídia (video/audio) por número no início do nome ou por trecho.
-
-    Para termos numéricos, prioriza correspondência com o nome (ex.: '46'
-    acha '46 - Dia de Chuva'); só cai no id interno da tabela caso nenhum
-    nome comece pelo número. Isso evita que o id do banco (não relacionado
-    ao número do hino) seja escolhido por engano.
-    """
-    termo = (termo or "").strip()
-    if not termo:
-        return []
-    if termo.isdigit():
-        num = termo
-        rows = db_query(
-            "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND ("
-            "nome_exibicao = ? OR nome_exibicao LIKE ? OR nome_exibicao LIKE ?"
-            ") ORDER BY nome_exibicao",
-            (tipo, num, f"{num} -%", f"{num}-%"))
-        if not rows:
-            rows = db_query(
-                "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND id = ?",
-                (tipo, num))
-        return rows
-    busca_like = f"%{unicodedata.normalize('NFC', termo).casefold()}%"
-    return db_query(
-        "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND ("
-        "LOWER(nome_exibicao) LIKE ? OR LOWER(nome_original) LIKE ?"
-        ") ORDER BY nome_exibicao", (tipo, busca_like, busca_like))
 
 
 # ───────────────────────────────────────────────────────────────────

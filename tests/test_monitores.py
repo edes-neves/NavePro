@@ -20,17 +20,9 @@ from fixture_log import log  # noqa: E402
 
 
 def _carregar_monitorinfo() -> type:
-    """Extrai a classe MonitorInfo do NavePro.py sem importar o app inteiro."""
-    src = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
-    no = ast.parse(src)
-    for node in ast.walk(no):
-        if isinstance(node, ast.ClassDef) and node.name == "MonitorInfo":
-            mod = ast.Module(body=[node], type_ignores=[])
-            ast.fix_missing_locations(mod)
-            ns: dict = {"log": log}
-            exec(compile(mod, "<MonitorInfo>", "exec"), ns)
-            return ns["MonitorInfo"]
-    raise AssertionError("MonitorInfo não encontrada em NavePro.py")
+    """Carrega MonitorInfo de navepro/core/monitores.py."""
+    from navepro.core import monitores
+    return monitores.MonitorInfo
 
 
 def _carregar_escolher() -> callable:
