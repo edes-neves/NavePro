@@ -267,6 +267,19 @@ python NavePro.py
 O Tk do Windows não é DPI-aware; o `NavePro.py` chama `_tornar_dpi_aware()` antes
 de abrir janelas (ver `navepro/core/ambiente.py`).
 
+Para conferir a qualidade do código (lint do projeto):
+
+```bash
+python -m pip install ruff
+ruff check .
+```
+
+A configuração vive em `pyproject.toml` (seleto conservador `E,F,I,UP,B`, sem
+E501/E701/E702) e o CI roda o ruff em todo push/PR. O ruff **0.17+ ligou um
+conjunto de regras muito maior por padrão** (YTT/ASYNC/S/BLE…), por isso o
+`pyproject.toml` é obrigatório — sem ele o `ruff check` aponta centenas de
+violações que não são do projeto.
+
 ### Gerar o NavePro.exe (Windows)
 
 ```bat
@@ -349,6 +362,7 @@ NavePro.py            # Aplicativo principal (interface + projeção + importado
 navepro/              # Infraestrutura reutilizável (config, caminhos, temas, textos, atualização)
   config.py           # APP_VERSION e constantes de configuração
   core/player.py      # Player de mídia no Windows: acha o executável, IPC do mpv, posiciona a janela
+pyproject.toml        # Configuração do ruff (lint) — necessário para `ruff check`
 NavePro.spec          # Configuração do PyInstaller (fonte única do empacotamento)
 build-windows.bat     # Gera o dist\NavePro.exe
 build.sh              # Gera o AppImage do Linux (usa o mesmo NavePro.spec)

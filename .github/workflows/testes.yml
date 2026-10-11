@@ -3,7 +3,8 @@
 # lado não quebre o outro sem ninguém perceber na mão.
 #
 # Os testes são headless (fakes de Tk, código extraído via ast) e usam só a
-# biblioteca padrão: não pedem display, servidor nem `pip install`.
+# biblioteca padrão: não pedem display nem servidor. O job `lint` roda o ruff
+# (config em pyproject.toml) numa única plataforma — é o único que instala.
 
 name: Testes
 
@@ -12,6 +13,23 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instala o ruff (pinned: mudanças de default quebram o lint)
+        run: python -m pip install --quiet 'ruff==0.17.0'
+
+      - name: Roda o ruff (config em pyproject.toml)
+        run: ruff check .
+
   testes:
     name: Suíte (${{ matrix.sistema }})
     runs-on: ${{ matrix.sistema }}

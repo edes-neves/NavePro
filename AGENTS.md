@@ -29,13 +29,21 @@ python3 NavePro.py                           # roda o app (fonte)
 
 # Suíte headless (NÃO é pytest): um comando por arquivo
 for f in tests/test_*.py; do python3 "$f"; done
+
+# Lint (ruff, config em pyproject.toml) — roda no CI a cada push/PR
+python3 -m pip install 'ruff==0.17.0'   # ou use o .venv/
+ruff check .
 ```
 
 - As suítes rodam **sem tela/servidor**; quando precisam da interface, recriam um
   `Tk` falso e extraem o trecho do `NavePro.py` via `ast`.
 - **Windows:** prefixar os testes com `set PYTHONUTF8=1` (emojis quebram no cp1252).
 - CI (`.github/workflows/testes.yml`) roda a suíte em `ubuntu-latest` **e**
-  `windows-latest` a cada push/PR.
+  `windows-latest` **e** o ruff (só em `ubuntu-latest`) a cada push/PR.
+- O ruff 0.17 mudou o default para um seleto gigante (YTT/ASYNC/S/BLE...); o
+  `pyproject.toml` fixa as regras do projeto (`E,F,I,UP,B`, sem E501/E701/E702) —
+  **não** rode `ruff check` sem esse arquivo e não mexa nele sem rodar a suíte e
+  o repositório ficar limpo.
 
 ## Build e release
 

@@ -1,0 +1,22 @@
+# Configuração do ruff (linter do projeto).
+#
+# O ruff 0.17+ passou a ligar um conjunto de regras muito maior por padrão
+# (YTT/ASYNC/S/BLE...). Este arquivo fixa um seleto conservador: gramática
+# (E), bugs clássicos (F), ordem de imports (I), modernização para Python 3.10
+# (UP) e bugbear (B). Roda no CI (testes.yml) com `ruff check .`.
+#
+# Instalar localmente:  python -m pip install ruff   (ou use o .venv/)
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = [".venv", "dist", "build", "AppDir"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# Estilo do projeto:
+#   E501 — linhas longas são comuns (docstrings, tabelas); não vale o churn.
+#   E701/E702 — múltiplos statements numa linha são idiomáticos no app.
+ignore = ["E501", "E701", "E702"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]
