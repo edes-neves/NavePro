@@ -221,7 +221,7 @@ class DatabaseManager:
                 nova.append(record)
             carregado = True
         except Exception as e:
-            log.error(f"Erro ao carregar cache: {e}")
+            log.exception(f"Erro ao carregar cache: {e}")
             nova = []
             carregado = False
         # Troca atômica: quem lê _cache vê o conjunto antigo ou o novo, nunca
@@ -753,19 +753,19 @@ class SearchWorker:
                         elif callback:
                             callback(results, version)
                     except Exception as e:
-                        log.error(f"Erro ao chamar callback: {e}")
+                        log.exception(f"Erro ao chamar callback: {e}")
                 self.queue.task_done()
             except Empty:
                 continue
             except Exception as e:
-                log.error(f"Erro no SearchWorker: {e}")
+                log.exception(f"Erro no SearchWorker: {e}")
 
     def _dispatch_callback(self, results: list[dict[str, Any]], version: int, callback: Callable) -> None:
         """Dispatch seguro do callback na thread principal."""
         try:
             callback(list(results), version)
         except Exception as e:
-            log.error(f"Erro no dispatch: {e}")
+            log.exception(f"Erro no dispatch: {e}")
 
     def submit(self, term: str, version: int, callback: Callable) -> None:
         """Enfileira uma tarefa de busca."""
@@ -882,7 +882,7 @@ class ServidorAsyncHTTP:
             self._loop.run_until_complete(self._servir())
             self._loop.run_forever()
         except Exception as e:
-            log.error(f"Erro no servidor async: {e}")
+            log.exception(f"Erro no servidor async: {e}")
         finally:
             self._loop.close()
 
@@ -903,7 +903,7 @@ class ServidorAsyncHTTP:
                 log.info(f"🌐 Controle remoto ativo em {self.host}:{self.port} "
                       f"(token {'definido' if self.token else 'AUSENTE'})")
         except OSError as e:
-            log.error(f"❌ Não consegui escutar em {self.host}:{self.port}: {e}")
+            log.exception(f"❌ Não consegui escutar em {self.host}:{self.port}: {e}")
 
     # ── Ponte com a thread do Tk ──────────────────────────────────
 
@@ -968,7 +968,7 @@ class ServidorAsyncHTTP:
             writer.write(response)
             await writer.drain()
         except Exception as e:
-            log.error(f"Erro ao processar requisição: {e}")
+            log.exception(f"Erro ao processar requisição: {e}")
             error_response = (
                 b"HTTP/1.1 500 Internal Server Error\r\n"
                 b"Content-Type: application/json; charset=utf-8\r\n"
@@ -1559,7 +1559,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
         return "NAO ENCONTRADA"
 
     except Exception as e:
-        log.error(f"Erro ao obter temperatura: {e}")
+        log.exception(f"Erro ao obter temperatura: {e}")
         return "ERRO"
 
 # ────────────────────────────────────────────────────────────────────
@@ -3799,7 +3799,7 @@ class MediaPlayer:
         except ProcessLookupError:
             pass  # Já morreu naturalmente
         except Exception as e:
-            log.error(f"Erro ao encerrar processo {pid}: {e}")
+            log.exception(f"Erro ao encerrar processo {pid}: {e}")
             try:
                 os.kill(pid, signal.SIGKILL)
             except (OSError, PermissionError):
@@ -3882,7 +3882,7 @@ class MediaPlayer:
                 self._preparar_controle_windows(proc.pid, arquivo, mx, my, mw, mh)
             return True
         except Exception as e:
-            log.error(f"❌ Erro ao iniciar player: {e}")
+            log.exception(f"❌ Erro ao iniciar player: {e}")
             return False
 
     def _fechar_ipc(self) -> None:
@@ -4631,7 +4631,7 @@ def _salvar_anuncios_json(anuncios: list[dict]) -> bool:
             json.dump(anuncios, f, ensure_ascii=False, indent=2)
         return True
     except OSError as e:
-        log.error(f"⚠️ Erro ao salvar anúncios: {e}")
+        log.exception(f"⚠️ Erro ao salvar anúncios: {e}")
         return False
 
 
@@ -4675,7 +4675,7 @@ def _copiar_arquivo_uploads(caminho: str) -> str | None:
         shutil.copy2(caminho, destino)
         return destino
     except OSError as e:
-        log.error(f"⚠️ Erro ao copiar para uploads: {e}")
+        log.exception(f"⚠️ Erro ao copiar para uploads: {e}")
         return None
 
 
@@ -4693,7 +4693,7 @@ def _listar_anuncios_db(busca: str = "") -> list[dict]:
             rows = db_query("SELECT * FROM anuncios WHERE ativo = 1 ORDER BY id DESC")
         return [dict(r) for r in rows]
     except Exception as e:
-        log.error(f"⚠️ Erro ao listar anúncios: {e}")
+        log.exception(f"⚠️ Erro ao listar anúncios: {e}")
         return []
 
 
@@ -4842,7 +4842,7 @@ def _inserir_anuncio_db(dados: dict) -> int | None:
             ))
         return novo_id
     except Exception as e:
-        log.error(f"⚠️ Erro ao inserir anúncio: {e}")
+        log.exception(f"⚠️ Erro ao inserir anúncio: {e}")
         return None
 
 
@@ -4865,7 +4865,7 @@ def _atualizar_anuncio_db(anuncio_id: int, dados: dict) -> bool:
             ))
         return True
     except Exception as e:
-        log.error(f"⚠️ Erro ao atualizar anúncio: {e}")
+        log.exception(f"⚠️ Erro ao atualizar anúncio: {e}")
         return False
 
 
@@ -4882,7 +4882,7 @@ def _excluir_anuncios_db(ids) -> bool:
         db_execute(f"DELETE FROM anuncios WHERE id IN ({marks})", tuple(ids))
         return True
     except Exception as e:
-        log.error(f"⚠️ Erro ao excluir anúncios: {e}")
+        log.exception(f"⚠️ Erro ao excluir anúncios: {e}")
         return False
 
 
@@ -5270,7 +5270,7 @@ def _salvar_servicos_json(dados: dict) -> bool:
         os.replace(tmp, SERVICOS_FILE)
         return True
     except OSError as e:
-        log.error(f"⚠️ Erro ao salvar ordens de serviço: {e}")
+        log.exception(f"⚠️ Erro ao salvar ordens de serviço: {e}")
         return False
 
 
@@ -5847,7 +5847,7 @@ class AppInterface:
                     self.config_data.get("relogio", {}))
                 novo_telao._exibir_hora_inicial()
             except Exception as _e_reap:
-                log.error(f"⚠️ Erro ao reaplicar config no telão recriado: "
+                log.exception(f"⚠️ Erro ao reaplicar config no telão recriado: "
                       f"{_e_reap}")
 
         self.player.on_telao_recriado = _reaplicar_telao_recriado
@@ -6183,7 +6183,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            log.error(f"Erro ao salvar config de remoto: {e}")
+            log.exception(f"Erro ao salvar config de remoto: {e}")
         self._aplicar_acesso_remoto()
         log.info(('🌐 Controle remoto ATIVADO' if ativo
                else '📴 Controle remoto desativado')
@@ -6480,7 +6480,7 @@ class AppInterface:
                         _cmd_apres, start_new_session=True,
                         env=_ambiente_sem_appimage())
                 except Exception as e:
-                    log.error(f"❌ Erro ao abrir apresentação/PDF: {e}")
+                    log.exception(f"❌ Erro ao abrir apresentação/PDF: {e}")
                     iniciado = False
                 else:
                     iniciado = True
@@ -6832,7 +6832,7 @@ class AppInterface:
                 return self._remoto_medidor(dados)
             return {'ok': False, 'erro': f'Ação desconhecida: {acao}'}
         except Exception as exc:  # noqa: BLE001 — vira JSON de erro
-            log.error(f"❌ Erro na ação remota '{acao}': {exc}")
+            log.exception(f"❌ Erro na ação remota '{acao}': {exc}")
             return {'ok': False, 'erro': str(exc) or type(exc).__name__}
 
     def _remoto_estado(self) -> dict:
@@ -7428,7 +7428,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            log.error(f"Erro ao salvar config de projeção: {e}")
+            log.exception(f"Erro ao salvar config de projeção: {e}")
         if self.player and self.player.telao:
             self.player.telao.configurar_projecao(cfg)
 
@@ -7619,7 +7619,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            log.error(f"Erro ao salvar config do relógio: {e}")
+            log.exception(f"Erro ao salvar config do relógio: {e}")
         if self.player and self.player.telao:
             self.player.telao.configurar_relogio(cfg)
 
@@ -8178,7 +8178,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            log.error(f"Erro ao salvar config: {e}")
+            log.exception(f"Erro ao salvar config: {e}")
 
         self.status_label.config(text=f"✅ Local salvo: {cidade}/{estado}")
         # Carrega temperatura em background
@@ -8487,7 +8487,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            log.error(f"Erro ao salvar tema: {e}")
+            log.exception(f"Erro ao salvar tema: {e}")
         if getattr(self, '_var_tema_claro', None) is not None:
             self._var_tema_claro.set(novo == 'claro')
         self._aplicar_tema()
@@ -8938,7 +8938,7 @@ class AppInterface:
                     self.root.after(0, lambda: self._instrucoes_troca_instalador(
                         destino))
             except Exception as e:
-                log.error(f"⚠️  Erro ao baixar atualização: {e}")
+                log.exception(f"⚠️  Erro ao baixar atualização: {e}")
                 self.root.after(0, lambda e=e: (janela.destroy(),
                              tkinter.messagebox.showerror(
                                  "Erro",
@@ -9637,7 +9637,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            log.error(f"Erro ao salvar config de {chave}: {e}")
+            log.exception(f"Erro ao salvar config de {chave}: {e}")
 
     def _projetar_medidor_seguro(self, chave: str, modo: str,
                                  subtitulo: str = "", tempo: str = "00:00") -> None:
@@ -10582,7 +10582,7 @@ class AppInterface:
             try:
                 shutil.copy2(caminho, destino)
             except Exception as e:
-                log.error(f"Erro ao copiar {caminho}: {e}")
+                log.exception(f"Erro ao copiar {caminho}: {e}")
                 continue
 
             db_execute(
@@ -10795,7 +10795,7 @@ class AppInterface:
                     "letra_completa": "\n\n".join(letra),
                 }
             except Exception as e:
-                log.error(f"⚠️ Erro ao ler XML {caminho}: {e}")
+                log.exception(f"⚠️ Erro ao ler XML {caminho}: {e}")
                 return None
 
         def _parsear_txt_letra(caminho: str) -> dict | None:
@@ -10826,7 +10826,7 @@ class AppInterface:
                     "letra_completa": letra,
                 }
             except Exception as e:
-                log.error(f"⚠️ Erro ao ler TXT {caminho}: {e}")
+                log.exception(f"⚠️ Erro ao ler TXT {caminho}: {e}")
                 return None
 
         def _importar_letras(caminhos: tuple) -> None:
@@ -11339,7 +11339,7 @@ class AppInterface:
                     "texto": "\n".join(linhas[1:]),
                 }
             except Exception as e:
-                log.error(f"⚠️ Erro ao ler TXT de anúncio {caminho}: {e}")
+                log.exception(f"⚠️ Erro ao ler TXT de anúncio {caminho}: {e}")
                 return None
 
         def _parsear_pdf_anuncio(caminho: str) -> dict | None:
@@ -11356,7 +11356,7 @@ class AppInterface:
                     "texto": texto_limpo,
                 }
             except Exception as e:
-                log.error(f"⚠️ Erro ao ler PDF de anúncio {caminho}: {e}")
+                log.exception(f"⚠️ Erro ao ler PDF de anúncio {caminho}: {e}")
                 return None
 
         def _adicionar_anuncio(dados: dict) -> bool:
@@ -13523,7 +13523,7 @@ class AppInterface:
                         erros += 1
                         continue
                 except Exception as e:
-                    log.error(f"Erro ao importar bíblia {caminho}: {e}")
+                    log.exception(f"Erro ao importar bíblia {caminho}: {e}")
                     erros += 1
                     continue
                 desconhecidos.update(desc)
@@ -15412,7 +15412,7 @@ class AppInterface:
                         pass
                     self.db._conn = None
         except Exception as e:
-            log.error(f"Erro no shutdown: {e}")
+            log.exception(f"Erro no shutdown: {e}")
         finally:
             try:
                 self.root.destroy()

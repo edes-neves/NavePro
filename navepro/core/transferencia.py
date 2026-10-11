@@ -212,7 +212,7 @@ def exportar_transferencia(
             os.remove(tmp)
         except OSError:
             pass
-        log.error(f"⚠️ Erro ao exportar para {destino}: {e}")
+        log.exception(f"⚠️ Erro ao exportar para {destino}: {e}")
         raise
     resumo = {
         "destino": destino,
@@ -282,7 +282,7 @@ def _abrir_pacote(arquivo: str) -> dict:
         shutil.rmtree(temp_dir, ignore_errors=True)
         if isinstance(e, ValueError):
             raise
-        log.error(f"⚠️ Erro ao ler a transferência: {e}")
+        log.exception(f"⚠️ Erro ao ler a transferência: {e}")
         raise ValueError(
             "Não foi possível ler o arquivo de transferência.") from None
     return {"manifest": manifest, "anuncios": anuncios,
@@ -356,7 +356,7 @@ def criar_backup(
         resumo = exportar_transferencia(destino, anuncios, servicos,
                                         incluir_midia=True)
     except (OSError, ValueError) as e:
-        log.error(f"⚠️ Erro ao criar backup: {e}")
+        log.exception(f"⚠️ Erro ao criar backup: {e}")
         return None
     for anuncio in grandes:
         log.warning(f"ℹ️ Mídia grande demais para o backup, pode precisar ser "
