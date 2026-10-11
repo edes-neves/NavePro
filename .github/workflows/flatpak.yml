@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Docker é exigido pelo docker/setup-qemu-action (instala o binfmt para
       # emular aarch64 dentro do container privilegiado).
@@ -35,7 +35,7 @@ jobs:
       - name: Set up QEMU (${{ matrix.arch }})
         if: matrix.arch != 'x86_64'
         id: qemu
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
@@ -50,7 +50,7 @@ jobs:
           bundle: NavePro-${{ matrix.arch }}.flatpak
 
       - name: Upload bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: NavePro-flatpak-${{ matrix.arch }}
           path: NavePro-${{ matrix.arch }}.flatpak
@@ -66,12 +66,12 @@ jobs:
 
     steps:
       - name: Download bundles
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: bundles
 
       - name: Anexar à release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             bundles/NavePro-flatpak-x86_64/NavePro-x86_64.flatpak
@@ -93,14 +93,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       # A branch gh-pages É o repositório ostree público (config/objects/refs/summary).
       # Constrói-se dentro dela para acumular commits do histórico (delta-only).
       - name: Baixar repositório publicado (gh-pages)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: gh-pages
           path: pages

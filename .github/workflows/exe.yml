@@ -27,9 +27,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           # python.org: o build-windows.bat exige Tk 8.6 (Tk 9 quebra os
           # aliases de fonte e o app renderiza textos minúsculos/quadradinhos)
@@ -40,7 +40,7 @@ jobs:
         run: build-windows.bat
 
       - name: Subir o .exe como artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: NavePro.exe
           path: dist/NavePro.exe
@@ -48,7 +48,7 @@ jobs:
 
       - name: Anexar à release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/NavePro.exe
           overwrite_files: true
