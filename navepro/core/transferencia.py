@@ -30,8 +30,11 @@ import zipfile
 from collections.abc import Callable
 from datetime import datetime
 
+from navepro.core.log import get_logger
 from navepro.core.paths import DATA_USER_DIR
 from navepro.core.textos import normalizar_texto
+
+log = get_logger("transferencia")
 
 FORMATO_TRANSFERENCIA = 1
 EXTENSAO_TRANSFERENCIA = ".navepro"
@@ -209,7 +212,7 @@ def exportar_transferencia(
             os.remove(tmp)
         except OSError:
             pass
-        print(f"⚠️ Erro ao exportar para {destino}: {e}")
+        log.error(f"⚠️ Erro ao exportar para {destino}: {e}")
         raise
     resumo = {
         "destino": destino,
@@ -217,7 +220,7 @@ def exportar_transferencia(
         "servicos": len((servicos or {}).get("servicos") or []),
         "midia": len(arquivos),
     }
-    print(f"✅ Transferência exportada: {destino} "
+    log.info(f"✅ Transferência exportada: {destino} "
           f"({resumo['anuncios']} anúncio(s), {resumo['servicos']} ordem(ns), "
           f"{resumo['midia']} mídia(s))")
     return resumo
@@ -279,7 +282,7 @@ def _abrir_pacote(arquivo: str) -> dict:
         shutil.rmtree(temp_dir, ignore_errors=True)
         if isinstance(e, ValueError):
             raise
-        print(f"⚠️ Erro ao ler a transferência: {e}")
+        log.error(f"⚠️ Erro ao ler a transferência: {e}")
         raise ValueError(
             "Não foi possível ler o arquivo de transferência.") from None
     return {"manifest": manifest, "anuncios": anuncios,
@@ -334,7 +337,7 @@ def criar_backup(
     try:
         os.makedirs(pasta, exist_ok=True)
     except OSError as e:
-        print(f"⚠️ Não foi possível criar a pasta de backup: {e}")
+        log.warning(f"⚠️ Não foi possível criar a pasta de backup: {e}")
         return None
     anuncios = listar_anuncios()
     # Backup enxuto: o banco/json sempre entram; mídia gigante fica de fora
@@ -353,12 +356,12 @@ def criar_backup(
         resumo = exportar_transferencia(destino, anuncios, servicos,
                                         incluir_midia=True)
     except (OSError, ValueError) as e:
-        print(f"⚠️ Erro ao criar backup: {e}")
+        log.error(f"⚠️ Erro ao criar backup: {e}")
         return None
     for anuncio in grandes:
-        print(f"ℹ️ Mídia grande demais para o backup, pode precisar ser "
+        log.warning(f"ℹ️ Mídia grande demais para o backup, pode precisar ser "
               f"copiada na mão: {anuncio.get('titulo')}")
-    print(f"🛡️ Backup criado antes da importação: {resumo['destino']}")
+    log.info(f"🛡️ Backup criado antes da importação: {resumo['destino']}")
     return resumo["destino"]
 
 
@@ -558,7 +561,7 @@ def importar_transferencia(
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-    print("✅ Transferência importada: "
+    log.info("✅ Transferência importada: "
           f"{resumo['anuncios_novos']} anúncio(s) novo(s), "
           f"{resumo['anuncios_atualizados']} atualizado(s), "
           f"{resumo['servicos_novos']} ordem(ns) — "

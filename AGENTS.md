@@ -71,6 +71,7 @@ NavePro.py          # interface + projeção + importadores (banco, Hinos, Bíbl
 navepro/
   config.py         # APP_VERSION, GITHUB_USER/REPO, BACKEND_PORT=5897, APP_ID_FLATPAK, EXTENSOES_*
   core/ambiente.py  # _eh_windows(), _tornar_dpi_aware()
+  core/log.py       # logging central (nível por NAVEPRO_LOG), usado por NavePro.py e navepro/
   core/paths.py     # _caminho_base/_caminho_recurso (suporta PyInstaller), DATA_USER_DIR, DB_PATH
   core/player.py    # player no Windows (mpv IPC JSON, VLC/SMPlayer detectados, posiciona janela)
 assets/
@@ -88,6 +89,7 @@ img/                       # ícones (Icon.png, Icon.xbm, Icon.ico)
 - `config.json` — config local (cidade/estado, monitor do telão, player) — **ignorado do git**.
 - `uploads/` — cópias das mídias importadas em anúncios.
 - `anuncios.json` — legado, migrado uma vez para `midia.db`.
+- `navepro.log` — log da aplicação (rotativo, 1 MB × 3); nível por `NAVEPRO_LOG`.
 
 ## Convenções e gotchas
 
@@ -95,6 +97,10 @@ img/                       # ícones (Icon.png, Icon.xbm, Icon.ico)
   falso faz o `after_cancel` falhar em silêncio (bug de debounce da Bíblia).
 - **Toda leitura de arquivo em teste precisa de `encoding="utf-8"`** (senão usa
   cp1252 no Windows e quebra em qualquer acento).
+- **Logging:** use `navepro.core.log.get_logger()` (o app expõe `log` no nível do
+  módulo em `NavePro.py`); **não** use `print` em código de produção. Nível por
+  `NAVEPRO_LOG` (padrão `WARNING`), arquivo `~/.navepro/navepro.log`. Trechos
+  extraídos via AST nos testes referenciam `log`: injete o stub de `tests/fixture_log.py`.
 - **Janela do editor da Ordem de Serviço:** ao alterar a geometria, aplique **só o
   tamanho** (`geometry("WxH")`, nunca coordenadas) e use `_centralizar_sobre(...)`;
   coordenadas fixas fazem a janela pular para o canto superior esquerdo

@@ -83,6 +83,7 @@ from navepro.core.atualizacao import (
     _rotulo_instalador,
     _versao_nova,
 )
+from navepro.core.log import configurar_logging, get_logger
 from navepro.core.paths import (
     ANUNCIOS_FILE,
     CONFIG_FILE,
@@ -132,6 +133,10 @@ from navepro.core.transferencia import (
 # chamada, os dois discordam das unidades e o telão é reposicionado pelo
 # Windows de volta para o monitor primário. No Linux é no-op.
 _TORNAR_DPI_AWARE: bool = _tornar_dpi_aware()
+
+# Logger da aplicação. A configuração (nível/handlers) é feita uma única vez em
+# configurar_logging(), no ponto de entrada (__main__).
+log = get_logger("app")
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -216,7 +221,7 @@ class DatabaseManager:
                 nova.append(record)
             carregado = True
         except Exception as e:
-            print(f"Erro ao carregar cache: {e}")
+            log.error(f"Erro ao carregar cache: {e}")
             nova = []
             carregado = False
         # Troca atômica: quem lê _cache vê o conjunto antigo ou o novo, nunca
@@ -576,9 +581,9 @@ def init_db() -> None:
                     tuple(vals.values()),
                 )
             cursor.execute("DROP TABLE IF EXISTS _anuncios_backup_old_ai")
-            print("✅ Migração anuncios: AUTOINCREMENT removido (IDs passam a reaproveitar).")
+            log.info("✅ Migração anuncios: AUTOINCREMENT removido (IDs passam a reaproveitar).")
     except Exception as e:
-        print(f"⚠️ Migração AUTOINCREMENT ignorada (nova tabela ou já migrada): {e}")
+        log.warning(f"⚠️ Migração AUTOINCREMENT ignorada (nova tabela ou já migrada): {e}")
 
     # ── Migração: garantir a coluna config_midia em bancos já existentes ──
     # Aditiva e idempotente: se a coluna já existe (banco novo ou já migrado),
@@ -588,9 +593,9 @@ def init_db() -> None:
             "PRAGMA table_info(anuncios)").fetchall()}
         if colunas_existentes and 'config_midia' not in colunas_existentes:
             cursor.execute("ALTER TABLE anuncios ADD COLUMN config_midia TEXT DEFAULT ''")
-            print("✅ Migração anuncios: coluna 'config_midia' adicionada.")
+            log.info("✅ Migração anuncios: coluna 'config_midia' adicionada.")
     except Exception as e:
-        print(f"⚠️ Migração config_midia ignorada: {e}")
+        log.warning(f"⚠️ Migração config_midia ignorada: {e}")
 
     conn.commit()
     conn.close()
@@ -600,10 +605,10 @@ def inicializar_banco() -> None:
     """Copia banco embutido se necessário e inicializa."""
     if not os.path.exists(DB_PATH):
         if os.path.exists(DB_EMBUTIDO):
-            print(f"📦 Copiando banco embutido para {DB_PATH}")
+            log.info(f"📦 Copiando banco embutido para {DB_PATH}")
             shutil.copy2(DB_EMBUTIDO, DB_PATH)
         else:
-            print(f"📦 Banco não encontrado, criando novo em {DB_PATH}")
+            log.info(f"📦 Banco não encontrado, criando novo em {DB_PATH}")
     init_db()
 
 
@@ -611,7 +616,7 @@ def inicializar_config() -> None:
     """Copia config embutido para ~/.navepro/ se necessário."""
     config_embutido = _caminho_recurso("config.json")
     if not os.path.exists(CONFIG_FILE) and os.path.exists(config_embutido):
-        print(f"📦 Copiando config embutido para {CONFIG_FILE}")
+        log.info(f"📦 Copiando config embutido para {CONFIG_FILE}")
         shutil.copy2(config_embutido, CONFIG_FILE)
 
 
@@ -630,14 +635,14 @@ def garantir_pasta_uploads() -> bool:
         if os.path.isdir(origem):
             try:
                 if any(True for _ in os.scandir(origem)):
-                    print(f"📦 Copiando de '{origem}' para '{UPLOAD_FOLDER}'...")
+                    log.info(f"📦 Copiando de '{origem}' para '{UPLOAD_FOLDER}'...")
                     shutil.copytree(origem, UPLOAD_FOLDER, dirs_exist_ok=True)
                     return True
             except (PermissionError, OSError):
                 continue
 
     if getattr(sys, 'frozen', False):
-        print("\n⚠️ Pasta de músicas não encontrada!")
+        log.warning("\n⚠️ Pasta de músicas não encontrada!")
         resposta = tkinter.messagebox.askyesno(
             "Pasta de mídias não encontrada",
             "A pasta 'uploads' não foi encontrada.\n\n"
@@ -709,7 +714,7 @@ def _sincronizar_uploads_midia() -> int:
             continue
     if novos:
         DatabaseManager().reload_cache()
-        print(f"📦 {novos} mídia(s) sincronizada(s) da pasta uploads.")
+        log.info(f"📦 {novos} mídia(s) sincronizada(s) da pasta uploads.")
     return novos
 
 
@@ -748,19 +753,19 @@ class SearchWorker:
                         elif callback:
                             callback(results, version)
                     except Exception as e:
-                        print(f"Erro ao chamar callback: {e}")
+                        log.error(f"Erro ao chamar callback: {e}")
                 self.queue.task_done()
             except Empty:
                 continue
             except Exception as e:
-                print(f"Erro no SearchWorker: {e}")
+                log.error(f"Erro no SearchWorker: {e}")
 
     def _dispatch_callback(self, results: list[dict[str, Any]], version: int, callback: Callable) -> None:
         """Dispatch seguro do callback na thread principal."""
         try:
             callback(list(results), version)
         except Exception as e:
-            print(f"Erro no dispatch: {e}")
+            log.error(f"Erro no dispatch: {e}")
 
     def submit(self, term: str, version: int, callback: Callable) -> None:
         """Enfileira uma tarefa de busca."""
@@ -877,7 +882,7 @@ class ServidorAsyncHTTP:
             self._loop.run_until_complete(self._servir())
             self._loop.run_forever()
         except Exception as e:
-            print(f"Erro no servidor async: {e}")
+            log.error(f"Erro no servidor async: {e}")
         finally:
             self._loop.close()
 
@@ -893,12 +898,12 @@ class ServidorAsyncHTTP:
                 self.host, self.port
             )
             if self.host == '127.0.0.1':
-                print(f"✅ Servidor async rodando em 127.0.0.1:{self.port}")
+                log.info(f"✅ Servidor async rodando em 127.0.0.1:{self.port}")
             else:
-                print(f"🌐 Controle remoto ativo em {self.host}:{self.port} "
+                log.info(f"🌐 Controle remoto ativo em {self.host}:{self.port} "
                       f"(token {'definido' if self.token else 'AUSENTE'})")
         except OSError as e:
-            print(f"❌ Não consegui escutar em {self.host}:{self.port}: {e}")
+            log.error(f"❌ Não consegui escutar em {self.host}:{self.port}: {e}")
 
     # ── Ponte com a thread do Tk ──────────────────────────────────
 
@@ -963,7 +968,7 @@ class ServidorAsyncHTTP:
             writer.write(response)
             await writer.drain()
         except Exception as e:
-            print(f"Erro ao processar requisição: {e}")
+            log.error(f"Erro ao processar requisição: {e}")
             error_response = (
                 b"HTTP/1.1 500 Internal Server Error\r\n"
                 b"Content-Type: application/json; charset=utf-8\r\n"
@@ -1372,7 +1377,7 @@ class ServidorAsyncHTTP:
             self._server.close()
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
-        print("✅ Servidor async parado")
+        log.info("✅ Servidor async parado")
 
     def run(self) -> None:
         self._run_async()
@@ -1477,7 +1482,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                 with _baixar(geo_url, timeout=8) as response:
                     geo_data = json.loads(response.read().decode())
             except Exception as e:
-                print(f"⚠️ Geocoding falhou ({consulta!r}): {e}")
+                log.warning(f"⚠️ Geocoding falhou ({consulta!r}): {e}")
                 continue
 
             if 'results' not in geo_data or not geo_data['results']:
@@ -1495,7 +1500,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                     break
 
             if resultado is None:
-                print(f"⚠️ Geocoding sem resultado válido para {consulta!r}")
+                log.warning(f"⚠️ Geocoding sem resultado válido para {consulta!r}")
                 continue
 
             lat = resultado.get('latitude')
@@ -1511,7 +1516,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                 with _baixar(weather_url, timeout=8) as response:
                     weather_data = json.loads(response.read().decode())
             except Exception as e:
-                print(f"⚠️ Weather falhou ({cidade!r} {lat},{lon}): {e}")
+                log.warning(f"⚠️ Weather falhou ({cidade!r} {lat},{lon}): {e}")
                 continue
 
             if 'current_weather' in weather_data:
@@ -1545,7 +1550,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                 if 'current_weather' in weather_data:
                     return f"{weather_data['current_weather']['temperature']}°C"
         except Exception as e:
-            print(f"⚠️ Nominatim falhou ({cidade!r}): {e}")
+            log.warning(f"⚠️ Nominatim falhou ({cidade!r}): {e}")
             pass
 
         if estado:
@@ -1554,7 +1559,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
         return "NAO ENCONTRADA"
 
     except Exception as e:
-        print(f"Erro ao obter temperatura: {e}")
+        log.error(f"Erro ao obter temperatura: {e}")
         return "ERRO"
 
 # ────────────────────────────────────────────────────────────────────
@@ -1606,12 +1611,12 @@ def get_monitors_config() -> list[MonitorInfo]:
                     for i, m in enumerate(monitors)
                 ]
                 _MONITORS_CACHE = (time.time(), result)
-                print(f"✅ screeninfo: {len(monitors)} monitor(es) detectado(s)")
+                log.info(f"✅ screeninfo: {len(monitors)} monitor(es) detectado(s)")
                 return result
         except ImportError:
             pass
         except Exception as e:
-            print(f"⚠️ screeninfo: {e}")
+            log.warning(f"⚠️ screeninfo: {e}")
 
     # Método 2: xrandr (Linux X11) - geometria REAL dos monitores,
     # evita o palpite de metades iguais quando há telões com resoluções
@@ -1642,10 +1647,10 @@ def get_monitors_config() -> list[MonitorInfo]:
             if connected:
                 connected.sort(key=lambda m: (m.x, m.y))
                 _MONITORS_CACHE = (time.time(), connected)
-                print(f"✅ xrandr: {len(connected)} monitor(es) detectado(s)")
+                log.info(f"✅ xrandr: {len(connected)} monitor(es) detectado(s)")
                 return connected
         except Exception as e:
-            print(f"⚠️ xrandr: {e}")
+            log.warning(f"⚠️ xrandr: {e}")
 
     # Método 3: tkinter + heurística de largura (apenas último recurso)
     try:
@@ -1667,10 +1672,10 @@ def get_monitors_config() -> list[MonitorInfo]:
         _MONITORS_CACHE = (time.time(), result)
         return result
     except Exception as e:
-        print(f"⚠️ tkinter fallback: {e}")
+        log.warning(f"⚠️ tkinter fallback: {e}")
 
     # Fallback
-    print("⚠️ Usando fallback: dual-monitor 1920x1080")
+    log.warning("⚠️ Usando fallback: dual-monitor 1920x1080")
     result = [
         MonitorInfo(0, 0, 1920, 1080, "Monitor 1"),
         MonitorInfo(1920, 0, 1920, 1080, "Monitor 2"),
@@ -1823,10 +1828,10 @@ class TelaoWindow:
         _aplicar_icone_janela(self.root)
 
         monitors = get_monitors_config()
-        print(f"🖥️ Monitores detectados: {len(monitors)}")
+        log.info(f"🖥️ Monitores detectados: {len(monitors)}")
         for i, m in enumerate(monitors):
             prim = " [primário]" if getattr(m, 'primary', False) else ""
-            print(f"   Monitor {i+1}: {m.width}x{m.height} em ({m.x},{m.y}){prim}")
+            log.info(f"   Monitor {i+1}: {m.width}x{m.height} em ({m.x},{m.y}){prim}")
 
         # TelaoWindow (relogio/telão) abre SEMPRE no monitor que NÃO é
         # o primário, conforme definido pelo SO. Se houver apenas um
@@ -1836,7 +1841,7 @@ class TelaoWindow:
         # Cache de geometria privada (evita acessos repetidos)
         self._monitor = monitor
         geometry = f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}"
-        print(f"✅ TELÃO: {geometry}")
+        log.info(f"✅ TELÃO: {geometry}")
         # Inicia em TELA CHEIA (sem bordas) cobrindo o monitor secundário.
         # A tecla F11 alterna para o modo janela (min/max/redimensionar) e
         # volta à tela cheia.
@@ -2326,7 +2331,7 @@ class TelaoWindow:
                     pass
                 self.canvas.configure(bg=cor_fundo)
             except Exception as e:
-                print(f"⚠️ Não foi possível exibir a imagem de fundo: {e}")
+                log.warning(f"⚠️ Não foi possível exibir a imagem de fundo: {e}")
                 self._fundo_imagem_item = None
                 self.canvas.configure(bg=cor_fundo)
         else:
@@ -2418,7 +2423,7 @@ class TelaoWindow:
                     except tk.TclError:
                         pass
                 except Exception as e:
-                    print(f"⚠️ Não foi possível exibir a imagem de fundo do relógio: {e}")
+                    log.warning(f"⚠️ Não foi possível exibir a imagem de fundo do relógio: {e}")
                     self._fundo_relogio_item = None
                     self._fundo_relogio_caminho = ""
         self.root.configure(bg=cor_fundo)
@@ -2662,7 +2667,7 @@ class TelaoWindow:
         try:
             from PIL import Image
         except Exception as e:
-            print(f"⚠️ PIL indisponível para projetar imagem: {e}")
+            log.warning(f"⚠️ PIL indisponível para projetar imagem: {e}")
             return False
 
         # Cancela retorno automático anterior (re-projeção)
@@ -2712,7 +2717,7 @@ class TelaoWindow:
             with Image.open(caminho) as img_src:
                 img_orig = img_src.convert("RGBA")
         except Exception as e:
-            print(f"⚠️ Não foi possível abrir a imagem {caminho}: {e}")
+            log.warning(f"⚠️ Não foi possível abrir a imagem {caminho}: {e}")
             self._retornar_ao_relogio()
             return False
 
@@ -2723,7 +2728,7 @@ class TelaoWindow:
         try:
             ok = self._renderizar_imagem_projetada()
         except Exception as e:
-            print(f"⚠️ Não foi possível exibir a imagem no telão: {e}")
+            log.warning(f"⚠️ Não foi possível exibir a imagem no telão: {e}")
             ok = False
         if not ok:
             self._retornar_ao_relogio()
@@ -2794,7 +2799,7 @@ class TelaoWindow:
                 self._imagem_item = self.canvas.create_image(
                     pos[0], pos[1], image=self._imagem_pil, anchor="nw")
         except Exception as e:
-            print(f"⚠️ Não foi possível renderizar a imagem no telão: {e}")
+            log.warning(f"⚠️ Não foi possível renderizar a imagem no telão: {e}")
             return False
         self.root.update_idletasks()
         return True
@@ -2830,7 +2835,7 @@ class TelaoWindow:
         try:
             pass
         except Exception as e:
-            print(f"⚠️ PIL indisponível para projetar imagem + texto: {e}")
+            log.warning(f"⚠️ PIL indisponível para projetar imagem + texto: {e}")
             return False
 
         # Cancela retorno automático anterior (re-projeção)
@@ -2888,14 +2893,14 @@ class TelaoWindow:
         try:
             from PIL import Image
         except Exception as e:
-            print(f"⚠️ PIL indisponível para projetar imagem + texto: {e}")
+            log.warning(f"⚠️ PIL indisponível para projetar imagem + texto: {e}")
             return False
 
         try:
             with Image.open(caminho) as img_src:
                 img_orig = img_src.convert("RGBA")
         except Exception as e:
-            print(f"⚠️ Não foi possível abrir a imagem {caminho}: {e}")
+            log.warning(f"⚠️ Não foi possível abrir a imagem {caminho}: {e}")
             return False
 
         w = self.canvas.winfo_width() or self._monitor.width
@@ -2991,7 +2996,7 @@ class TelaoWindow:
         try:
             ok = self._renderizar_imagem_projetada()
         except Exception as e:
-            print(f"⚠️ Não foi possível exibir a imagem + texto no telão: {e}")
+            log.warning(f"⚠️ Não foi possível exibir a imagem + texto no telão: {e}")
             ok = False
         return ok
 
@@ -3623,11 +3628,11 @@ class MediaPlayer:
         telao = getattr(self, "telao", None)
         if telao is not None and getattr(telao, "_raiz_viva", lambda: False)():
             return telao
-        print("🖥️ Telão fechado — recriando automaticamente...")
+        log.info("🖥️ Telão fechado — recriando automaticamente...")
         try:
             novo = TelaoWindow(self.monitor_index)
         except Exception as e:
-            print(f"⚠️ Falha ao recriar telão: {e}")
+            log.warning(f"⚠️ Falha ao recriar telão: {e}")
             return telao if telao is not None else TelaoWindow(self.monitor_index)
         novo.root.lower()
         self.telao = novo
@@ -3636,7 +3641,7 @@ class MediaPlayer:
             try:
                 cb(novo)
             except Exception as e:
-                print(f"⚠️ Falha ao reaplicar config no telão recriado: {e}")
+                log.warning(f"⚠️ Falha ao reaplicar config no telão recriado: {e}")
         return novo
 
     def _monitorar(self) -> None:
@@ -3742,7 +3747,7 @@ class MediaPlayer:
 
         self._killed_intentionally = True
         pid = proc.pid
-        print(f"🛑 Encerrando processo {pid} (grupo)...")
+        log.info(f"🛑 Encerrando processo {pid} (grupo)...")
 
         if _eh_windows():
             # Windows: não existem grupos de processo nem os sinais POSIX.
@@ -3794,7 +3799,7 @@ class MediaPlayer:
         except ProcessLookupError:
             pass  # Já morreu naturalmente
         except Exception as e:
-            print(f"Erro ao encerrar processo {pid}: {e}")
+            log.error(f"Erro ao encerrar processo {pid}: {e}")
             try:
                 os.kill(pid, signal.SIGKILL)
             except (OSError, PermissionError):
@@ -3836,10 +3841,10 @@ class MediaPlayer:
         self._matar_processo()
 
         if not os.path.exists(arquivo):
-            print(f"❌ Arquivo não encontrado: {arquivo}")
+            log.error(f"❌ Arquivo não encontrado: {arquivo}")
             return False
 
-        print(f"🎵 Tocando: {os.path.basename(arquivo)}")
+        log.info(f"🎵 Tocando: {os.path.basename(arquivo)}")
         self.telao = self._garantir_telao()
         self.telao.preparar_video()
         self.tempo_acumulado = 0.0
@@ -3857,7 +3862,7 @@ class MediaPlayer:
         try:
             cmd = self._montar_comando_player(arquivo, mx, my, mw, mh)
 
-            print(f"🎬 Executando: {' '.join(cmd)}")
+            log.info(f"🎬 Executando: {' '.join(cmd)}")
             creationflags = 0
             if _eh_windows():
                 # Não deixa a janela de console "piscar" ao lançar o player.
@@ -3877,7 +3882,7 @@ class MediaPlayer:
                 self._preparar_controle_windows(proc.pid, arquivo, mx, my, mw, mh)
             return True
         except Exception as e:
-            print(f"❌ Erro ao iniciar player: {e}")
+            log.error(f"❌ Erro ao iniciar player: {e}")
             return False
 
     def _fechar_ipc(self) -> None:
@@ -3927,7 +3932,7 @@ class MediaPlayer:
             if self._player_se_posiciona_sozinho():
                 def _limpar() -> None:
                     n = esconder_janelas_auxiliares(pid)
-                    print(f"   🖥️ Vídeo no telão (player se posicionou)"
+                    log.info(f"   🖥️ Vídeo no telão (player se posicionou)"
                           f"{f', {n} painel(is) escondido(s)' if n else ''}")
 
                 threading.Thread(target=_limpar, daemon=True,
@@ -3935,8 +3940,10 @@ class MediaPlayer:
             else:
                 def _posicionar() -> None:
                     ok = posicionar_janela_player(pid, mx, my, mw, mh)
-                    print("   🖥️ Player posicionado no telão" if ok
-                           else "   ⚠️ Não consegui posicionar o player no telão")
+                    if ok:
+                        log.info("   🖥️ Player posicionado no telão")
+                    else:
+                        log.warning("   ⚠️ Não consegui posicionar o player no telão")
 
                 threading.Thread(target=_posicionar, daemon=True,
                                  name="navepro-pos-player").start()
@@ -3945,7 +3952,7 @@ class MediaPlayer:
             cliente = ClienteMpvIpc(self._pipe_mpv)
             if cliente.conectar():
                 self._ipc = cliente
-                print("🎛️ Controle remoto do mpv ligado (IPC)")
+                log.info("🎛️ Controle remoto do mpv ligado (IPC)")
 
     def _montar_comando_player(
         self, arquivo: str, mx: int, my: int, mw: int, mh: int
@@ -3973,17 +3980,17 @@ class MediaPlayer:
 
         # Verifica se o player configurado existe no sistema
         if not self._player_existe(player):
-            print(f"\u26a0\ufe0f Player '{player}' n\u00e3o encontrado no sistema!")
+            log.warning(f"\u26a0\ufe0f Player '{player}' n\u00e3o encontrado no sistema!")
             # Tenta alternativas em ordem de prefer\u00eancia
             alternativas = (["mpv", "vlc", "smplayer"] if _eh_windows()
                             else ["smplayer", "mpv", "vlc"])
             for alt in alternativas:
                 if self._player_existe(alt):
-                    print(f"   \u27a1\ufe0f Usando '{alt}' como alternativa")
+                    log.info(f"   \u27a1\ufe0f Usando '{alt}' como alternativa")
                     player = alt
                     break
             else:
-                print("   ❌ Nenhum player encontrado! "
+                log.error("   ❌ Nenhum player encontrado! "
                       "Usando o aplicativo padrão")
                 self._lancamento_desanexado = True
                 if _eh_windows():
@@ -4090,7 +4097,7 @@ class MediaPlayer:
 
     def _avisar(self, mensagem: str) -> None:
         """Manda um aviso para o painel (sem travar a interface)."""
-        print(f"⚠️ {mensagem}")
+        log.warning(f"⚠️ {mensagem}")
         if self.on_aviso:
             try:
                 self.on_aviso(mensagem)
@@ -4407,7 +4414,7 @@ class MediaPlayer:
         if self._ipc_mpv_disponivel():
             try:
                 if self._ipc.encerrar():
-                    print("🛑 Player encerrado pelo IPC")
+                    log.info("🛑 Player encerrado pelo IPC")
                     self._fechar_ipc()
                     with self._process_lock:
                         proc = self._process
@@ -4425,7 +4432,7 @@ class MediaPlayer:
                     self.duracao_total = None
                     self.telao = self._garantir_telao()
                     self.telao.restaurar_tela()
-                    print("✅ Player parado")
+                    log.info("✅ Player parado")
                     return
             except Exception:
                 pass  # Cai para o encerramento forçado
@@ -4437,13 +4444,13 @@ class MediaPlayer:
         self.duracao_total = None
         self.telao = self._garantir_telao()
         self.telao.restaurar_tela()
-        print("✅ Player parado")
+        log.info("✅ Player parado")
 
     def proximo(self) -> bool:
         """Avança para o próximo item da playlist (sem sleep)."""
         if not self.playlist or self.index >= len(self.playlist) - 1:
             return False
-        print("⏭ Indo para próximo...")
+        log.info("⏭ Indo para próximo...")
         self.index += 1
         arquivo = self.playlist[self.index]
         if self._tocar_arquivo(arquivo):
@@ -4455,9 +4462,9 @@ class MediaPlayer:
     def anterior(self) -> bool:
         """Volta para o item anterior da playlist (sem sleep)."""
         if not self.playlist or self.index <= 0:
-            print("⚠️ Não há item anterior")
+            log.warning("⚠️ Não há item anterior")
             return False
-        print("⏮ Voltando para anterior...")
+        log.info("⏮ Voltando para anterior...")
         self.index -= 1
         arquivo = self.playlist[self.index]
         if self._tocar_arquivo(arquivo):
@@ -4470,7 +4477,7 @@ class MediaPlayer:
         """Toca um índice específico da playlist (sem sleep)."""
         if not self.playlist or indice < 0 or indice >= len(self.playlist):
             return False
-        print(f"🎯 Tocando índice {indice}...")
+        log.info(f"🎯 Tocando índice {indice}...")
         self.index = indice
         arquivo = self.playlist[self.index]
         if self._tocar_arquivo(arquivo):
@@ -4624,7 +4631,7 @@ def _salvar_anuncios_json(anuncios: list[dict]) -> bool:
             json.dump(anuncios, f, ensure_ascii=False, indent=2)
         return True
     except OSError as e:
-        print(f"⚠️ Erro ao salvar anúncios: {e}")
+        log.error(f"⚠️ Erro ao salvar anúncios: {e}")
         return False
 
 
@@ -4668,7 +4675,7 @@ def _copiar_arquivo_uploads(caminho: str) -> str | None:
         shutil.copy2(caminho, destino)
         return destino
     except OSError as e:
-        print(f"⚠️ Erro ao copiar para uploads: {e}")
+        log.error(f"⚠️ Erro ao copiar para uploads: {e}")
         return None
 
 
@@ -4686,7 +4693,7 @@ def _listar_anuncios_db(busca: str = "") -> list[dict]:
             rows = db_query("SELECT * FROM anuncios WHERE ativo = 1 ORDER BY id DESC")
         return [dict(r) for r in rows]
     except Exception as e:
-        print(f"⚠️ Erro ao listar anúncios: {e}")
+        log.error(f"⚠️ Erro ao listar anúncios: {e}")
         return []
 
 
@@ -4816,7 +4823,7 @@ def _inserir_anuncio_db(dados: dict) -> int | None:
     """
     novo_id = _proximo_id_anuncio_livre()
     if not novo_id:
-        print("⚠️ Não foi possível calcular um id livre para o anúncio.")
+        log.warning("⚠️ Não foi possível calcular um id livre para o anúncio.")
         return None
     try:
         db_execute(
@@ -4835,7 +4842,7 @@ def _inserir_anuncio_db(dados: dict) -> int | None:
             ))
         return novo_id
     except Exception as e:
-        print(f"⚠️ Erro ao inserir anúncio: {e}")
+        log.error(f"⚠️ Erro ao inserir anúncio: {e}")
         return None
 
 
@@ -4858,7 +4865,7 @@ def _atualizar_anuncio_db(anuncio_id: int, dados: dict) -> bool:
             ))
         return True
     except Exception as e:
-        print(f"⚠️ Erro ao atualizar anúncio: {e}")
+        log.error(f"⚠️ Erro ao atualizar anúncio: {e}")
         return False
 
 
@@ -4875,7 +4882,7 @@ def _excluir_anuncios_db(ids) -> bool:
         db_execute(f"DELETE FROM anuncios WHERE id IN ({marks})", tuple(ids))
         return True
     except Exception as e:
-        print(f"⚠️ Erro ao excluir anúncios: {e}")
+        log.error(f"⚠️ Erro ao excluir anúncios: {e}")
         return False
 
 
@@ -4902,7 +4909,7 @@ def _migrar_anuncios_do_json() -> int:
                 "tipo_midia": "slide"}):
             importados += 1
     if importados:
-        print(f"✅ {importados} anúncio(s) migrado(s) de anuncios.json para o banco.")
+        log.info(f"✅ {importados} anúncio(s) migrado(s) de anuncios.json para o banco.")
     return importados
 
 
@@ -5263,7 +5270,7 @@ def _salvar_servicos_json(dados: dict) -> bool:
         os.replace(tmp, SERVICOS_FILE)
         return True
     except OSError as e:
-        print(f"⚠️ Erro ao salvar ordens de serviço: {e}")
+        log.error(f"⚠️ Erro ao salvar ordens de serviço: {e}")
         return False
 
 
@@ -5330,7 +5337,7 @@ def _migrar_servicos_do_banco() -> bool:
         })
         dados["_proximo_id_servico"] = max(dados["_proximo_id_servico"], sid + 1)
     if _salvar_servicos_json(dados):
-        print(f"✅ Ordens de serviço migradas do banco para {SERVICOS_FILE}")
+        log.info(f"✅ Ordens de serviço migradas do banco para {SERVICOS_FILE}")
         return True
     return False
 
@@ -5472,7 +5479,7 @@ def _extrair_texto_pdf(caminho: str) -> str | None:
         if paginas:
             return "\n\n".join(paginas)
     except Exception as e:
-        print(f"⚠️ pypdf falhou ao ler {caminho}: {e}")
+        log.warning(f"⚠️ pypdf falhou ao ler {caminho}: {e}")
 
     try:
         resultado = subprocess.run(
@@ -5481,7 +5488,7 @@ def _extrair_texto_pdf(caminho: str) -> str | None:
         if resultado.returncode == 0 and resultado.stdout.strip():
             return resultado.stdout.strip()
     except (OSError, subprocess.SubprocessError) as e:
-        print(f"⚠️ pdftotext falhou ao ler {caminho}: {e}")
+        log.warning(f"⚠️ pdftotext falhou ao ler {caminho}: {e}")
     return None
 
 
@@ -5500,7 +5507,7 @@ def _carregar_icone(nome: str):
         with Image.open(caminho) as img:
             return ImageTk.PhotoImage(img)
     except Exception as e:
-        print(f"⚠️ Ícone '{nome}' indisponível: {e}")
+        log.warning(f"⚠️ Ícone '{nome}' indisponível: {e}")
         return None
 
 
@@ -5793,7 +5800,7 @@ class AppInterface:
         self._focus_timer: str | None = None
         self._debounce_timer: str | None = None
 
-        print(f"🎮 Player: {self.player_cmd} | Monitor: {self.monitor_index}")
+        log.info(f"🎮 Player: {self.player_cmd} | Monitor: {self.monitor_index}")
 
         # Garante recursos
         inicializar_banco()
@@ -5840,7 +5847,7 @@ class AppInterface:
                     self.config_data.get("relogio", {}))
                 novo_telao._exibir_hora_inicial()
             except Exception as _e_reap:
-                print(f"⚠️ Erro ao reaplicar config no telão recriado: "
+                log.error(f"⚠️ Erro ao reaplicar config no telão recriado: "
                       f"{_e_reap}")
 
         self.player.on_telao_recriado = _reaplicar_telao_recriado
@@ -6176,9 +6183,9 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            print(f"Erro ao salvar config de remoto: {e}")
+            log.error(f"Erro ao salvar config de remoto: {e}")
         self._aplicar_acesso_remoto()
-        print(('🌐 Controle remoto ATIVADO' if ativo
+        log.info(('🌐 Controle remoto ATIVADO' if ativo
                else '📴 Controle remoto desativado')
               + (f" — {self.info_controle_remoto()['url']}" if ativo else ''))
         return self.info_controle_remoto()
@@ -6473,7 +6480,7 @@ class AppInterface:
                         _cmd_apres, start_new_session=True,
                         env=_ambiente_sem_appimage())
                 except Exception as e:
-                    print(f"❌ Erro ao abrir apresentação/PDF: {e}")
+                    log.error(f"❌ Erro ao abrir apresentação/PDF: {e}")
                     iniciado = False
                 else:
                     iniciado = True
@@ -6632,7 +6639,7 @@ class AppInterface:
         except Exception as _e_persist:
             import traceback as _tb_persist
             _tb_persist.print_exc()
-            print(f"⚠️ Falha ao autosalvar escala do anúncio {pid}: {_e_persist}")
+            log.warning(f"⚠️ Falha ao autosalvar escala do anúncio {pid}: {_e_persist}")
 
     def _persistir_escala_imagem(self, escala: float) -> None:
         """Grava a nova escala de imagem ('img_escala') no anúncio em projeção.
@@ -6682,7 +6689,7 @@ class AppInterface:
         except Exception as _e_persist_img:
             import traceback as _tb_persist_img
             _tb_persist_img.print_exc()
-            print(f"⚠️ Falha ao autosalvar escala da imagem do anúncio "
+            log.warning(f"⚠️ Falha ao autosalvar escala da imagem do anúncio "
                   f"{pid}: {_e_persist_img}")
 
     def _tamanho_projecao(self) -> dict:
@@ -6825,7 +6832,7 @@ class AppInterface:
                 return self._remoto_medidor(dados)
             return {'ok': False, 'erro': f'Ação desconhecida: {acao}'}
         except Exception as exc:  # noqa: BLE001 — vira JSON de erro
-            print(f"❌ Erro na ação remota '{acao}': {exc}")
+            log.error(f"❌ Erro na ação remota '{acao}': {exc}")
             return {'ok': False, 'erro': str(exc) or type(exc).__name__}
 
     def _remoto_estado(self) -> dict:
@@ -7421,7 +7428,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            print(f"Erro ao salvar config de projeção: {e}")
+            log.error(f"Erro ao salvar config de projeção: {e}")
         if self.player and self.player.telao:
             self.player.telao.configurar_projecao(cfg)
 
@@ -7612,7 +7619,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            print(f"Erro ao salvar config do relógio: {e}")
+            log.error(f"Erro ao salvar config do relógio: {e}")
         if self.player and self.player.telao:
             self.player.telao.configurar_relogio(cfg)
 
@@ -8171,7 +8178,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            print(f"Erro ao salvar config: {e}")
+            log.error(f"Erro ao salvar config: {e}")
 
         self.status_label.config(text=f"✅ Local salvo: {cidade}/{estado}")
         # Carrega temperatura em background
@@ -8452,7 +8459,7 @@ class AppInterface:
                         ["xdg-open", url], start_new_session=True,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
-            print(f"⚠️ Não foi possível abrir o e-mail: {e}")
+            log.warning(f"⚠️ Não foi possível abrir o e-mail: {e}")
 
     @staticmethod
     def _encontrar_cliente_email() -> str | None:
@@ -8480,7 +8487,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"Erro ao salvar tema: {e}")
+            log.error(f"Erro ao salvar tema: {e}")
         if getattr(self, '_var_tema_claro', None) is not None:
             self._var_tema_claro.set(novo == 'claro')
         self._aplicar_tema()
@@ -8931,7 +8938,7 @@ class AppInterface:
                     self.root.after(0, lambda: self._instrucoes_troca_instalador(
                         destino))
             except Exception as e:
-                print(f"⚠️  Erro ao baixar atualização: {e}")
+                log.error(f"⚠️  Erro ao baixar atualização: {e}")
                 self.root.after(0, lambda e=e: (janela.destroy(),
                              tkinter.messagebox.showerror(
                                  "Erro",
@@ -9630,7 +9637,7 @@ class AppInterface:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config_data, f, indent=2)
         except Exception as e:
-            print(f"Erro ao salvar config de {chave}: {e}")
+            log.error(f"Erro ao salvar config de {chave}: {e}")
 
     def _projetar_medidor_seguro(self, chave: str, modo: str,
                                  subtitulo: str = "", tempo: str = "00:00") -> None:
@@ -10575,7 +10582,7 @@ class AppInterface:
             try:
                 shutil.copy2(caminho, destino)
             except Exception as e:
-                print(f"Erro ao copiar {caminho}: {e}")
+                log.error(f"Erro ao copiar {caminho}: {e}")
                 continue
 
             db_execute(
@@ -10788,7 +10795,7 @@ class AppInterface:
                     "letra_completa": "\n\n".join(letra),
                 }
             except Exception as e:
-                print(f"⚠️ Erro ao ler XML {caminho}: {e}")
+                log.error(f"⚠️ Erro ao ler XML {caminho}: {e}")
                 return None
 
         def _parsear_txt_letra(caminho: str) -> dict | None:
@@ -10819,7 +10826,7 @@ class AppInterface:
                     "letra_completa": letra,
                 }
             except Exception as e:
-                print(f"⚠️ Erro ao ler TXT {caminho}: {e}")
+                log.error(f"⚠️ Erro ao ler TXT {caminho}: {e}")
                 return None
 
         def _importar_letras(caminhos: tuple) -> None:
@@ -11332,7 +11339,7 @@ class AppInterface:
                     "texto": "\n".join(linhas[1:]),
                 }
             except Exception as e:
-                print(f"⚠️ Erro ao ler TXT de anúncio {caminho}: {e}")
+                log.error(f"⚠️ Erro ao ler TXT de anúncio {caminho}: {e}")
                 return None
 
         def _parsear_pdf_anuncio(caminho: str) -> dict | None:
@@ -11349,7 +11356,7 @@ class AppInterface:
                     "texto": texto_limpo,
                 }
             except Exception as e:
-                print(f"⚠️ Erro ao ler PDF de anúncio {caminho}: {e}")
+                log.error(f"⚠️ Erro ao ler PDF de anúncio {caminho}: {e}")
                 return None
 
         def _adicionar_anuncio(dados: dict) -> bool:
@@ -12516,7 +12523,7 @@ class AppInterface:
                                           height=0)
                             previa.imagem = foto
                         except Exception as e:
-                            print(f"⚠️ Não foi possível mostrar a miniatura: {e}")
+                            log.warning(f"⚠️ Não foi possível mostrar a miniatura: {e}")
                             previa.config(text="⚠️ Não foi possível exibir a imagem",
                                           image='', bg='#0d1117', height=2)
                     else:
@@ -13516,7 +13523,7 @@ class AppInterface:
                         erros += 1
                         continue
                 except Exception as e:
-                    print(f"Erro ao importar bíblia {caminho}: {e}")
+                    log.error(f"Erro ao importar bíblia {caminho}: {e}")
                     erros += 1
                     continue
                 desconhecidos.update(desc)
@@ -15320,7 +15327,7 @@ class AppInterface:
     def _aplicar_temperatura(self, temp: str) -> None:
         """Aplica a temperatura carregada em background na interface."""
         self.temperatura_atual = temp
-        print(f"🌡️ Temperatura carregada: {temp}")
+        log.info(f"🌡️ Temperatura carregada: {temp}")
         if self._temperatura_valida():
             self.player.telao._exibir_hora_inicial(temp)
             self.temp_label.config(
@@ -15340,7 +15347,7 @@ class AppInterface:
         self._servidor_thread.remoto = self._remoto_despacho
         self._aplicar_acesso_remoto()
         self._servidor_thread.iniciar()
-        print(f"✅ Servidor async rodando em {BACKEND_URL}")
+        log.info(f"✅ Servidor async rodando em {BACKEND_URL}")
         
         # Carrega temperatura em thread separada (não bloqueia interface)
         if self.cidade_salva and self.estado_salvo:
@@ -15384,7 +15391,7 @@ class AppInterface:
         """Encerra a aplicação com shutdown completo e ordenado."""
         # Flag para evitar que callbacks disparem durante shutdown
         self._shutting_down = True
-        print("🛑 Encerrando NavePro...")
+        log.info("🛑 Encerrando NavePro...")
         try:
             # 1. Para a reprodução
             if self.player:
@@ -15405,13 +15412,13 @@ class AppInterface:
                         pass
                     self.db._conn = None
         except Exception as e:
-            print(f"Erro no shutdown: {e}")
+            log.error(f"Erro no shutdown: {e}")
         finally:
             try:
                 self.root.destroy()
             except tk.TclError:
                 pass
-        print("✅ NavePro encerrado com sucesso.")
+        log.info("✅ NavePro encerrado com sucesso.")
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -15419,6 +15426,7 @@ class AppInterface:
 # ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("🎵 NavePro - Iniciando...")
+    configurar_logging()
+    log.info("🎵 NavePro - Iniciando...")
     app = AppInterface()
     app.run()

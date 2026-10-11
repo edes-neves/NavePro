@@ -43,6 +43,8 @@ _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
 
+from fixture_log import log  # noqa: E402
+
 from navepro.core.ambiente import _eh_windows  # noqa: E402
 from navepro.core.player import (  # noqa: E402
     ClienteMpvIpc,
@@ -68,7 +70,8 @@ def _extrair_metodo(classe: str, metodo: str) -> callable:
                     ast.fix_missing_locations(mod)
                     ns: dict = {"_eh_windows": _eh_windows,
                                 "localizar_executavel": localizar_executavel,
-                                "nome_pipe_mpv": nome_pipe_mpv}
+                                "nome_pipe_mpv": nome_pipe_mpv,
+                                "log": log}
                     exec(compile(mod, f"<{classe}.{metodo}>", "exec"), ns)
                     return ns[metodo]
     raise AssertionError(f"{classe}.{metodo} não encontrada em NavePro.py")

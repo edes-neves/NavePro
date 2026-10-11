@@ -7,7 +7,10 @@ import urllib.request
 
 from navepro.config import APP_ID_FLATPAK, APP_VERSION, RELEASES_API_URL
 from navepro.core.ambiente import _eh_appimage, _eh_flatpak, _eh_windows
+from navepro.core.log import get_logger
 from navepro.core.ssl_context import _baixar
+
+log = get_logger("atualizacao")
 
 # Formatos em que o NavePro pode estar instalado. O formato decide tanto o
 # asset do release a baixar quanto o texto das instruções: um Flatpak NÃO
@@ -104,7 +107,7 @@ def _buscar_release_latest(timeout: int = 10) -> dict | None:
             return None
         return dados
     except Exception as e:
-        print(f"⚠️  Verificação de atualização falhou: {e}")
+        log.warning(f"⚠️  Verificação de atualização falhou: {e}")
         return None
 
 

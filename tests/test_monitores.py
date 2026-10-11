@@ -16,6 +16,8 @@ _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
 
+from fixture_log import log  # noqa: E402
+
 
 def _carregar_monitorinfo() -> type:
     """Extrai a classe MonitorInfo do NavePro.py sem importar o app inteiro."""
@@ -25,7 +27,7 @@ def _carregar_monitorinfo() -> type:
         if isinstance(node, ast.ClassDef) and node.name == "MonitorInfo":
             mod = ast.Module(body=[node], type_ignores=[])
             ast.fix_missing_locations(mod)
-            ns: dict = {}
+            ns: dict = {"log": log}
             exec(compile(mod, "<MonitorInfo>", "exec"), ns)
             return ns["MonitorInfo"]
     raise AssertionError("MonitorInfo não encontrada em NavePro.py")
@@ -58,6 +60,7 @@ def _extrair(nome_funcao: str) -> callable:
         "MonitorInfo": _carregar_monitorinfo(),
         "List": list,
         "Optional": Optional,
+        "log": log,
     }
     exec(compile(mod, "<escolher>", "exec"), ns)
     assert nome_funcao in ns, f"{nome_funcao} não encontrada em NavePro.py"

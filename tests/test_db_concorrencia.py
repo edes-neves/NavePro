@@ -30,6 +30,8 @@ RAIZ = os.path.dirname(_AQUI)
 if RAIZ not in sys.path:
     sys.path.insert(0, RAIZ)
 
+from fixture_log import log  # noqa: E402
+
 _SRC = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
 _TREE = ast.parse(_SRC)
 
@@ -56,6 +58,7 @@ def _carregar_classe(db_path: str):
         "CACHE_LRU_MAXSIZE": 64,
         # Normalização simplificada: estes testes não dependem de acento.
         "normalizar_texto": lambda s: (s or "").casefold(),
+        "log": log,
     }
     exec(compile(_fonte_classe("DatabaseManager"), "<DatabaseManager>", "exec"), ns)
     return ns["DatabaseManager"]

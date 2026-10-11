@@ -288,10 +288,10 @@ build-windows.bat
 
 O script confere o Tk 8.6, instala as dependências e empacota com o `NavePro.spec`
 (a **fonte única** do empacotamento, mesma usada no Linux). O `.exe` sai sem
-console; para ver o log de detecção de monitores:
+console; para ver o log no console, gere com console e suba o nível para `INFO`:
 
 ```bat
-set NAVEPRO_CONSOLE=1 && build-windows.bat
+set NAVEPRO_CONSOLE=1 && set NAVEPRO_LOG=INFO && build-windows.bat
 ```
 
 O ícone do executável vem de `img\Icon.ico` (variável `NAVEPRO_ICON`); sem ele o
@@ -480,6 +480,7 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 | `anuncios.json` | Legado — migrado uma vez para `midia.db` e não é mais lido |
 | `uploads/` | Cópias das mídias importadas nos anúncios |
 | `config.json` | Configuração local (cidade/estado, monitor do telão, player) — ignorado do git |
+| `navepro.log` | Log da aplicação (rotativo, 1 MB × 3) |
 
 ## 🔧 Ajustes comuns
 
@@ -487,6 +488,10 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
   (Hinos), `janela_biblia` (Bíblia) e na janela de Anúncios.
 - **Configuração local** (`~/.navepro/config.json`, ignorado do git): cidade/estado,
   monitor do telão e player.
+- **Logs**: a aplicação registra em `~/.navepro/navepro.log` (rotativo). O nível vem
+  de `NAVEPRO_LOG` (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`; padrão
+  `WARNING`); `NAVEPRO_LOG_FILE` troca o arquivo (defina vazio para desligar) e
+  `NAVEPRO_LOG_STDERR=0` silencia o console.
 
 ---
 
