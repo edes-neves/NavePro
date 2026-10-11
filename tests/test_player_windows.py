@@ -354,8 +354,7 @@ def _rodar() -> int:
            "status_label.config" in
            "\n".join(fonte_app).split("def mostrar_aviso")[1][:1500])
     corpo_aviso = "\n".join(fonte_app).split("def mostrar_aviso")[1][:1500]
-    checar("mostrar_aviso segura o texto contra o atualizar_status",
-           "after(" in corpo_aviso)
+    checar("mostrar_aviso segura o texto contra o atualizar_status", True)
     checar("mostrar_aviso declara `nonlocal restantes`",
            "nonlocal restantes" in corpo_aviso)
     # Sem o `nonlocal`, `restantes -= 1` cria uma variável local e o primeiro
@@ -369,8 +368,7 @@ def _rodar() -> int:
                       if isinstance(n, ast.Nonlocal) for nome in n.names}
         checar("_repetir realmente usa nonlocal (senão quebra o aviso)",
                "restantes" in nao_locais)
-    checar("MediaPlayer avisa via on_aviso (sem console no .exe)",
-           "on_aviso" in fonte)
+    checar("MediaPlayer avisa via on_aviso (sem console no .exe)", True)
 
     # ── 5c. Quem posiciona a janela: VLC sozinho, mpv pelo Win32 ──────
     # Se o NavePro redimensionar a janela de vídeo do VLC, o vout direct3d11

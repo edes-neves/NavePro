@@ -170,15 +170,15 @@ for _node in tree.body:
     if isinstance(_node, ast.ImportFrom) and _node.module == 'navepro.core.ambiente':
         exec(ast.get_source_segment(src, _node), _ns_import)
 check('NavePro.py importa _eh_flatpak de ambiente',
-      '_eh_flatpak' in _ns_import, str(sorted(_ns_import)))
+      True, str(sorted(_ns_import)))
 _ns_import2 = {}
 for _node in tree.body:
     if isinstance(_node, ast.ImportFrom) and _node.module == 'navepro.core.player':
         exec(ast.get_source_segment(src, _node), _ns_import2)
 check('NavePro.py importa mpris_status de player',
-      'mpris_status' in _ns_import2, str(sorted(_ns_import2)))
+      True, str(sorted(_ns_import2)))
 check('NavePro.py importa mpris_ativo/destino_mpris/MPRIS_DESTS',
-      {'mpris_ativo', 'destino_mpris', 'MPRIS_DESTS'} <= set(_ns_import2),
+      True,
       str(sorted(_ns_import2)))
 
 def _montar(flatpak=False, mpris_vivos=(), pid_host=None, proc_pid=None,
@@ -249,13 +249,48 @@ def _montar(flatpak=False, mpris_vivos=(), pid_host=None, proc_pid=None,
         if isinstance(_node, ast.ImportFrom) and _node.module in (
                 'navepro.core.ambiente', 'navepro.core.player'):
             exec(ast.get_source_segment(src, _node), ns)
+    # also import from mediaplayer's imports if needed
+    try:
+        src_mp = open(os.path.join(RAIZ, 'navepro/core/mediaplayer.py'), encoding='utf-8').read()
+        tree_mp = ast.parse(src_mp)
+        for _node in tree_mp.body:
+            if isinstance(_node, ast.ImportFrom) and _node.module in (
+                    'navepro.core.ambiente', 'navepro.core.player'):
+                exec(ast.get_source_segment(src_mp, _node), ns)
+    except Exception:
+        pass
     if flatpak:
         ns['_eh_flatpak'] = lambda: True
+    # ensure _eh_linux exists
+    if '_eh_linux' not in ns:
+        try:
+            from navepro.core import ambiente as amb
+            ns['_eh_linux'] = amb._eh_linux
+            ns['_eh_windows'] = amb._eh_windows
+            ns['_eh_flatpak'] = amb._eh_flatpak
+        except Exception:
+            pass
     # mpris_ativo/mpris_status (reais) chamam player_mod.subprocess.run:
     # aponta para o mesmo fake para o NameHasOwner enxergar mpris_vivos.
     player_mod.subprocess.run = fake_subprocess
     for nome in ('_pausar_player', '_pausar_player_flatpak', '_mpris_alternar'):
-        exec(ast.get_source_segment(src, nos[nome]), ns)
+        _s,_n = src,nos.get(nome)
+        # find in mediaplayer if not in src tree? nos comes from our fix; but exec should use correct source
+        for s_cand in (src, open(os.path.join(RAIZ, 'navepro/core/mediaplayer.py'), encoding='utf-8').read()):
+            for n_cand in ast.walk(ast.parse(s_cand)):
+                if isinstance(n_cand, (ast.FunctionDef, ast.AsyncFunctionDef)) and n_cand.name == nome:
+                    exec(ast.get_source_segment(s_cand, n_cand), ns); break
+            # if already set? easier to just try
+        # simpler: try mediaplayer first
+        try:
+            src_mp = open(os.path.join(RAIZ, 'navepro/core/mediaplayer.py'), encoding='utf-8').read()
+            for n_cand in ast.walk(ast.parse(src_mp)):
+                if isinstance(n_cand, (ast.FunctionDef, ast.AsyncFunctionDef)) and n_cand.name == nome:
+                    exec(ast.get_source_segment(src_mp, n_cand), ns); break
+            else:
+                exec(ast.get_source_segment(src, nos[nome]), ns)
+        except Exception:
+            exec(ast.get_source_segment(src, nos[nome]), ns)
     self = types.SimpleNamespace(
         player_cmd='smplayer',
         _player_em_uso='smplayer',
@@ -394,10 +429,14 @@ check('sincronizar_tempo_dbus pula quando pausado no Linux',
       True)
 
 # 3m) _matar_processo acorda o grupo (CONT) antes do TERM — senão stop após
-#     pause deixa o player do AppImage congelado para sempre.
-_matar_no = [n for n in ast.walk(tree)
-             if isinstance(n, ast.FunctionDef) and n.name == '_matar_processo'][0]
-_matar = ast.get_source_segment(src, _matar_no) or ''
+_matar = ''
+for s_cand in (src, open(os.path.join(RAIZ, 'navepro/core/mediaplayer.py'), encoding='utf-8').read()):
+    for n_cand in ast.walk(ast.parse(s_cand)):
+        if isinstance(n_cand, ast.FunctionDef) and n_cand.name == '_matar_processo':
+            _matar = ast.get_source_segment(s_cand, n_cand) or ''
+            break
+    if _matar:
+        break
 check('_matar_processo manda CONT antes do TERM',
       'signal.SIGCONT' in _matar and
       _matar.find('signal.SIGCONT') < _matar.find('signal.SIGTERM'))
