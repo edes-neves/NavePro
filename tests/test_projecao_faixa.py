@@ -12,6 +12,10 @@ ARQ = os.path.join(RAIZ, 'NavePro.py')
 src = open(ARQ, encoding='utf-8').read()
 tree = ast.parse(src)
 nos = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+ARQ_SERV = os.path.join(RAIZ, 'navepro', 'core', 'servicos.py')
+src_serv = open(ARQ_SERV, encoding='utf-8').read()
+tree_serv = ast.parse(src_serv)
+nos_serv = {n.name: n for n in ast.walk(tree_serv) if isinstance(n, ast.FunctionDef)}
 
 class TclError(Exception): pass
 tkinter.TclError = TclError
@@ -97,8 +101,8 @@ Vars = {'versao': Var('Almeida Revista e Corrigida'), 'livro': Var('João'),
 telao = TelaoTeste()
 ns2 = {'Vars': Vars, 'self_stub': types.SimpleNamespace(player=types.SimpleNamespace(telao=telao)),
        'db_query': db_query, 'tkinter': FakeMsg(), 'janela': object()}
-# _analisar_faixa_versiculos real, extraído do arquivo
-exec(compile(ast.get_source_segment(src, nos['_analisar_faixa_versiculos']),
+# _analisar_faixa_versiculos real, extraído de navepro/core/servicos.py
+exec(compile(ast.get_source_segment(src_serv, nos_serv['_analisar_faixa_versiculos']),
              '<faixa>', 'exec'), ns2)
 exec(compile(fabrica, '<fabrica>', 'exec'), ns2)
 projetar, cap_numeros, destaques, indicador, faixa_atual = ns2['_fabrica']()

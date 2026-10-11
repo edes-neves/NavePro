@@ -75,3 +75,9 @@ def remover_acentos(texto: str) -> str:
 def normalizar_texto(texto: str) -> str:
     """Normaliza: minúsculas, sem acentos, sem espaços extras."""
     return re.sub(r'\s+', ' ', remover_acentos(str(texto or '').strip())).casefold()
+
+
+def _numero_do_titulo(titulo: str) -> int | None:
+    """Extrai o número inicial do título de um hino ("11 - Nome")."""
+    m = re.match(r"^\s*(\d+)", titulo or "")
+    return int(m.group(1)) if m else None
