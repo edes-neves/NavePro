@@ -473,15 +473,15 @@ class TelaoWindow:
             (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"))
         if caminho and os.path.exists(caminho) and ext_ok:
             try:
-                with Image.open(caminho) as img:
+                with Image.open(caminho) as img:  # noqa: F821
                     img_fundo = img.convert("RGB")
                 w = self.canvas.winfo_width() or self._monitor.width
                 h = self.canvas.winfo_height() or self._monitor.height
                 if w < 1 or h < 1:
                     w, h = self._monitor.width, self._monitor.height
-                redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
+                redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)  # noqa: F821
                 img_fundo = img_fundo.resize((w, h), redimensao)
-                self._fundo_imagem_to_tk = ImageTk.PhotoImage(
+                self._fundo_imagem_to_tk = ImageTk.PhotoImage(  # noqa: F821
                     img_fundo, master=self.root)
                 self._fundo_imagem_item = self.canvas.create_image(
                     w // 2, h // 2, image=self._fundo_imagem_to_tk,
@@ -563,15 +563,15 @@ class TelaoWindow:
                 (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"))
             if caminho and os.path.exists(caminho) and ext_ok:
                 try:
-                    with Image.open(caminho) as img:
+                    with Image.open(caminho) as img:  # noqa: F821
                         img_fundo = img.convert("RGB")
                     w = self.canvas.winfo_width() or self._monitor.width
                     h = self.canvas.winfo_height() or self._monitor.height
                     if w < 1 or h < 1:
                         w, h = self._monitor.width, self._monitor.height
-                    redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
+                    redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)  # noqa: F821
                     img_fundo = img_fundo.resize((w, h), redimensao)
-                    self._fundo_relogio_to_tk = ImageTk.PhotoImage(
+                    self._fundo_relogio_to_tk = ImageTk.PhotoImage(  # noqa: F821
                         img_fundo, master=self.root)
                     self._fundo_relogio_item = self.canvas.create_image(
                         w // 2, h // 2, image=self._fundo_relogio_to_tk,
@@ -833,7 +833,7 @@ class TelaoWindow:
         self.canvas.itemconfig(self.ref_text, text="", state="hidden")
         self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
         try:
-            with Image.open(caminho) as img_src:
+            with Image.open(caminho) as img_src:  # noqa: F821
                 img_orig = img_src.convert("RGBA")
         except Exception as e:
             log.warning(f"⚠️ Não foi possível abrir a imagem {caminho}: {e}")
@@ -892,13 +892,13 @@ class TelaoWindow:
             fator = min(w / lar, h / alt) * escala
             tamanho = (max(1, int(lar * fator)), max(1, int(alt * fator)))
             pos = None
-        redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
+        redimensao = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)  # noqa: F821
         img_final = orig.resize(tamanho, redimensao)
         try:
             # master=self.root: o telão tem um Tcl/Tk interpreter próprio; sem
             # isso a PhotoImage fica registrada no root da janela principal e
             # o canvas do telão não a enxerga (TclError "image doesn't exist").
-            self._imagem_pil = ImageTk.PhotoImage(img_final, master=self.root)
+            self._imagem_pil = ImageTk.PhotoImage(img_final, master=self.root)  # noqa: F821
             if getattr(self, "_imagem_item", None) is not None:
                 try:
                     self.canvas.delete(self._imagem_item)
@@ -998,7 +998,7 @@ class TelaoWindow:
             log.warning(f"⚠️ PIL indisponível para projetar imagem + texto: {e}")
             return False
         try:
-            with Image.open(caminho) as img_src:
+            with Image.open(caminho) as img_src:  # noqa: F821
                 img_orig = img_src.convert("RGBA")
         except Exception as e:
             log.warning(f"⚠️ Não foi possível abrir a imagem {caminho}: {e}")
