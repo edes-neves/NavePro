@@ -4,10 +4,8 @@ import os
 import ssl
 import threading
 import urllib.request
-from typing import Optional
 
-
-_SSL_CONTEXTO: Optional[ssl.SSLContext] = None
+_SSL_CONTEXTO: ssl.SSLContext | None = None
 _SSL_CONTEXTO_LOCK: threading.Lock = threading.Lock()
 # Locais comuns do bundle de CA do sistema
 _CAMINHOS_CACERT: tuple[str, ...] = (

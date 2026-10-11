@@ -27,8 +27,8 @@ import os
 import shutil
 import tempfile
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple
 
 from navepro.core.paths import DATA_USER_DIR
 from navepro.core.textos import normalizar_texto
@@ -43,7 +43,7 @@ MODOS_IMPORTACAO = ("somar", "atualizar", "substituir")
 LIMITE_BACKUP_MB = 200  # mídia maior que isso não entra no backup
 
 
-def _nome_arquivo(diretorio: Optional[str] = None, prefixo: str = "backup") -> str:
+def _nome_arquivo(diretorio: str | None = None, prefixo: str = "backup") -> str:
     """Nome de arquivo com data/hora (20250101-143012)."""
     carimbo = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"{prefixo}-{carimbo}{EXTENSAO_TRANSFERENCIA}"
@@ -53,7 +53,7 @@ def _nome_arquivo(diretorio: Optional[str] = None, prefixo: str = "backup") -> s
 # LEITURA DA CONFIG_MIDIA (JSON de telas do anúncio)
 # ────────────────────────────────────────────────────────────────────
 
-def _config_midia(anuncio: Dict) -> Dict:
+def _config_midia(anuncio: dict) -> dict:
     """config_midia do anúncio como dict ({} se vazio/inválido)."""
     bruto = anuncio.get("config_midia") or ""
     if not isinstance(bruto, str):
@@ -69,7 +69,7 @@ def _config_midia(anuncio: Dict) -> Dict:
 
 
 def _converter_caminhos_midia(
-        config_midia: str, mapa: Dict[str, str], desconhecido: str = ""
+        config_midia: str, mapa: dict[str, str], desconhecido: str = ""
 ) -> str:
     """Troca os caminhos de mídia dentro de config_midia conforme `mapa`.
 
@@ -106,9 +106,9 @@ def _converter_caminhos_midia(
 # EXPORTAÇÃO
 # ────────────────────────────────────────────────────────────────────
 
-def _midias_do_anuncio(anuncio: Dict) -> List[str]:
+def _midias_do_anuncio(anuncio: dict) -> list[str]:
     """Caminhos de mídia existentes citados por um anúncio."""
-    caminhos: List[str] = []
+    caminhos: list[str] = []
     arq = (anuncio.get("arquivo_midia") or "").strip()
     if arq and os.path.isfile(arq):
         caminhos.append(arq)
@@ -121,14 +121,14 @@ def _midias_do_anuncio(anuncio: Dict) -> List[str]:
     return caminhos
 
 
-def _mapa_de_midia(anuncios: List[Dict]) -> Dict[str, str]:
+def _mapa_de_midia(anuncios: list[dict]) -> dict[str, str]:
     """Membro do ZIP para cada arquivo de mídia usado pelos anúncios.
 
     Nomes repetidos (mesmo nome em pastas diferentes) ganham sufixo _1, _2
     para não se sobrescrevirem dentro do ZIP.
     """
-    mapa: Dict[str, str] = {}
-    usados: Dict[str, int] = {}
+    mapa: dict[str, str] = {}
+    usados: dict[str, int] = {}
     for anuncio in anuncios:
         for caminho in _midias_do_anuncio(anuncio):
             if caminho in mapa:
@@ -145,11 +145,11 @@ def _mapa_de_midia(anuncios: List[Dict]) -> Dict[str, str]:
 
 def exportar_transferencia(
         destino: str,
-        anuncios: List[Dict],
-        servicos: Dict,
+        anuncios: list[dict],
+        servicos: dict,
         incluir_midia: bool = True,
-        progresso: Optional[Callable[[str], None]] = None,
-) -> Dict:
+        progresso: Callable[[str], None] | None = None,
+) -> dict:
     """Escreve o arquivo .navepro com anúncios, ordens e (opcional) mídia.
 
     Returns um resumo {anuncios, servicos, midia, destino}.
@@ -227,7 +227,7 @@ def exportar_transferencia(
 # IMPORTAÇÃO
 # ────────────────────────────────────────────────────────────────────
 
-def _abrir_pacote(arquivo: str) -> Dict:
+def _abrir_pacote(arquivo: str) -> dict:
     """Lê o .navepro e extrai a mídia em uma pasta temporária.
 
     Returns {manifest, anuncios, servicos, temp_dir}.
@@ -280,14 +280,15 @@ def _abrir_pacote(arquivo: str) -> Dict:
         if isinstance(e, ValueError):
             raise
         print(f"⚠️ Erro ao ler a transferência: {e}")
-        raise ValueError("Não foi possível ler o arquivo de transferência.")
+        raise ValueError(
+            "Não foi possível ler o arquivo de transferência.") from None
     return {"manifest": manifest, "anuncios": anuncios,
             "servicos": servicos, "temp_dir": temp_dir}
 
 
-def _membros_usados(anuncios: List[Dict]) -> List[str]:
+def _membros_usados(anuncios: list[dict]) -> list[str]:
     """Membros de midia/ realmente citados pelos anúncios."""
-    usados: List[str] = []
+    usados: list[str] = []
     for anuncio in anuncios:
         arq = (anuncio.get("arquivo_midia") or "").strip()
         if arq.startswith(f"{PASTA_MIDIA}/") and arq not in usados:
@@ -302,12 +303,12 @@ def _membros_usados(anuncios: List[Dict]) -> List[str]:
 
 
 def _copiar_midia_do_pacote(
-        temp_dir: str, membros: List[str],
-        copiar_midia: Callable[[str], Optional[str]],
-        avisos: List[str],
-) -> Dict[str, str]:
+        temp_dir: str, membros: list[str],
+        copiar_midia: Callable[[str], str | None],
+        avisos: list[str],
+) -> dict[str, str]:
     """Copia a mídia extraída para uploads e devolve membro -> caminho local."""
-    destino: Dict[str, str] = {}
+    destino: dict[str, str] = {}
     for membro in membros:
         origem = os.path.join(temp_dir, *membro.split("/"))
         if not os.path.isfile(origem):
@@ -324,10 +325,10 @@ def _copiar_midia_do_pacote(
 
 
 def criar_backup(
-        listar_anuncios: Callable[[], List[Dict]],
-        servicos: Dict,
-        pasta: Optional[str] = None,
-) -> Optional[str]:
+        listar_anuncios: Callable[[], list[dict]],
+        servicos: dict,
+        pasta: str | None = None,
+) -> str | None:
     """Cria um .navepro de segurança do estado atual (rede de proteção)."""
     pasta = pasta or os.path.join(DATA_USER_DIR, "backups")
     try:
@@ -361,7 +362,7 @@ def criar_backup(
     return resumo["destino"]
 
 
-def _proximo_item_id(servicos: Dict) -> int:
+def _proximo_item_id(servicos: dict) -> int:
     """Próximo id de item livre (o app usa contador monotônico)."""
     ids = [it.get("id") or 0
            for s in servicos.get("servicos") or [] if isinstance(s, dict)
@@ -370,18 +371,18 @@ def _proximo_item_id(servicos: Dict) -> int:
 
 
 def _converter_itens(
-        itens: List[Dict],
-        mapa_anuncios: Dict[int, int],
+        itens: list[dict],
+        mapa_anuncios: dict[int, int],
         nome_servico: str,
-        avisos: List[str],
+        avisos: list[str],
         prox_item: int,
-) -> Tuple[List[Dict], int]:
+) -> tuple[list[dict], int]:
     """Copia itens importados com id livre e referência de anúncio remapeada.
 
     Itens de hino/versículo/texto continuam funcionando pelo letra_snapshot e
     pelo título — não dependem da biblioteca do outro computador.
     """
-    novos: List[Dict] = []
+    novos: list[dict] = []
     for item in itens or []:
         if not isinstance(item, dict):
             continue
@@ -406,16 +407,16 @@ def _converter_itens(
 
 def importar_transferencia(
         arquivo: str,
-        servicos: Dict,
-        listar_anuncios: Callable[[], List[Dict]],
-        inserir_anuncio: Callable[[Dict], Optional[int]],
-        atualizar_anuncio: Callable[[int, Dict], bool],
-        copiar_midia: Callable[[str], Optional[str]],
-        excluir_anuncios: Optional[Callable[[List[int]], bool]] = None,
-        salvar_servicos: Optional[Callable[[Dict], bool]] = None,
+        servicos: dict,
+        listar_anuncios: Callable[[], list[dict]],
+        inserir_anuncio: Callable[[dict], int | None],
+        atualizar_anuncio: Callable[[int, dict], bool],
+        copiar_midia: Callable[[str], str | None],
+        excluir_anuncios: Callable[[list[int]], bool] | None = None,
+        salvar_servicos: Callable[[dict], bool] | None = None,
         modo: str = "somar",
-        progresso: Optional[Callable[[str], None]] = None,
-) -> Dict:
+        progresso: Callable[[str], None] | None = None,
+) -> dict:
     """Importa anúncios e ordens de um .navepro no NavePro atual.
 
     modo:
@@ -436,8 +437,8 @@ def importar_transferencia(
     _aviso("Lendo o arquivo…")
     pacote = _abrir_pacote(arquivo)
     temp_dir = pacote["temp_dir"]
-    avisos: List[str] = []
-    resumo: Dict = {
+    avisos: list[str] = []
+    resumo: dict = {
         "anuncios_novos": 0, "anuncios_atualizados": 0, "anuncios_ignorados": 0,
         "servicos_novos": 0, "servicos_atualizados": 0, "servicos_ignorados": 0,
         "midia_copiada": 0, "avisos": avisos, "backup": None,
@@ -465,13 +466,13 @@ def importar_transferencia(
                         "Não foi possível limpar os anúncios locais.")
 
         # Índice dos anúncios locais pelo título normalizado.
-        locais_por_titulo: Dict[str, Dict] = {}
+        locais_por_titulo: dict[str, dict] = {}
         for a in listar_anuncios():
             if a.get("id") is not None:
                 locais_por_titulo.setdefault(
                     normalizar_texto(a.get("titulo") or ""), a)
 
-        mapa_anuncios: Dict[int, int] = {}
+        mapa_anuncios: dict[int, int] = {}
         _aviso("Importando anúncios…")
         for anuncio in anuncios:
             dados = dict(anuncio)
@@ -521,7 +522,7 @@ def importar_transferencia(
         prox_item = _proximo_item_id(servicos)
         usados_serv = {s.get("id") for s in servicos.get("servicos") or []}
         prox_serv = 1
-        novas: List[Dict] = []
+        novas: list[dict] = []
         for serv in pacote["servicos"].get("servicos") or []:
             if not isinstance(serv, dict):
                 continue

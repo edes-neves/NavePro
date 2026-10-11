@@ -34,7 +34,6 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Optional
 
 from navepro.core.ambiente import _ambiente_sem_appimage, _eh_windows
 
@@ -74,7 +73,7 @@ _CAMINHOS_LINUX: tuple[str, ...] = ("/usr/bin", "/usr/local/bin",
 
 # Cache de resoluções: localizar executável custa alguns stat() no disco e o
 # NavePro pergunta várias vezes por faixa. Valores: nome -> caminho ou None.
-_CACHE_EXECUTAVEIS: dict[str, Optional[str]] = {}
+_CACHE_EXECUTAVEIS: dict[str, str | None] = {}
 
 
 def _variaveis_windows() -> dict[str, str]:
@@ -153,7 +152,7 @@ def _candidatos_windows(nome: str) -> list[str]:
     return achados
 
 
-def localizar_executavel(nome: str) -> Optional[str]:
+def localizar_executavel(nome: str) -> str | None:
     """Devolve o caminho completo de um programa, ou None se não achar.
 
     Ordem: cache, PATH, caminhos de instalação padrão do SO. No Windows isso
@@ -165,7 +164,7 @@ def localizar_executavel(nome: str) -> Optional[str]:
     if nome in _CACHE_EXECUTAVEIS:
         return _CACHE_EXECUTAVEIS[nome]
 
-    achado: Optional[str] = None
+    achado: str | None = None
 
     # 1. PATH do processo (inclui o .exe implícito do Windows).
     via_path = shutil.which(nome)
@@ -314,7 +313,7 @@ class ClienteMpvIpc:
             self._handle = None
 
     # ── leitura/escrita ───────────────────────────────────────────
-    def _ler_linha(self, limite: float) -> Optional[str]:
+    def _ler_linha(self, limite: float) -> str | None:
         """Lê UMA linha JSON, ou None se o pipe fechou / estourou o prazo.
 
         Usa PeekNamedPipe em vez de ReadFile direto: ReadFile num named pipe
@@ -452,7 +451,7 @@ def _user32():
     return u
 
 
-def _janela_do_processo(u, pid: int) -> Optional[int]:
+def _janela_do_processo(u, pid: int) -> int | None:
     """HWND da janela visível principal do processo `pid`, se houver.
 
     O EnumWindows passa por janelas auxiliares do próprio processo (IME,
@@ -622,7 +621,7 @@ MPRIS_DESTS: dict[str, str] = {
 }
 
 
-def destino_mpris(comando: str) -> Optional[str]:
+def destino_mpris(comando: str) -> str | None:
     """Destino D-Bus MPRIS pelo nome base do comando.
 
     O comando pode vir como caminho completo (/run/host/usr/bin/mpv no
@@ -636,7 +635,7 @@ def destino_mpris(comando: str) -> Optional[str]:
     return MPRIS_DESTS.get(base)
 
 
-def mpris_status(dest: str, timeout: float = 1.0) -> Optional[str]:
+def mpris_status(dest: str, timeout: float = 1.0) -> str | None:
     """PlaybackStatus ('Playing'/'Paused'/'Stopped') de um nome MPRIS.
 
     A leitura de propriedade funciona mesmo de dentro do Flatpak; o que
@@ -658,7 +657,7 @@ def mpris_status(dest: str, timeout: float = 1.0) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def mpris_ativo(destinos: list, timeout: float = 1.0) -> Optional[str]:
+def mpris_ativo(destinos: list, timeout: float = 1.0) -> str | None:
     """Primeiro destino MPRIS que realmente responde no barramento.
 
     Só o returncode do `dbus-send` não prova que o player está lá: sem

@@ -1,4 +1,8 @@
-import ast, atexit, os, sys, textwrap, types
+import ast
+import atexit
+import os
+import sys
+import textwrap
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -10,8 +14,9 @@ nos = {n.name: n for n in ast.walk(raiz_ast) if isinstance(n, ast.FunctionDef)}
 
 sys.path.insert(0, _AQUI)
 sys.path.insert(0, RAIZ)
-from navepro.config import SUFIXOS_IMAGEM
 from fixture_arvore import criar_arvore, limpar_arvore
+
+from navepro.config import SUFIXOS_IMAGEM
 
 falhas = []
 def check(n, cond, extra=''):

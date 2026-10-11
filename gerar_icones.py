@@ -11,6 +11,7 @@ Saída: icones/{hinos,biblia,ordem,anuncios,banco}.png  (40x40, transparente)
 Requisitos: Pillow (já listado em requirements.txt).
 """
 import os
+
 from PIL import Image, ImageDraw
 
 COR = (240, 192, 64, 255)      # #f0c040 (amarelo do tema)

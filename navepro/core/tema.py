@@ -6,8 +6,6 @@ tempo de execução pela tabela abaixo, sem alterar nenhuma cor do código
 existente. As cores de projeção/relógio do TELÃO NÃO são tocadas.
 """
 
-from typing import Optional
-
 
 # Mapa: cor ESCURA atual -> cor equivalente no tema CLARO.
 MAPA_COR_CLARA: dict[str, str] = {
@@ -46,7 +44,7 @@ _MAPA_COR_CLARA_UP: dict[str, str] = {
 # Cores fortes do tema claro (mantêm texto branco por cima)
 _CORES_FORTES_CLARO: frozenset = frozenset({
     '#8250df', '#6e40c9',                                              # roxos
-    '#1a7f37', '#2ea043', '#238636', '#2ea043',                        # verdes
+    '#1a7f37', '#2ea043', '#238636',                                    # verdes
     '#0969da', '#388bfd', '#1f6feb', '#58a6ff',                        # azuis
     '#cf222e', '#da3633', '#f85149',                                   # vermelhos
 })
@@ -73,7 +71,7 @@ _OPCOES_TEXTO: frozenset = frozenset({
 })
 
 
-def _cor_clara(cor: Optional[str], bg_final: Optional[str] = None) -> str:
+def _cor_clara(cor: str | None, bg_final: str | None = None) -> str:
     """Devolve a equivalente CLARA da cor ESCURA `cor` (ou ela mesma).
 
     Amarelos e brancos dependem do contexto: sobre um fundo forte

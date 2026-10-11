@@ -1,4 +1,8 @@
-import ast, atexit, os, sys, types
+import ast
+import atexit
+import os
+import sys
+import types
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -8,6 +12,7 @@ ARQ = os.path.join(RAIZ, 'NavePro.py')
 src = open(ARQ, encoding='utf-8').read()
 nos = {n.name: n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)}
 from fixture_arvore import criar_arvore, limpar_arvore
+
 
 class TclError(Exception): pass
 REG, AVISOS, CONFIRMA, RESPOSTAS = {}, [], [], []

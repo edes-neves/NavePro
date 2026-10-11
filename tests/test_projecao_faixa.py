@@ -1,4 +1,9 @@
-import ast, os, sqlite3, sys, types, tkinter as tkinter
+import ast
+import os
+import sqlite3
+import sys
+import tkinter as tkinter
+import types
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -21,7 +26,7 @@ class Telao:
     _slide_index = 0
     mostrando_letra = False
     mostrar_relogio = False
-{chr(10).join("    " + l for l in corpo_telao.split(chr(10)))}
+{chr(10).join("    " + linha for linha in corpo_telao.split(chr(10)))}
 '''
 ns = {'os': os, 'tkinter': tkinter, 'tk': tkinter, 'TclError': TclError}
 exec(compile(fabrica_telao, '<telao>', 'exec'), ns)
@@ -46,6 +51,7 @@ class TelaoTeste(Telao):
 # ---------- janela da Bíblia (só _projetar_versiculo) ----------
 # banco temporário criado pela fixture (funciona em máquina limpa/CI)
 from fixture_biblia import criar_biblia
+
 _raiz_biblia, DB = criar_biblia()
 _cache = {}
 def db_query(sql, params=()):
@@ -83,7 +89,7 @@ POST = """
     return _projetar_versiculo, _cap_numeros, _destaques, _indicador, lambda: _proj_faixa
 """
 # corpo real da função, indentado em 4 (sem f-string: as chaves ficam intactas)
-_corpo = "\n".join("    " + l for l in ast.get_source_segment(
+_corpo = "\n".join("    " + linha for linha in ast.get_source_segment(
     src, nos["_projetar_versiculo"]).split("\n"))
 fabrica = PRE + _corpo + POST
 Vars = {'versao': Var('Almeida Revista e Corrigida'), 'livro': Var('João'),

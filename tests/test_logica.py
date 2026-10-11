@@ -1,4 +1,8 @@
-import ast, os, sqlite3, tkinter, sys
+import ast
+import os
+import sqlite3
+import sys
+import tkinter
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -12,8 +16,7 @@ def achar(nome, classe=None):
     return alvos[0] if alvos else None
 
 # --- extrai o texto-fonte das funções reais do arquivo ---
-def fonte(no, ctx_lines):
-    ini = ctx_lines[no.lineno-1]
+def fonte(no, _ctx_lines):
     return ast.get_source_segment(src, no)
 
 # _analisar_faixa_versiculos é de módulo; _carregar_capitulo/_escrever_na_biblia são aninhadas
@@ -24,6 +27,7 @@ assert mod_fn and '_carregar_capitulo' in nos and '_escrever_na_biblia' in nos
 # --- stubs ---
 # banco temporário criado pela fixture (funciona em máquina limpa/CI)
 from fixture_biblia import criar_biblia
+
 _raiz_biblia, DB = criar_biblia()
 _cache = {}
 def db_query(sql, params=()):
@@ -64,8 +68,8 @@ exec(ast.get_source_segment(src, nos['_carregar_capitulo']), ns)
 carregar = ns['_carregar_capitulo']
 
 def versiculos_exibidos():
-    nums = [int(l.split('.')[0]) for l in biblia_text.buf.split('\n')
-            if l and l.split('.')[0].isdigit()]
+    nums = [int(linha.split('.')[0]) for linha in biblia_text.buf.split('\n')
+            if linha and linha.split('.')[0].isdigit()]
     return nums
 
 def titulo_erro():

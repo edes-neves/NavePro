@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Página do controle remoto do NavePro (celular na mesma rede).
 
 Servida pelo ServidorAsyncHTTP na rota `/` quando o controle remoto está

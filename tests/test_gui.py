@@ -1,4 +1,8 @@
-import os, ast, sys, types, tkinter as tkinter
+import ast
+import os
+import sys
+import tkinter as tkinter
+import types
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)

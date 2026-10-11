@@ -9,7 +9,9 @@ e informações climáticas.
 
 """
 from __future__ import annotations
-import unicodedata
+
+import asyncio
+import concurrent.futures
 import json
 import mimetypes
 import os
@@ -27,17 +29,18 @@ import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
 import tkinter.simpledialog
+import unicodedata
 import urllib.parse
 import urllib.request
-import concurrent.futures
-from collections import OrderedDict
-from datetime import datetime
-import asyncio
-from queue import Queue, Empty
-from tkinter import ttk
-from tkinter import font as tkfont
-from typing import Any, Callable, Iterator, Optional, List, Dict, Tuple
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
+from collections.abc import Callable, Iterator
+from datetime import datetime
+from queue import Empty, Queue
+from tkinter import font as tkfont
+from tkinter import ttk
+from typing import Any
+
 try:
     from screeninfo import get_monitors as _get_monitors
     _HAS_SCREENINFO = True
@@ -48,22 +51,53 @@ except ImportError:
 # IMPORTS INTERNOS (infraestrutura modularizada)
 # ────────────────────────────────────────────────────────────────────
 
+from navepro.config import (
+    APP_VERSION,
+    BACKEND_PORT,
+    BACKEND_URL,
+    CACHE_LRU_MAXSIZE,
+    CACHE_TTL_SEGUNDOS,
+    EXTENSOES_AUDIO,
+    EXTENSOES_VIDEO,
+    MAPA_ESTADOS,
+    PLAYER_PADRAO,
+    SEGUNDOS_PARA_VERIFICAR_ATUALIZACAO,
+    SQLITE_TIMEOUT,
+    SUFIXOS_IMAGEM,
+)
 from navepro.core.ambiente import (
     _ambiente_sem_appimage,
-    _eh_windows,
-    _eh_linux,
-    _eh_flatpak,
     _eh_appimage,
+    _eh_flatpak,
+    _eh_linux,
+    _eh_windows,
     _tornar_dpi_aware,
 )
-from navepro.core.ssl_context import (
-    _ssl_context,
-    _baixar,
+from navepro.core.atualizacao import (
+    FORMATO_FLATPAK,
+    _buscar_release_latest,
+    _comando_atualizacao_flatpak,
+    _formato_instalado,
+    _pasta_downloads,
+    _procurar_asset_instalador,
+    _rotulo_instalador,
+    _versao_nova,
 )
-from navepro.core.tema import _cor_clara, _OPCOES_COR_TK, _OPCOES_TEXTO
+from navepro.core.paths import (
+    ANUNCIOS_FILE,
+    CONFIG_FILE,
+    DB_EMBUTIDO,
+    DB_PATH,
+    DIR_BASE,
+    SERVICOS_FILE,
+    UPLOAD_FOLDER,
+    UPLOADS_EMBUTIDO,
+    _aplicar_icone_janela,
+    _caminho_recurso,
+)
 from navepro.core.player import (
-    ClienteMpvIpc,
     MPRIS_DESTS,
+    ClienteMpvIpc,
     destino_mpris,
     encerrar_arvore,
     esconder_janelas_auxiliares,
@@ -73,54 +107,24 @@ from navepro.core.player import (
     nome_pipe_mpv,
     posicionar_janela_player,
 )
-from navepro.core.paths import (
-    _caminho_recurso,
-    _aplicar_icone_janela,
-    CONFIG_FILE,
-    DB_PATH,
-    UPLOAD_FOLDER,
-    DIR_BASE,
-    DB_EMBUTIDO,
-    UPLOADS_EMBUTIDO,
-    ANUNCIOS_FILE,
-    SERVICOS_FILE,
+from navepro.core.ssl_context import (
+    _baixar,
+    _ssl_context,
 )
-from navepro.core.atualizacao import (
-    _versao_nova,
-    _buscar_release_latest,
-    _procurar_asset_instalador,
-    _pasta_downloads,
-    _formato_instalado,
-    _rotulo_instalador,
-    _comando_atualizacao_flatpak,
-    FORMATO_FLATPAK,
-)
+from navepro.core.tema import _OPCOES_COR_TK, _OPCOES_TEXTO, _cor_clara
 from navepro.core.textos import (
     detectar_tipo_arquivo,
-    remover_acentos,
     normalizar_texto,
+    remover_acentos,
+)
+from navepro.core.transferencia import (
+    EXTENSAO_TRANSFERENCIA,
+    exportar_transferencia,
+    importar_transferencia,
 )
 from navepro.core.transferencia import (
     _nome_arquivo as _nome_arquivo_transferencia,
-    exportar_transferencia,
-    importar_transferencia,
-    EXTENSAO_TRANSFERENCIA,
 )
-from navepro.config import (
-    APP_VERSION,
-    PLAYER_PADRAO,
-    BACKEND_PORT,
-    BACKEND_URL,
-    SEGUNDOS_PARA_VERIFICAR_ATUALIZACAO,
-    EXTENSOES_VIDEO,
-    EXTENSOES_AUDIO,
-    SQLITE_TIMEOUT,
-    CACHE_TTL_SEGUNDOS,
-    CACHE_LRU_MAXSIZE,
-    SUFIXOS_IMAGEM,
-    MAPA_ESTADOS,
-)
-
 
 # Precisa rodar ANTES de qualquer tk.Tk(): o Tk 8.6 do Windows não é
 # DPI-aware e cacheia a tela em pixels lógicos, enquanto o screeninfo ativa o
@@ -156,11 +160,11 @@ class DatabaseManager:
         if self._initialized:
             return
         self._initialized = True
-        self._conn: Optional[sqlite3.Connection] = None
-        self._cache: List[Dict[str, Any]] = []
+        self._conn: sqlite3.Connection | None = None
+        self._cache: list[dict[str, Any]] = []
         self._cache_loaded: bool = False
         self._reload_lock = threading.Lock()
-        self._result_cache: OrderedDict[str, List[Dict[str, Any]]] = OrderedDict()
+        self._result_cache: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
         self._load_cache()
 
     def _connect(self) -> sqlite3.Connection:
@@ -205,7 +209,7 @@ class DatabaseManager:
                 self._cache_loaded = False
 
     @staticmethod
-    def _compute_sort_key(nome: str) -> Tuple[int, int, str]:
+    def _compute_sort_key(nome: str) -> tuple[int, int, str]:
         """Gera chave de ordenação: (prioridade_numero, numero, resto)"""
         # Extrai número inicial e resto em uma única regex
         match = re.match(r"(\d+)[\s\-._]+(.+)", nome)
@@ -224,7 +228,7 @@ class DatabaseManager:
         """Recarrega o cache (após alterações no banco)."""
         self._load_cache()
 
-    def search(self, term: str) -> List[Dict[str, Any]]:
+    def search(self, term: str) -> list[dict[str, Any]]:
         """Busca síncrona em memória usando normalização com cache LRU."""
         if not self._cache_loaded or not term:
             return []
@@ -237,7 +241,7 @@ class DatabaseManager:
             self._result_cache.move_to_end(term_norm)
             return self._result_cache[term_norm]
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         # Se termo é número, busca exata e por prefixo
         if term.isdigit():
@@ -267,24 +271,24 @@ class DatabaseManager:
 
         return results
 
-    def get_all_ids(self) -> List[int]:
+    def get_all_ids(self) -> list[int]:
         """Retorna todos os IDs em cache."""
         return [rec['id'] for rec in self._cache]
 
-    def get_by_id(self, midia_id: int) -> Optional[Dict[str, Any]]:
+    def get_by_id(self, midia_id: int) -> dict[str, Any] | None:
         """Retorna um registro pelo ID."""
         for rec in self._cache:
             if rec['id'] == midia_id:
                 return rec
         return None
 
-    def get_path_by_id(self, midia_id: int) -> Optional[str]:
+    def get_path_by_id(self, midia_id: int) -> str | None:
         """Retorna o caminho do arquivo pelo ID."""
         rec = self.get_by_id(midia_id)
         return rec['caminho_arquivo'] if rec else None
 
     # Métodos para operações de banco (INSERT/UPDATE/DELETE) – usam conexão persistente
-    def execute(self, query: str, params: tuple = ()) -> Optional[int]:
+    def execute(self, query: str, params: tuple = ()) -> int | None:
         """Executa INSERT/UPDATE/DELETE e retorna lastrowid."""
         conn = self._connect()
         cursor = conn.cursor()
@@ -292,7 +296,7 @@ class DatabaseManager:
         conn.commit()
         return cursor.lastrowid
 
-    def query(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
+    def query(self, query: str, params: tuple = ()) -> list[dict[str, Any]]:
         """Executa SELECT e retorna lista de dicionários."""
         conn = self._connect()
         cursor = conn.cursor()
@@ -315,7 +319,7 @@ def db_query(query: str, params: tuple = ()) -> list[dict]:
     """Executa SELECT usando DatabaseManager (singleton)."""
     return DatabaseManager().query(query, params)
 
-def db_execute(query: str, params: tuple = ()) -> Optional[int]:
+def db_execute(query: str, params: tuple = ()) -> int | None:
     """Executa INSERT/UPDATE/DELETE usando DatabaseManager (singleton)."""
     return DatabaseManager().execute(query, params)
 
@@ -374,7 +378,7 @@ def _gerador_id_livre(tabela: str, limitar: int = 0) -> Iterator[int]:
         esperado = max(esperado, id_atual) + 1
 
 
-def _proximo_id_livre(tabela: str) -> Optional[int]:
+def _proximo_id_livre(tabela: str) -> int | None:
     """Menor ID livre reutilizável da tabela (None se não houver)."""
     return next(_gerador_id_livre(tabela, 1), None)
 
@@ -544,7 +548,7 @@ def init_db() -> None:
                 )
             """)
             for row in dados_existentes:
-                vals = dict(zip(colunas, row))
+                vals = dict(zip(colunas, row, strict=False))
                 placeholders = ", ".join("?" for _ in vals)
                 cols = ", ".join(vals.keys())
                 cursor.execute(
@@ -731,7 +735,7 @@ class SearchWorker:
             except Exception as e:
                 print(f"Erro no SearchWorker: {e}")
 
-    def _dispatch_callback(self, results: List[Dict[str, Any]], version: int, callback: Callable) -> None:
+    def _dispatch_callback(self, results: list[dict[str, Any]], version: int, callback: Callable) -> None:
         """Dispatch seguro do callback na thread principal."""
         try:
             callback(list(results), version)
@@ -806,15 +810,15 @@ class ServidorAsyncHTTP:
     def __init__(self, port: int = BACKEND_PORT) -> None:
         self.port = port
         self.host: str = '127.0.0.1'
-        self.token: Optional[str] = None
+        self.token: str | None = None
         # Injetados pelo AppInterface:
         #   ui(fn)      → executa fn na thread do Tk e devolve o resultado
         #   remoto(a,d) → executa a ação remota `a` com dados `d` no app
-        self.ui: Optional[Callable[[Callable], Any]] = None
-        self.remoto: Optional[Callable[[str, dict], Any]] = None
-        self._thread: Optional[threading.Thread] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._server: Optional[asyncio.AbstractServer] = None
+        self.ui: Callable[[Callable], Any] | None = None
+        self.remoto: Callable[[str, dict], Any] | None = None
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._server: asyncio.AbstractServer | None = None
 
     def iniciar(self) -> None:
         """Inicia o servidor em uma thread separada com event loop asyncio."""
@@ -823,7 +827,7 @@ class ServidorAsyncHTTP:
         self._thread = threading.Thread(target=self._run_async, daemon=True)
         self._thread.start()
 
-    def configurar_acesso(self, host: str, token: Optional[str]) -> None:
+    def configurar_acesso(self, host: str, token: str | None) -> None:
         """Define bind (127.0.0.1 ou 0.0.0.0) e token do controle remoto.
 
         Reinicia o socket de escuta se o host mudar (thread-safe).
@@ -941,13 +945,13 @@ class ServidorAsyncHTTP:
         except Exception as e:
             print(f"Erro ao processar requisição: {e}")
             error_response = (
-                "HTTP/1.1 500 Internal Server Error\r\n"
-                "Content-Type: application/json; charset=utf-8\r\n"
-                "Access-Control-Allow-Origin: *\r\n"
-                "Connection: close\r\n"
-                "\r\n"
-                '{"erro": "Erro interno do servidor"}'
-            ).encode()
+                b"HTTP/1.1 500 Internal Server Error\r\n"
+                b"Content-Type: application/json; charset=utf-8\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                b"Connection: close\r\n"
+                b"\r\n"
+                b'{"erro": "Erro interno do servidor"}'
+            )
             try:
                 writer.write(error_response)
                 await writer.drain()
@@ -976,13 +980,13 @@ class ServidorAsyncHTTP:
         # CORS preflight
         if method == 'OPTIONS':
             return (
-                "HTTP/1.1 200 OK\r\n"
-                "Access-Control-Allow-Origin: *\r\n"
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n"
-                "Access-Control-Allow-Headers: Content-Type, X-Token\r\n"
-                "Content-Length: 0\r\n"
-                "\r\n"
-            ).encode()
+                b"HTTP/1.1 200 OK\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                b"Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n"
+                b"Access-Control-Allow-Headers: Content-Type, X-Token\r\n"
+                b"Content-Length: 0\r\n"
+                b"\r\n"
+            )
         
         # ROTEAMENTO
         if method == 'GET':
@@ -1009,7 +1013,7 @@ class ServidorAsyncHTTP:
         """Despacha uma ação remota para o app (na thread do Tk)."""
         return self._na_ui(lambda: self.remoto(acao, dados))
 
-    def _exige_remoto(self, headers: dict, params: dict) -> Optional[bytes]:
+    def _exige_remoto(self, headers: dict, params: dict) -> bytes | None:
         """Retorna None se autorizado, ou a resposta de erro a enviar."""
         if not self.token:
             return self._responder_erro_bytes(
@@ -1029,11 +1033,11 @@ class ServidorAsyncHTTP:
             # A página só é servida com o token (a URL da UI já o traz em ?t=)
             if not self._remoto_autorizado(headers, params):
                 return (
-                    "HTTP/1.1 403 Forbidden\r\n"
-                    "Content-Type: text/html; charset=utf-8\r\n"
-                    "Content-Length: 0\r\n"
-                    "\r\n"
-                ).encode()
+                    b"HTTP/1.1 403 Forbidden\r\n"
+                    b"Content-Type: text/html; charset=utf-8\r\n"
+                    b"Content-Length: 0\r\n"
+                    b"\r\n"
+                )
             from navepro.remoto_web import PAGINA
             corpo = PAGINA.encode('utf-8')
             return (
@@ -1555,9 +1559,9 @@ class MonitorInfo:
 
 
 # Cache global de monitores com TTL
-_MONITORS_CACHE: Optional[Tuple[float, List[MonitorInfo]]] = None
+_MONITORS_CACHE: tuple[float, list[MonitorInfo]] | None = None
 
-def get_monitors_config() -> List[MonitorInfo]:
+def get_monitors_config() -> list[MonitorInfo]:
     """
     Detecta monitores com cache TTL (60s).
     Prioriza screeninfo > xrandr (geometria real) > heurística tkinter.
@@ -1708,7 +1712,7 @@ def _centralizar_sobre(janela, pai=None) -> None:
 # TELÃO - JANELA DE PROJEÇÃO (mantido)
 # ────────────────────────────────────────────────────────────────────
 
-def _escolher_monitor_painel(monitors: List[MonitorInfo]) -> Optional[MonitorInfo]:
+def _escolher_monitor_painel(monitors: list[MonitorInfo]) -> MonitorInfo | None:
     """Monitor do painel do administrador: o primário do SO, ou o primeiro.
 
     É a mesma escolha de sempre — só que isolada, para que o telão possa
@@ -1726,7 +1730,7 @@ def _escolher_monitor_painel(monitors: List[MonitorInfo]) -> Optional[MonitorInf
 
 
 
-def _escolher_monitor_telao(monitors: List[MonitorInfo]) -> Optional[MonitorInfo]:
+def _escolher_monitor_telao(monitors: list[MonitorInfo]) -> MonitorInfo | None:
     """Escolhe em qual monitor o TELÃO abre.
 
     Regra: nunca o mesmo monitor do painel, senão as duas janelas se sobrepõem
@@ -1897,7 +1901,7 @@ class TelaoWindow:
         self.mostrando_relogio = True
         self.mostrando_letra = False
         self._em_slides = False
-        self._modo_extra: Optional[str] = None
+        self._modo_extra: str | None = None
         self._mostrando_imagem = False
         self._mostrando_imagem_com_texto = False
         self._imagem_item = None
@@ -2215,7 +2219,7 @@ class TelaoWindow:
 
     # ── Projeção de texto (letra / versículo) ─────────────────────
 
-    def configurar_projecao(self, cfg: Optional[dict] = None) -> None:
+    def configurar_projecao(self, cfg: dict | None = None) -> None:
         """Define as configurações de aparência da projeção de texto."""
         defaults = {
             "fonte": "Montserrat",
@@ -2311,7 +2315,7 @@ class TelaoWindow:
             self.canvas.configure(bg=cor_fundo)
         self.root.update_idletasks()
 
-    def configurar_relogio(self, cfg: Optional[dict] = None) -> None:
+    def configurar_relogio(self, cfg: dict | None = None) -> None:
         """Define a configuração de aparência do relógio/temperatura no telão."""
         defaults = {
             "cor_hora": "#F5BE08",
@@ -2456,7 +2460,7 @@ class TelaoWindow:
         self._proj_timer = self.root.after(seg * 1000, self._retornar_ao_relogio)
 
     def _desenhar_texto_no_canvas(self, texto: str, referencia: str = "",
-                                  largura_max: Optional[int] = None) -> tuple:
+                                  largura_max: int | None = None) -> tuple:
         """Desenha texto centralizado no canvas com auto-ajuste de fonte.
 
         Usado tanto na projeção simples (projetar_texto) quanto nos slides.
@@ -2636,7 +2640,7 @@ class TelaoWindow:
                 or not os.path.exists(caminho):
             return False
         try:
-            from PIL import Image, ImageTk
+            from PIL import Image
         except Exception as e:
             print(f"⚠️ PIL indisponível para projetar imagem: {e}")
             return False
@@ -2804,7 +2808,7 @@ class TelaoWindow:
                 or not os.path.exists(caminho):
             return False
         try:
-            from PIL import Image
+            pass
         except Exception as e:
             print(f"⚠️ PIL indisponível para projetar imagem + texto: {e}")
             return False
@@ -3086,7 +3090,7 @@ class TelaoWindow:
             return False
         return self._mostrar_slide(self._slide_index - 1)
 
-    def _navegar_slides_controle(self, event: object = None) -> Optional[str]:
+    def _navegar_slides_controle(self, event: object = None) -> str | None:
         """Navega os slides a partir do passador de slides (controle remoto).
 
         Interpreta as teclas comuns desses aparelhos (setas, AvPag/RetPag,
@@ -3134,7 +3138,7 @@ class TelaoWindow:
         except tk.TclError:
             pass
 
-    def _ao_pressionar_esc(self, event: object = None) -> Optional[str]:
+    def _ao_pressionar_esc(self, event: object = None) -> str | None:
         """Esc durante projeção encerra a projeção e volta o relógio ao telão.
 
         Fora de uma projeção, mantém o comportamento de fechar a janela.
@@ -3525,26 +3529,26 @@ class MediaPlayer:
     """
 
     # Cache global de duração para evitar ffprobe repetido (LRU limitado)
-    _duracao_cache: Dict[str, float] = {}
+    _duracao_cache: dict[str, float] = {}
     _duracao_cache_lock = threading.Lock()
     _DURACAO_CACHE_MAX: int = 256
     # Mapeamento player -> D-Bus (fonte única em navepro/core/player.py)
     _MPRIS_DESTS: dict[str, str] = dict(MPRIS_DESTS)
 
     def __init__(self, monitor_index: int = 1, player_cmd: str = PLAYER_PADRAO,
-                 telao: Optional[TelaoWindow] = None) -> None:
+                 telao: TelaoWindow | None = None) -> None:
         self.playlist: list[str] = []
         self.index: int = 0
         self.is_playing: bool = False
         self.is_paused: bool = False
-        self._process: Optional[subprocess.Popen] = None
+        self._process: subprocess.Popen | None = None
         self._process_lock: threading.Lock = threading.Lock()
         self.monitor_index: int = monitor_index
         self.player_cmd: str = player_cmd
-        self.tempo_inicio: Optional[float] = None
+        self.tempo_inicio: float | None = None
         self.tempo_acumulado: float = 0.0
-        self.duracao_total: Optional[float] = None
-        self._player_pid: Optional[int] = None
+        self.duracao_total: float | None = None
+        self._player_pid: int | None = None
         # Player realmente usado na última reprodução. Pode diferir de
         # player_cmd quando o configurado não existe e caiu no fallback.
         self._player_em_uso: str = player_cmd
@@ -3556,7 +3560,7 @@ class MediaPlayer:
         # Windows o mpv expõe o IPC JSON dele, que é o equivalente. Guardamos
         # o pipe/ipc por reprodução: o nome muda a cada faixa para não
         # reaproveitar a conversa de um mpv anterior.
-        self._ipc: Optional[ClienteMpvIpc] = None
+        self._ipc: ClienteMpvIpc | None = None
         self._pipe_mpv: str = ""
         self._contador_pipe: int = 0
         # True quando o lançamento foi via "aplicativo padrão" (cmd /c start):
@@ -3567,24 +3571,24 @@ class MediaPlayer:
         # Dependency Injection: TelaoWindow pode ser injetado externamente
         # para testes ou uso compartilhado. Fallback: cria internamente.
         self.telao = telao if telao is not None else TelaoWindow(monitor_index)
-        self.on_state_change: Optional[Callable[[str], None]] = None
-        self.on_track_change: Optional[Callable[[int, str], None]] = None
+        self.on_state_change: Callable[[str], None] | None = None
+        self.on_track_change: Callable[[int, str], None] | None = None
         # Aviso não-bloqueante para o painel (AppInterface escreve no
         # status_label). O NavePro.exe é gerado sem console, então um `print`
         # de aviso não chegaria a quem opera o NavePro — precisa ser visual.
-        self.on_aviso: Optional[Callable[[str], None]] = None
+        self.on_aviso: Callable[[str], None] | None = None
         # Só avisa uma vez por sessão sobre falta de controle remoto, para
         # não repetir o mesmo aviso a cada clique em pausar.
         self._ja_avisou_sem_controle: bool = False
         # Referência para o root da janela principal (setado externamente)
-        self._root_after: Optional[tk.Misc] = None
+        self._root_after: tk.Misc | None = None
         # Inicia monitoramento assíncrono
         self._monitorar()
         # Garante que o telão fique com alpha e lower desde o início
         self.telao.root.lower()
 
     @property
-    def process(self) -> Optional[subprocess.Popen]:
+    def process(self) -> subprocess.Popen | None:
         """Retorna o processo do player (somente leitura)."""
         return self._process
 
@@ -3776,7 +3780,7 @@ class MediaPlayer:
             except (OSError, PermissionError):
                 pass
 
-    def _obter_duracao_arquivo(self, arquivo: str) -> Optional[float]:
+    def _obter_duracao_arquivo(self, arquivo: str) -> float | None:
         """Obtém duração do arquivo via ffprobe com cache (evita chamadas repetidas)."""
         if not arquivo or not os.path.exists(arquivo):
             return None
@@ -3911,8 +3915,8 @@ class MediaPlayer:
             else:
                 def _posicionar() -> None:
                     ok = posicionar_janela_player(pid, mx, my, mw, mh)
-                    print(("   🖥️ Player posicionado no telão" if ok
-                           else "   ⚠️ Não consegui posicionar o player no telão"))
+                    print("   🖥️ Player posicionado no telão" if ok
+                           else "   ⚠️ Não consegui posicionar o player no telão")
 
                 threading.Thread(target=_posicionar, daemon=True,
                                  name="navepro-pos-player").start()
@@ -4212,7 +4216,7 @@ class MediaPlayer:
         pidfile = os.path.join(os.path.expanduser("~"), ".navepro",
                                "smplayer-host.pid")
         try:
-            with open(pidfile, "r", encoding="utf-8") as arq:
+            with open(pidfile, encoding="utf-8") as arq:
                 pid = int(arq.read().strip())
         except (OSError, ValueError):
             return False
@@ -4286,7 +4290,7 @@ class MediaPlayer:
 
             stdout = result.stdout
             status = None
-            position_us: Optional[int] = None
+            position_us: int | None = None
 
             for line in stdout.split('\n'):
                 stripped = line.strip()
@@ -4465,7 +4469,7 @@ class MediaPlayer:
 # ────────────────────────────────────────────────────────────────────
 
 
-def _numero_do_titulo(titulo: str) -> Optional[int]:
+def _numero_do_titulo(titulo: str) -> int | None:
     """Extrai o número inicial do título de um hino ("11 - Nome")."""
     m = re.match(r"^\s*(\d+)", titulo or "")
     return int(m.group(1)) if m else None
@@ -4516,7 +4520,7 @@ def _montar_slides_anuncio(anuncio: dict) -> list:
     return slides
 
 
-def _buscar_hino_por_termo(termo: str) -> List[Dict]:
+def _buscar_hino_por_termo(termo: str) -> list[dict]:
     """Busca hino por número no início do título ou por trecho (título/artista).
 
     Ex.: '46' ou '46 - Dia de Chuva' encontra o hino cujo título começa com o
@@ -4539,7 +4543,7 @@ def _buscar_hino_por_termo(termo: str) -> List[Dict]:
         "ORDER BY titulo", (busca_like, busca_like, busca_like))
 
 
-def _buscar_midia_por_termo(termo: str, tipo: str = 'video') -> List[Dict]:
+def _buscar_midia_por_termo(termo: str, tipo: str = 'video') -> list[dict]:
     """Busca mídia (video/audio) por número no início do nome ou por trecho.
 
     Para termos numéricos, prioriza correspondência com o nome (ex.: '46'
@@ -4574,14 +4578,14 @@ def _buscar_midia_por_termo(termo: str, tipo: str = 'video') -> List[Dict]:
 # ────────────────────────────────────────────────────────────────────
 
 
-def _carregar_anuncios_json() -> List[Dict]:
+def _carregar_anuncios_json() -> list[dict]:
     """Lê ~/.navepro/anuncios.json e devolve a lista de anúncios.
 
     O arquivo fica permanentemente FORA do banco de dados: cada anúncio é
     um dict {id, titulo, categoria, texto, criado_em}.
     """
     try:
-        with open(ANUNCIOS_FILE, "r", encoding="utf-8") as f:
+        with open(ANUNCIOS_FILE, encoding="utf-8") as f:
             dados = json.load(f)
         if isinstance(dados, list):
             return [d for d in dados if isinstance(d, dict)]
@@ -4590,7 +4594,7 @@ def _carregar_anuncios_json() -> List[Dict]:
     return []
 
 
-def _salvar_anuncios_json(anuncios: List[Dict]) -> bool:
+def _salvar_anuncios_json(anuncios: list[dict]) -> bool:
     """Persiste a lista de anúncios em ~/.navepro/anuncios.json.
 
     Retorna True em caso de sucesso (ou False se o disco recusar a gravação).
@@ -4624,7 +4628,7 @@ def _tipo_midia_para_arquivo(caminho: str) -> str:
     return ""
 
 
-def _copiar_arquivo_uploads(caminho: str) -> Optional[str]:
+def _copiar_arquivo_uploads(caminho: str) -> str | None:
     """Copia o arquivo para UPLOAD_FOLDER evitando colisões de nome.
 
     Retorna o caminho de destino (ou o próprio caminho se já estiver na
@@ -4648,7 +4652,7 @@ def _copiar_arquivo_uploads(caminho: str) -> Optional[str]:
         return None
 
 
-def _listar_anuncios_db(busca: str = "") -> List[Dict]:
+def _listar_anuncios_db(busca: str = "") -> list[dict]:
     """Lista os anúncios ativos da tabela 'anuncios' (SQLite)."""
     termo = (busca or "").strip().lower()
     try:
@@ -4666,7 +4670,7 @@ def _listar_anuncios_db(busca: str = "") -> List[Dict]:
         return []
 
 
-def _buscar_anuncio_por_ref(ref_id: object) -> Optional[dict]:
+def _buscar_anuncio_por_ref(ref_id: object) -> dict | None:
     """Busca um anúncio ativo pelo id da tabela 'anuncios' (None se não achar)."""
     try:
         rid = int(ref_id) if ref_id is not None else None
@@ -4680,7 +4684,7 @@ def _buscar_anuncio_por_ref(ref_id: object) -> Optional[dict]:
     return None
 
 
-def _buscar_anuncio_por_termo(termo: str) -> List[dict]:
+def _buscar_anuncio_por_termo(termo: str) -> list[dict]:
     """Busca anúncio por número (id ou nº inicial do título) ou por nome/trecho."""
     termo = (termo or "").strip()
     if not termo:
@@ -4695,7 +4699,7 @@ def _buscar_anuncio_por_termo(termo: str) -> List[dict]:
                 if _numero_do_titulo(a.get('titulo') or '') == tid]
     norm = remover_acentos(termo).casefold()
     norm_anuncios = [
-        (remover_acentos((a.get('titulo') or '')).casefold(), a)
+        (remover_acentos(a.get('titulo') or '').casefold(), a)
         for a in anuncios]
     exatos = [a for n, a in norm_anuncios if n == norm]
     if exatos:
@@ -4704,8 +4708,8 @@ def _buscar_anuncio_por_termo(termo: str) -> List[dict]:
     if por_titulo:
         return por_titulo
     return [a for a in anuncios
-            if norm in remover_acentos((a.get('categoria') or '')).casefold()
-            or norm in remover_acentos((a.get('texto') or '')).casefold()]
+            if norm in remover_acentos(a.get('categoria') or '').casefold()
+            or norm in remover_acentos(a.get('texto') or '').casefold()]
 
 
 def _montar_slides_anuncio_servico(anuncio: dict) -> list:
@@ -4784,7 +4788,7 @@ def _proximo_id_anuncio_livre() -> int:
     return cand
 
 
-def _inserir_anuncio_db(dados: Dict) -> Optional[int]:
+def _inserir_anuncio_db(dados: dict) -> int | None:
     """Insere um anúncio na tabela 'anuncios'. Retorna o id (None se falhar).
 
     Informa explicitamente o id = menor número livre, de forma que um
@@ -4815,7 +4819,7 @@ def _inserir_anuncio_db(dados: Dict) -> Optional[int]:
         return None
 
 
-def _atualizar_anuncio_db(anuncio_id: int, dados: Dict) -> bool:
+def _atualizar_anuncio_db(anuncio_id: int, dados: dict) -> bool:
     """Atualiza um anúncio existente na tabela 'anuncios'."""
     try:
         db_execute(
@@ -4889,10 +4893,10 @@ def _migrar_anuncios_do_json() -> int:
 # usados de forma IDÊNTICA pelo editor (prévia) e pelo telão (projeção).
 
 
-_FONTE_PIL_CACHE: Dict[str, Optional[str]] = {}
+_FONTE_PIL_CACHE: dict[str, str | None] = {}
 
 
-def _procurar_fonte_no_sistema() -> Optional[str]:
+def _procurar_fonte_no_sistema() -> str | None:
     """Procura um TTF/OTF adequado nas pastas de fontes do sistema.
 
     Primeiro pelos nomes conhecidos (DejaVu, Liberation, FreeSans, Arial).
@@ -4912,7 +4916,7 @@ def _procurar_fonte_no_sistema() -> Optional[str]:
         os.path.join(os.path.expanduser("~"), ".local/share/fonts"),
         os.path.join(os.path.expanduser("~"), ".fonts"),
     ]
-    avulsas: List[tuple] = []
+    avulsas: list[tuple] = []
     for raiz in raizes:
         if not os.path.isdir(raiz):
             continue
@@ -4937,7 +4941,7 @@ def _procurar_fonte_no_sistema() -> Optional[str]:
     return None
 
 
-def _localizar_fonte_ttf() -> Optional[str]:
+def _localizar_fonte_ttf() -> str | None:
     """Localiza (e memoriza) um TTF em negrito usado para medir/desenhar texto.
 
     Cobre Debian/Ubuntu, Arch, Fedora e a runtime do Flatpak
@@ -5005,9 +5009,9 @@ def _carregar_fonte_pil(tamanho: int):
         return ImageFont.load_default()
 
 
-def _quebrar_linhas_medindo(draw, texto: str, largura_max: int, fonte) -> List[str]:
+def _quebrar_linhas_medindo(draw, texto: str, largura_max: int, fonte) -> list[str]:
     """Quebra o texto em linhas que cabem em 'largura_max' (medição real)."""
-    linhas: List[str] = []
+    linhas: list[str] = []
     for bloco in (texto or "").split("\n"):
         if not bloco.strip():
             linhas.append("")
@@ -5074,7 +5078,7 @@ _PCT_FONTE_CAIXA = 0.28
 
 def _calcular_texto_em_caixa(texto: str, caixa_larg: int, caixa_alt: int,
                              base_pct: float = _PCT_FONTE_CAIXA,
-                             limite_alt: Optional[int] = None) -> tuple:
+                             limite_alt: int | None = None) -> tuple:
     """Calcula fonte + linhas para desenhar 'texto' dentro de uma caixa.
 
     Usado pelo editor de anúncio (prévia) e pelo telão de forma IDÊNTICA:
@@ -5125,7 +5129,7 @@ def _calcular_texto_em_caixa(texto: str, caixa_larg: int, caixa_alt: int,
 
 def _caixa_texto_padrao(texto: str, area_larg: int, area_alt: int,
                         margem_h: int, margem_v: int,
-                        aspect_imagem: Optional[float] = None, espaco: int = 20) -> dict:
+                        aspect_imagem: float | None = None, espaco: int = 20) -> dict:
     """Caixa inicial (espaço virtual 1440x1080) para o texto do anúncio.
 
     Usa o mesmo layout lado a lado do compositor legado (texto à esquerda,
@@ -5158,7 +5162,7 @@ def _caixa_texto_padrao(texto: str, area_larg: int, area_alt: int,
 
 
 def _caixa_texto_config(config_midia: str = "", texto: str = "",
-                        aspect_imagem: Optional[float] = None) -> dict:
+                        aspect_imagem: float | None = None) -> dict:
     """Lê a caixa de texto (tx/ty/tw/th/ts) do config_midia, com defaults.
 
     Retorna dict já preenchido com x/y/w/h/s (posição da caixa + escala de
@@ -5198,7 +5202,7 @@ def _caixa_texto_config(config_midia: str = "", texto: str = "",
 # (o banco servicos/itens_servico é migrado UMA vez e mantido como backup).
 
 
-def _carregar_servicos_json() -> Dict:
+def _carregar_servicos_json() -> dict:
     """Lê ~/.navepro/servicos.json e devolve a estrutura de ordens de serviço.
 
     Estrutura:
@@ -5208,7 +5212,7 @@ def _carregar_servicos_json() -> Dict:
        "_proximo_id_servico": int, "_proximo_id_item": int}
     """
     try:
-        with open(SERVICOS_FILE, "r", encoding="utf-8") as f:
+        with open(SERVICOS_FILE, encoding="utf-8") as f:
             dados = json.load(f)
         if isinstance(dados, dict) and isinstance(dados.get("servicos"), list):
             dados.setdefault("_proximo_id_servico", 1)
@@ -5229,7 +5233,7 @@ def _carregar_servicos_json() -> Dict:
     return {"servicos": [], "_proximo_id_servico": 1, "_proximo_id_item": 1}
 
 
-def _salvar_servicos_json(dados: Dict) -> bool:
+def _salvar_servicos_json(dados: dict) -> bool:
     """Persiste as ordens de serviço em ~/.navepro/servicos.json (atômico)."""
     try:
         os.makedirs(os.path.dirname(SERVICOS_FILE), exist_ok=True)
@@ -5243,7 +5247,7 @@ def _salvar_servicos_json(dados: Dict) -> bool:
         return False
 
 
-def _proximo_id_servico_livre(dados: Dict) -> int:
+def _proximo_id_servico_livre(dados: dict) -> int:
     """Menor id positivo ainda não usado em servicos.json.
 
     Permite reaproveitar o menor número vazio após uma exclusão
@@ -5353,7 +5357,7 @@ def _analisar_faixa_versiculos(texto: str) -> tuple:
     return (True, "", ini, fim)
 
 
-def _faixa_versiculo_item(item: Dict) -> str:
+def _faixa_versiculo_item(item: dict) -> str:
     """Texto do campo "Versículo" de um item já salvo (ex.: "1-7").
 
     Devolve "" quando o item não tem faixa guardada — ou seja, quando é um
@@ -5377,7 +5381,7 @@ def _faixa_versiculo_item(item: Dict) -> str:
     return f"{ini}-{fim}"
 
 
-def _slides_versiculo_item(item: Dict) -> List[tuple]:
+def _slides_versiculo_item(item: dict) -> list[tuple]:
     """Slides de projeção de um item do tipo "versiculo".
 
     Item com faixa (campo "1-7") vira um slide por versículo, navegável com
@@ -5416,7 +5420,7 @@ def _slides_versiculo_item(item: Dict) -> List[tuple]:
     return [(letra, titulo)]
 
 
-def _reordenar_itens_servico(itens: List[Dict], id_origem: int, id_destino: int) -> List[Dict]:
+def _reordenar_itens_servico(itens: list[dict], id_origem: int, id_destino: int) -> list[dict]:
     """Move o item id_origem para a posição de id_destino, preservando o resto.
 
     Retorna a nova lista (mesma list se origem/destino inexistentes ou iguais).
@@ -5431,7 +5435,7 @@ def _reordenar_itens_servico(itens: List[Dict], id_origem: int, id_destino: int)
     return nova
 
 
-def _extrair_texto_pdf(caminho: str) -> Optional[str]:
+def _extrair_texto_pdf(caminho: str) -> str | None:
     """Extrai o texto de um PDF usando pypdf (com fallback para pdftotext).
 
     Retorna string de texto (páginas separadas por linha em branco) ou None
@@ -5440,7 +5444,7 @@ def _extrair_texto_pdf(caminho: str) -> Optional[str]:
     try:
         from pypdf import PdfReader
         leitor = PdfReader(caminho)
-        paginas: List[str] = []
+        paginas: list[str] = []
         for pagina in leitor.pages:
             texto = (pagina.extract_text() or "").strip()
             if texto:
@@ -5482,8 +5486,8 @@ def _carregar_icone(nome: str):
 
 def _listar_pastas_arquivos_usuario(
         caminho: str,
-        sufixos: Tuple[str, ...] = (".xml", ".txt", ".json")
-) -> List[Tuple[str, str, bool]]:
+        sufixos: tuple[str, ...] = (".xml", ".txt", ".json")
+) -> list[tuple[str, str, bool]]:
     """Lista pastas e arquivos com os sufixos informados.
 
     Esconde tudo que começa com "." (pastas/arquivos ocultos do sistema).
@@ -5508,12 +5512,12 @@ def _listar_pastas_arquivos_usuario(
 
 
 def _escolher_arquivos_usuario(
-        parent: Optional[tk.Toplevel],
+        parent: tk.Toplevel | None,
         titulo: str,
-        pasta_inicial: Optional[str] = None,
-        sufixos: Tuple[str, ...] = (".xml", ".txt", ".json"),
+        pasta_inicial: str | None = None,
+        sufixos: tuple[str, ...] = (".xml", ".txt", ".json"),
         nome_para_salvar: str = "",
-) -> Tuple[str, ...]:
+) -> tuple[str, ...]:
     """Seletor de arquivos que inicia no diretório do usuário (~).
 
     Mostra apenas as pastas/arquivos do usuário — esconde tudo que começa
@@ -5526,10 +5530,10 @@ def _escolher_arquivos_usuario(
     """
     import os
     pasta = {"atual": os.path.abspath(os.path.expanduser(pasta_inicial or "~"))}
-    escolhidos: List[str] = []
-    _itens: List[Tuple[str, bool]] = []  # (caminho, é_pasta)
+    escolhidos: list[str] = []
+    _itens: list[tuple[str, bool]] = []  # (caminho, é_pasta)
     salvando = bool(nome_para_salvar)
-    ent_nome: Optional[tk.Entry] = None
+    ent_nome: tk.Entry | None = None
 
     dial = tk.Toplevel(parent)
     dial.title(titulo)
@@ -5549,7 +5553,7 @@ def _escolher_arquivos_usuario(
         pasta["atual"] = caminho
         lbl_pasta.config(text=_encurtar(caminho))
         listbox.delete(0, tk.END)
-        for cam, nome, is_dir in itens:
+        for _cam, nome, is_dir in itens:
             listbox.insert(tk.END, f"{'📁 ' if is_dir else '📄 '}{nome}")
 
     def _subir() -> None:
@@ -5576,7 +5580,7 @@ def _escolher_arquivos_usuario(
     listbox.configure(yscrollcommand=scroll.set)
     scroll.pack(side='right', fill='y')
 
-    def _validar_salvar() -> Optional[str]:
+    def _validar_salvar() -> str | None:
         """Monta o caminho final ou None para manter o diálogo aberto."""
         nome = ent_nome.get().strip() if ent_nome is not None else ""
         if not nome:
@@ -5753,7 +5757,7 @@ class AppInterface:
         self.player_cmd: str = self.config_data.get("player", PLAYER_PADRAO)
         self.placeholder_busca: str = "Buscar hino... [BD]"
         self.arquivos_encontrados: list[str] = []
-        self.arquivo_atual: Optional[str] = None
+        self.arquivo_atual: str | None = None
         # Estado do anúncio projetado (compartilhado entre a janela de
         # anúncios e o controle remoto)
         self._anuncio_proj: dict = {"id": None, "dados": {}, "config": {},
@@ -5766,8 +5770,8 @@ class AppInterface:
         self.estado_salvo: str = self.config_data.get("estado", "")
         self.temperatura_atual: str = ""
 
-        self._focus_timer: Optional[str] = None
-        self._debounce_timer: Optional[str] = None
+        self._focus_timer: str | None = None
+        self._debounce_timer: str | None = None
 
         print(f"🎮 Player: {self.player_cmd} | Monitor: {self.monitor_index}")
 
@@ -5781,7 +5785,7 @@ class AppInterface:
         self.db = DatabaseManager()
         self.search_worker = SearchWorker()
         self._versao_busca: int = 0
-        self._ultima_lista: List[str] = []  # para evitar redesenho desnecessário
+        self._ultima_lista: list[str] = []  # para evitar redesenho desnecessário
 
         # Cria o player e o telão (rápido - só cria as janelas Tk)
         self.player = MediaPlayer(self.monitor_index, self.player_cmd)
@@ -5937,7 +5941,7 @@ class AppInterface:
         self.player.play_pause()
         return "break"
 
-    def _encaminhar_teclas_telao(self, event: object = None) -> Optional[str]:
+    def _encaminhar_teclas_telao(self, event: object = None) -> str | None:
         """Encaminha as teclas do passador de slides ao telão.
 
         Só age durante uma projeção em slides, quando o foco está no painel
@@ -6081,7 +6085,7 @@ class AppInterface:
         dados: dict[str, Any] = {}
         try:
             if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, "r") as f:
+                with open(CONFIG_FILE) as f:
                     dados = json.load(f)
         except Exception:
             dados = {}
@@ -6258,7 +6262,7 @@ class AppInterface:
     # ── Projeção reutilizável (janelas + controle remoto) ─────────
 
     def projetar_anuncio(self, anuncio_id: int,
-                         ao_atualizar: Optional[Callable] = None) -> dict:
+                         ao_atualizar: Callable | None = None) -> dict:
         """Projeta o anúncio `anuncio_id` (vídeo/áudio/imagem/slides).
 
         Usado pela janela de Anúncios e pelo controle remoto. Não abre
@@ -6349,9 +6353,9 @@ class AppInterface:
         return {'ok': True, 'titulo': anuncio.get('titulo') or '',
                 'tipo': tipo}
 
-    def executar_proximo_item_servico(self, servico: Optional[dict], *,
-                                      escolhido: Optional[int] = None,
-                                      ao_destacar: Optional[Callable] = None
+    def executar_proximo_item_servico(self, servico: dict | None, *,
+                                      escolhido: int | None = None,
+                                      ao_destacar: Callable | None = None
                                       ) -> dict:
         """Reproduz APENAS o próximo item de `servico` e para.
 
@@ -6881,7 +6885,7 @@ class AppInterface:
         return {'ok': True, 'titulo': hino.get('titulo') or '',
                 'total': len(slides)}
 
-    def _versoes_biblia(self) -> List[str]:
+    def _versoes_biblia(self) -> list[str]:
         return [r.get('versao') or '' for r in db_query(
             "SELECT DISTINCT versao FROM versiculos ORDER BY versao")]
 
@@ -7073,7 +7077,7 @@ class AppInterface:
                           for i, it in enumerate(itens)]}
 
     @staticmethod
-    def _localizar_servico(alvo: str) -> Optional[Dict]:
+    def _localizar_servico(alvo: str) -> dict | None:
         """Acha um serviço pelo id ou nome (mesma regra da execução)."""
         servicos = _carregar_servicos_json().get('servicos') or []
         return next((s for s in servicos
@@ -7592,7 +7596,7 @@ class AppInterface:
         if self.player and self.player.telao:
             self.player.telao.configurar_relogio(cfg)
 
-    def abrir_config_relogio_dialogo(self, aba: Optional[str] = None) -> None:
+    def abrir_config_relogio_dialogo(self, aba: str | None = None) -> None:
         """Abre a janela de configuração do relógio, cronômetro e contagem regressiva.
 
         Abas:
@@ -8125,7 +8129,7 @@ class AppInterface:
         if aba == 'remoto':
             notebook.select(tab_remoto)
 
-    def _temperatura_valida(self, temp: Optional[str] = None) -> bool:
+    def _temperatura_valida(self, temp: str | None = None) -> bool:
         """Verifica se a string de temperatura é válida para exibição."""
         t = temp if temp is not None else self.temperatura_atual
         return bool(t and "Erro" not in t and "não encontrada" not in t and t != "--")
@@ -8280,7 +8284,7 @@ class AppInterface:
         # Se tocar_primeiro, faremos após o retorno da busca (no callback)
         self._pending_play = tocar_primeiro
 
-    def _on_search_complete(self, results: List[Dict[str, Any]], version: int) -> None:
+    def _on_search_complete(self, results: list[dict[str, Any]], version: int) -> None:
         """Callback chamado pelo worker na thread principal."""
         if version != self._versao_busca:
             return  # Resultado obsoleto
@@ -8643,7 +8647,7 @@ class AppInterface:
                 cfg[o] = clara
 
         # Passo 2: opções de TEXTO decididas com o fundo correspondente.
-        def _fundo_para(op: str) -> Optional[str]:
+        def _fundo_para(op: str) -> str | None:
             if op == 'activeforeground':
                 return base.get('activebackground', bg_final)
             if op == 'selectforeground':
@@ -8807,17 +8811,17 @@ class AppInterface:
                     env=_ambiente_sem_appimage(), cwd='/',
                 )
                 codigo = proc.returncode
-                linhas = [l for l in
+                linhas = [linha for linha in
                           ((proc.stdout or '') + (proc.stderr or '')).splitlines()
-                          if l.strip()]
+                          if linha.strip()]
                 if not linhas:
                     linhas = ["(sem saída)"]
                 for linha in linhas:
-                    self.root.after(0, lambda l=linha: _escrever(l + "\n"))
+                    self.root.after(0, lambda linha=linha: _escrever(linha + "\n"))
             except Exception as e:
                 codigo = -1
                 self.root.after(
-                    0, lambda: _escrever(f"Falha ao executar: {e}\n"))
+                    0, lambda e=e: _escrever(f"Falha ao executar: {e}\n"))
             finally:
                 self.root.after(0, lambda: _finalizar(codigo))
 
@@ -8908,7 +8912,7 @@ class AppInterface:
                         destino))
             except Exception as e:
                 print(f"⚠️  Erro ao baixar atualização: {e}")
-                self.root.after(0, lambda: (janela.destroy(),
+                self.root.after(0, lambda e=e: (janela.destroy(),
                              tkinter.messagebox.showerror(
                                  "Erro",
                                  f"Não foi possível baixar a atualização:\n{e}",
@@ -9375,13 +9379,13 @@ class AppInterface:
             fg='#8b949e', bg='#161b22', font=("Arial", 12)
         )
         # Guarda referência do caminho atual para cada botão
-        self._pool_caminhos: list[Optional[str]] = [None] * 80
+        self._pool_caminhos: list[str | None] = [None] * 80
         # Timer para animação do ícone pulsante
-        self._pulse_timer: Optional[str] = None
+        self._pulse_timer: str | None = None
         self._pulse_index: int = -1
         self._pulse_state: int = 0
         # Timer que segura um aviso no rodapé (ver mostrar_aviso)
-        self._aviso_timer: Optional[str] = None
+        self._aviso_timer: str | None = None
 
     def atualizar_lista(self) -> None:
         """Atualiza a lista reciclando itens do pool (cores alternadas, barra de progresso)."""
@@ -9576,7 +9580,7 @@ class AppInterface:
         self.status_label.config(text=base_text)
 
     @staticmethod
-    def _formatar_tempo(segundos: Optional[float]) -> str:
+    def _formatar_tempo(segundos: float | None) -> str:
         if segundos is None:
             return "00:00"
         total_seg = int(segundos)
@@ -9615,7 +9619,7 @@ class AppInterface:
         cfg = self.config_data.get(chave, {})
         telao._projetar_medidor(cfg, modo, subtitulo=subtitulo, tempo=tempo)
 
-    def cronometro_iniciar(self, label: Optional[tk.Label] = None) -> None:
+    def cronometro_iniciar(self, label: tk.Label | None = None) -> None:
         """Inicia (ou continua) o cronômetro e garante a projeção no telão.
 
         Se não estiver rodando do zero, zera o acúmulo. Se estiver pausado,
@@ -9712,7 +9716,7 @@ class AppInterface:
         self._marcar_botoes_crono()
 
     @staticmethod
-    def _parsear_tempo_contagem(texto: str) -> Optional[int]:
+    def _parsear_tempo_contagem(texto: str) -> int | None:
         """Converte entrada do operador para segundos.
 
         Aceita "MM:SS" ou apenas minutos (número). Ex.: "5" => 300s,
@@ -9740,7 +9744,7 @@ class AppInterface:
         return total if total > 0 else None
 
     def contagem_iniciar(self, total_seg: int, titulo: str,
-                         label: Optional[tk.Label] = None) -> None:
+                         label: tk.Label | None = None) -> None:
         """Inicia a contagem regressiva do zero, no tempo digitado.
 
         Sempre reinicia a contagem, mesmo que haja uma em andamento,
@@ -9900,7 +9904,7 @@ class AppInterface:
         except tk.TclError:
             self._contagem_btns = {"botoes": {}}
 
-    def cronometro_projetar(self, label: Optional[tk.Label] = None) -> None:
+    def cronometro_projetar(self, label: tk.Label | None = None) -> None:
         """Reaplica a projeção do cronômetro no telão SEM interromper a contagem.
 
         Usado principalmente após alterar as cores/fundo no "💾 Salvar":
@@ -9920,7 +9924,7 @@ class AppInterface:
         self._marcar_botoes_crono()
 
     def contagem_projetar(self, titulo: str, tempo_texto: str,
-                          label: Optional[tk.Label] = None) -> Optional[int]:
+                          label: tk.Label | None = None) -> int | None:
         """Reaplica a projeção da contagem regressiva SEM interromper a contagem.
 
         Usado principalmente após alterar as cores/fundo no "💾 Salvar":
@@ -10276,7 +10280,7 @@ class AppInterface:
 
                     janela.after(0, lambda: _preencher_lista(pastas, arquivos))
                 except Exception as e:
-                    janela.after(0, lambda: _preencher_lista([], [], erro=str(e)))
+                    janela.after(0, lambda e=e: _preencher_lista([], [], erro=str(e)))
 
             def _preencher_lista(pastas: list[str], arquivos: list[str], erro: str = "") -> None:
                 lista.delete(0, tk.END)
@@ -10520,7 +10524,7 @@ class AppInterface:
 
     def _adicionar_midias_ao_banco(
         self, janela_pai: tk.Toplevel,
-        apos_adicionar: Optional[Callable[[], None]] = None,
+        apos_adicionar: Callable[[], None] | None = None,
     ) -> None:
         """Abre seletor de arquivos e adiciona ao banco."""
         arquivos = self._selecionar_arquivos_personalizado(janela_pai)
@@ -10720,7 +10724,7 @@ class AppInterface:
         # ── Importação de letras (XML / TXT) ──
         _NS_OPENLYRICS = "http://openlyrics.info/namespace/2009/song"
 
-        def _texto_no(tag: str, el: Optional[ET.Element]) -> str:
+        def _texto_no(tag: str, el: ET.Element | None) -> str:
             """Retorna o texto concatenado do primeiro elemento filho com a tag dada."""
             if el is None:
                 return ""
@@ -10729,10 +10733,10 @@ class AppInterface:
                     return "".join(filho.itertext()).strip()
             return ""
 
-        def _parsear_xml_letra(caminho: str) -> Optional[Dict]:
+        def _parsear_xml_letra(caminho: str) -> dict | None:
             """Extrai {titulo, artista, letra} de um arquivo XML no formato OpenLyrics/OpenLP."""
             try:
-                with open(caminho, "r", encoding="utf-8", errors="replace") as f:
+                with open(caminho, encoding="utf-8", errors="replace") as f:
                     conteudo = f.read()
                 raiz = ET.fromstring(conteudo)
 
@@ -10767,23 +10771,23 @@ class AppInterface:
                 print(f"⚠️ Erro ao ler XML {caminho}: {e}")
                 return None
 
-        def _parsear_txt_letra(caminho: str) -> Optional[Dict]:
+        def _parsear_txt_letra(caminho: str) -> dict | None:
             """Extrai {titulo, artista, letra} de um arquivo TXT (1ª linha = título)."""
             try:
                 conteudo = None
                 for enc in ("utf-8", "latin-1"):
                     try:
-                        with open(caminho, "r", encoding=enc) as f:
+                        with open(caminho, encoding=enc) as f:
                             conteudo = f.read()
                         break
                     except (UnicodeDecodeError, UnicodeError):
                         continue
                 if conteudo is None:
-                    with open(caminho, "r", encoding="utf-8", errors="replace") as f:
+                    with open(caminho, encoding="utf-8", errors="replace") as f:
                         conteudo = f.read()
 
-                linhas = [l.strip() for l in conteudo.splitlines()]
-                linhas = [l for l in linhas if l]
+                linhas = [linha.strip() for linha in conteudo.splitlines()]
+                linhas = [linha for linha in linhas if linha]
                 if not linhas:
                     return None
 
@@ -11053,7 +11057,7 @@ class AppInterface:
             _atualizar_indicador_slide()
 
         # ── Editor de hino ──
-        def _abrir_editor_hino(hino_id: Optional[int] = None):
+        def _abrir_editor_hino(hino_id: int | None = None):
             editar_win = tk.Toplevel(janela)
             editar_win.title("Editar Hino" if hino_id else "Novo Hino")
             editar_win.geometry("600x600")
@@ -11067,7 +11071,7 @@ class AppInterface:
 
             # Campos
             campos = {}
-            for label_text, campo, default in [
+            for label_text, campo, _default in [
                 ("Título:", "titulo", ""),
                 ("Artista:", "artista", ""),
                 ("Compositor:", "compositor", ""),
@@ -11284,22 +11288,22 @@ class AppInterface:
         entry_busca.bind("<KeyRelease>", _on_key)
 
         # ── Importação TXT / PDF ──
-        def _parsear_txt_anuncio(caminho: str) -> Optional[Dict]:
+        def _parsear_txt_anuncio(caminho: str) -> dict | None:
             """Extrai {titulo, categoria, texto} de um TXT (1ª linha = título)."""
             try:
                 conteudo = None
                 for enc in ("utf-8", "latin-1"):
                     try:
-                        with open(caminho, "r", encoding=enc) as f:
+                        with open(caminho, encoding=enc) as f:
                             conteudo = f.read()
                         break
                     except (UnicodeDecodeError, UnicodeError):
                         continue
                 if conteudo is None:
-                    with open(caminho, "r", encoding="utf-8", errors="replace") as f:
+                    with open(caminho, encoding="utf-8", errors="replace") as f:
                         conteudo = f.read()
 
-                linhas = [l.strip() for l in conteudo.splitlines() if l.strip()]
+                linhas = [linha.strip() for linha in conteudo.splitlines() if linha.strip()]
                 if not linhas:
                     return None
                 return {
@@ -11311,7 +11315,7 @@ class AppInterface:
                 print(f"⚠️ Erro ao ler TXT de anúncio {caminho}: {e}")
                 return None
 
-        def _parsear_pdf_anuncio(caminho: str) -> Optional[Dict]:
+        def _parsear_pdf_anuncio(caminho: str) -> dict | None:
             """Extrai {titulo, categoria, texto} de um PDF (título = nome do arquivo)."""
             try:
                 texto = _extrair_texto_pdf(caminho)
@@ -11328,7 +11332,7 @@ class AppInterface:
                 print(f"⚠️ Erro ao ler PDF de anúncio {caminho}: {e}")
                 return None
 
-        def _adicionar_anuncio(dados: Dict) -> bool:
+        def _adicionar_anuncio(dados: dict) -> bool:
             """Adiciona um anúncio na tabela 'anuncios'. True se salvou."""
             return _inserir_anuncio_db(dados) is not None
 
@@ -11732,7 +11736,7 @@ class AppInterface:
                     "Anúncio", res.get('erro', ''), parent=janela)
 
         # ── Editor de anúncio ──
-        def _abrir_editor_anuncio(anuncio_id: Optional[int] = None):
+        def _abrir_editor_anuncio(anuncio_id: int | None = None):
             editar_win = tk.Toplevel(janela)
             editar_win.title("Editar Anúncio" if anuncio_id else "Novo Anúncio")
             editar_win.geometry("680x860")
@@ -11746,7 +11750,7 @@ class AppInterface:
 
             # Campos
             campos = {}
-            for label_text, campo, default in [
+            for label_text, campo, _default in [
                 ("Título:", "titulo", ""),
                 ("Categoria:", "categoria", ""),
             ]:
@@ -12069,7 +12073,7 @@ class AppInterface:
                 PREVIEW_OK = [True]
                 _photo_atual = [None]
                 try:
-                    from PIL import Image, ImageTk
+                    from PIL import Image
                 except Exception:
                     PREVIEW_OK[0] = False
 
@@ -12294,7 +12298,6 @@ class AppInterface:
                         else ((_estado["ix"] + _estado["iw"]) - LIN_V)
                     h_lim = ((VH - LIN_V) - _estado["iy"]) if bot \
                         else ((_estado["iy"] + _estado["ih"]) - LIN_V)
-                    eh_imagem = _estado.get("alvo") == "img"
                     if alca in ("n", "s"):
                         novo_h = _clamp_v(_estado["ih"] + (dy if bot else -dy),
                                           MINV_V, h_lim)
@@ -13052,7 +13055,7 @@ class AppInterface:
             biblia_text.insert(tk.END, texto)
             biblia_text.config(state='disabled')
 
-        def _carregar_capitulo(foco: Optional[int] = None):
+        def _carregar_capitulo(foco: int | None = None):
             """Carrega a referência atual (versão/livro/cap/V:) na área de texto.
 
             O campo "V:" define o trecho carregado:
@@ -13130,7 +13133,7 @@ class AppInterface:
         # versão escolhida pela importação de Bíblia. Por isso o bloqueio
         # _travado_recarga.
         _travado_recarga = False
-        _id_recarga: Optional[str] = None
+        _id_recarga: str | None = None
 
         def _cancelar_recarga() -> None:
             """Cancela a recarga agendada (chamado antes de agendar outra)."""
@@ -13179,7 +13182,7 @@ class AppInterface:
             "lamentacoes de jeremias": "Lamentações",
         }
 
-        def _normalizar_livro_biblia(nome: str) -> Optional[str]:
+        def _normalizar_livro_biblia(nome: str) -> str | None:
             """Converte o nome do livro para o padrão da lista do app.
 
             Insensível a acentos e a variações comuns: números romanos
@@ -13329,7 +13332,7 @@ class AppInterface:
                     return str(obj)
                 return ""
 
-            def _numero(obj, *chaves) -> Optional[int]:
+            def _numero(obj, *chaves) -> int | None:
                 if isinstance(obj, dict):
                     for chave in chaves:
                         v = obj.get(chave)
@@ -13697,7 +13700,7 @@ class AppInterface:
         _cap_numeros = []
         # Faixa projetada ("9-16") quando a projeção não cobre o capítulo
         # inteiro; None quando é o capítulo inteiro ou uma busca por texto.
-        _proj_faixa: Optional[tuple] = None
+        _proj_faixa: tuple | None = None
 
         def _atualizar_indicador_slide():
             try:
@@ -13943,10 +13946,10 @@ class AppInterface:
 
         servico_selecionado_id = [None]
 
-        def _rotulo_servico(s: Dict) -> str:
+        def _rotulo_servico(s: dict) -> str:
             return f"{s.get('id')} - {s.get('nome', '')}"
 
-        def _servico_atual() -> Optional[Dict]:
+        def _servico_atual() -> dict | None:
             sid = servico_selecionado_id[0]
             if not sid:
                 return None
@@ -14011,9 +14014,9 @@ class AppInterface:
         # reais do operador na lista (clique do mouse), nunca pelo destaque
         # automático da reprodução nem por alterações internas da seleção
         # (reordenar, editar, recarregar a lista).
-        _item_escolhido: Dict[str, Optional[int]] = {"id": None}
+        _item_escolhido: dict[str, int | None] = {"id": None}
 
-        def _registrar_escolha(row_iid: Optional[str]):
+        def _registrar_escolha(row_iid: str | None):
             """Grava o item escolhido pelo operador na lista (uso único)."""
             if not row_iid:
                 return
@@ -14023,7 +14026,7 @@ class AppInterface:
                 pass
 
         # ── Drag & drop para reordenar itens dentro da tree ──
-        _drag_state: Dict[str, Optional[str]] = {"origem": None}
+        _drag_state: dict[str, str | None] = {"origem": None}
 
         def _on_tree_button_press(event):
             if tree.identify_region(event.x, event.y) in ("heading", "separator"):
@@ -14222,7 +14225,7 @@ class AppInterface:
             _carregar_servicos()
             _on_servico_select()
 
-        def _abrir_editor_item(item_edit: Optional[Dict] = None):
+        def _abrir_editor_item(item_edit: dict | None = None):
             """Abre a janela para adicionar (item_edit=None) ou editar um item."""
             sid = servico_selecionado_id[0]
             if not sid:
@@ -14428,7 +14431,7 @@ class AppInterface:
                 ref_hino = rows_match[0]
                 rid = ref_hino.get("id")
                 letra_snap = ref_hino.get("letra_completa", "")
-                ref_disp = ref_hino.get("titulo", "") or f"Item (Hino)"
+                ref_disp = ref_hino.get("titulo", "") or "Item (Hino)"
                 return (True, "", letra_snap, ref_disp, rid)
 
             # Preenche o painel ao editar um hino existente
@@ -14439,8 +14442,6 @@ class AppInterface:
                                       (_hid_ed,))
                     if _rh_ed:
                         _hh = _rh_ed[0]
-                        if not item_edit.get("titulo_custom"):
-                            titulo = _hh.get("titulo", "") or f"Item (Hino)"
                         letra_snap = _hh.get("letra_completa", "") or ""
                 if letra_snap:
                     preview_hino.config(state='normal')
@@ -15061,7 +15062,7 @@ class AppInterface:
                     break
 
     def janela_transferencia(
-            self, parent: Optional[tk.Misc] = None) -> None:
+            self, parent: tk.Misc | None = None) -> None:
         """Janela para levar anúncios e ordens de serviço a outro computador.
 
         Exporta um arquivo .navepro (anúncios + ordens + mídias) e importa de
@@ -15079,7 +15080,7 @@ class AppInterface:
         estado = {"ocupado": False}
         var_status = tk.StringVar(value="")
         var_modo = tk.StringVar(value="somar")
-        botoes: List[tk.Widget] = []
+        botoes: list[tk.Widget] = []
 
         def _caixa(titulo: str) -> tk.Frame:
             box = tk.Frame(janela, bg='#161b22', highlightthickness=1,
@@ -15218,7 +15219,7 @@ class AppInterface:
                   command=janela.destroy, cursor='hand2', padx=16, pady=4,
                   ).pack(pady=(2, 14))
 
-        def _exportou(resumo: Dict):
+        def _exportou(resumo: dict):
             midia = resumo.get("midia") or 0
             linhas = [f"Arquivo salvo em:\n\n{resumo['destino']}",
                       f"\n{resumo['anuncios']} anúncio(s) e "
@@ -15231,7 +15232,7 @@ class AppInterface:
             tkinter.messagebox.showinfo(
                 "✅ Transferência exportada", "\n".join(linhas), parent=janela)
 
-        def _importou(resumo: Dict):
+        def _importou(resumo: dict):
             self._reabrir_janelas_de_ordem()
             linhas = [
                 f"Anúncios novos: {resumo['anuncios_novos']}",
@@ -15259,7 +15260,7 @@ class AppInterface:
             var_status.set(titulo)
             for b in botoes:
                 b.config(state='disabled')
-            res: Dict[str, Any] = {}
+            res: dict[str, Any] = {}
 
             def _trabalho():
                 import traceback as _tb

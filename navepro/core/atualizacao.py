@@ -4,7 +4,6 @@ import json
 import os
 import re
 import urllib.request
-from typing import Optional
 
 from navepro.config import APP_ID_FLATPAK, APP_VERSION, RELEASES_API_URL
 from navepro.core.ambiente import _eh_appimage, _eh_flatpak, _eh_windows
@@ -86,7 +85,7 @@ def _versao_nova(remota: str, local: str = APP_VERSION) -> bool:
     return _versao_tuple(remota) > _versao_tuple(local)
 
 
-def _buscar_release_latest(timeout: int = 10) -> Optional[dict]:
+def _buscar_release_latest(timeout: int = 10) -> dict | None:
     """Consulta o release mais recente na API do GitHub (thread-safe).
 
     Retorna dict com 'tag_name', 'name', 'body' e 'assets' (lista de
@@ -109,7 +108,7 @@ def _buscar_release_latest(timeout: int = 10) -> Optional[dict]:
         return None
 
 
-def _procurar_asset_instalador(release: dict) -> Optional[dict]:
+def _procurar_asset_instalador(release: dict) -> dict | None:
     """Encontra o instalador correspondente à plataforma atual.
 
     Windows procura o primeiro asset '.exe'; Linux, o primeiro '.AppImage'.

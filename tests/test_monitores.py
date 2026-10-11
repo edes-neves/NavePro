@@ -10,7 +10,7 @@ monitor com o painel), inclusive quando a detecção do primário falha.
 import ast
 import os
 import sys
-from typing import List, Optional
+from typing import Optional
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -56,7 +56,7 @@ def _extrair(nome_funcao: str) -> callable:
     ast.fix_missing_locations(mod)
     ns: dict = {
         "MonitorInfo": _carregar_monitorinfo(),
-        "List": List,
+        "List": list,
         "Optional": Optional,
     }
     exec(compile(mod, "<escolher>", "exec"), ns)
@@ -128,7 +128,7 @@ def _rodar() -> int:
     checar("painel e telão em monitores distintos", painel is not telao)
 
     # ── DPI-awareness: no-op correto fora do Windows ──
-    from navepro.core.ambiente import _tornar_dpi_aware, _eh_windows
+    from navepro.core.ambiente import _eh_windows, _tornar_dpi_aware
     if _eh_windows():
         print(f"ℹ️  Windows: _tornar_dpi_aware() -> {_tornar_dpi_aware()}")
     else:

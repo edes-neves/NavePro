@@ -5,12 +5,11 @@ import re
 import threading
 import unicodedata
 from collections import OrderedDict
-from typing import Optional
 
-from navepro.config import EXTENSOES_VIDEO, EXTENSOES_AUDIO, EXTENSOES_TEXTO
+from navepro.config import EXTENSOES_AUDIO, EXTENSOES_TEXTO, EXTENSOES_VIDEO
 
 
-def detectar_tipo_arquivo(caminho: str) -> Optional[str]:
+def detectar_tipo_arquivo(caminho: str) -> str | None:
     """Detecta o tipo de mídia pela extensão."""
     ext = os.path.splitext(caminho)[1].lower()
     if ext in EXTENSOES_VIDEO:

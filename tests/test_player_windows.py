@@ -43,16 +43,16 @@ _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
 
+from navepro.core.ambiente import _eh_windows  # noqa: E402
 from navepro.core.player import (  # noqa: E402
     ClienteMpvIpc,
     encerrar_arvore,
     esconder_janelas_auxiliares,
-    localizar_executavel,
     limpar_cache_executaveis,
+    localizar_executavel,
     nome_pipe_mpv,
     posicionar_janela_player,
 )
-from navepro.core.ambiente import _eh_windows  # noqa: E402
 
 
 def _extrair_metodo(classe: str, metodo: str) -> callable:
@@ -306,7 +306,6 @@ def _rodar() -> int:
     # a quem opera. Precisa existir o caminho on_aviso -> status_label.
     sem_ctrl = _extrair_metodo("MediaPlayer", "_sem_controle_remoto")
     explicar = _extrair_metodo("MediaPlayer", "_explicar_sem_controle")
-    play_pause = _extrair_metodo("MediaPlayer", "play_pause")
 
     if _eh_windows():
         obj = type("F", (), {})()
