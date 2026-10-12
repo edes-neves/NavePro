@@ -40,6 +40,14 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.5" date="2026-10-12">
+      <description>
+        <ul>
+          <li>Ordem de Serviço: novo item "YouTube" — marque a caixinha, cole a URL e o vídeo toca no telão pelo mpv (via yt-dlp), com pausa/continuar/parar</li>
+          <li>O app avisa quando falta o mpv/yt-dlp ou quando o yt-dlp está desatualizado, com a instrução de atualização do sistema</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.4" date="2026-10-09">
       <description>
         <ul>

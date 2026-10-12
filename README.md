@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.1.4.AppImage
-   ./NavePro-2.1.4.AppImage
+   chmod +x NavePro-2.1.5.AppImage
+   ./NavePro-2.1.5.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -302,7 +302,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.4          # gera NavePro-2.1.4.AppImage
+./build.sh 2.1.5          # gera NavePro-2.1.5.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -329,7 +329,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.1.4
+   ./build.sh 2.1.5
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -338,17 +338,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.1.4: ..."
-   git tag v2.1.4
-   git push origin main v2.1.4
+   git add -A && git commit -m "NavePro 2.1.5: ..."
+   git tag v2.1.5
+   git push origin main v2.1.5
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.1.4 NavePro-2.1.4.AppImage \
-     --title "NavePro 2.1.4" --notes "O que mudou nesta versão..."
+   gh release create v2.1.5 NavePro-2.1.5.AppImage \
+     --title "NavePro 2.1.5" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -496,6 +496,16 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.1.5
+
+- **Item "YouTube" na Ordem de Serviço**: na janela **Ad. Item**, marque a
+  caixinha **YouTube**, cole a URL do vídeo e ele toca no **telão pelo mpv**
+  (transmitido pelo **yt-dlp**), com **pausa/continuar/parar** no painel.
+- O app **avisa o operador** quando falta o **mpv** ou o **yt-dlp**, e quando o
+  **yt-dlp está desatualizado** — com a instrução de atualização do sistema
+  (`pipx upgrade yt-dlp` ou gerenciador de pacotes). O NavePro **não** atualiza
+  o yt-dlp sozinho (é pacote do sistema).
 
 ### 2.1.4
 
