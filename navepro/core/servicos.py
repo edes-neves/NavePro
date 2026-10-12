@@ -28,7 +28,7 @@ def _carregar_servicos_json() -> dict:
     Estrutura:
       {"servicos": [{"id", "nome", "data_servico", "criado_em", "itens": [
           {"id", "tipo", "referencia_id", "titulo_custom", "letra_snapshot",
-           "duracao_estimada_segundos"}...]}],
+           "caminho_arquivo", "youtube_url", "duracao_estimada_segundos"}...]}],
        "_proximo_id_servico": int, "_proximo_id_item": int}
     """
     try:

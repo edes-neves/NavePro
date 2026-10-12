@@ -4,7 +4,9 @@ Extraído de NavePro.py sem alterar o comportamento (ver AGENTS.md).
 """
 from __future__ import annotations
 
+import datetime
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -36,6 +38,34 @@ from navepro.core.player import (
 )
 
 log = get_logger("mediaplayer")
+
+
+def _eh_url(arquivo: str) -> bool:
+    """True se `arquivo` for uma URL http(s) em vez de um caminho em disco.
+
+    Usado pelo item "YouTube" da Ordem de Serviço: a URL é entregue ao mpv,
+    que transmite pelo yt-dlp em vez de abrir um arquivo local.
+    """
+    return (arquivo or "").strip().lower().startswith(("http://", "https://"))
+
+
+# Opções que o mpv repassa ao yt-dlp para URLs do YouTube.
+#
+# Medido aqui (yt-dlp 2025.09.26): o cliente padrão ("web") devolve
+# "The page needs to be reloaded" e o mpv encerra na hora — sem janela, sem
+# aviso (o `--really-quiet` engole o erro). Forçando o cliente "android" o
+# yt-dlp resolve e o vídeo toca. Sem isto, o item YouTube fica mudo no telão.
+_MPV_YTDL_OPCOES = [
+    "--ytdl-raw-options=extractor-args=youtube:player_client=android",
+]
+
+# Idade (em dias) a partir da qual o yt-dlp instalado é considerado velho. O
+# yt-dlp acompanha as mudanças do YouTube e costuma ser atualizado com
+# frequência; passando disso, é bem provável que a URL pare de resolver. O
+# app NÃO atualiza o yt-dlp sozinho (é pacote do sistema: apt/pipx/binário) —
+# só avisa o operador (ver _aviso_ytdlp_desatualizado).
+_YTDLP_IDADE_MAX_DIAS = 120
+
 
 class MediaPlayer:
     """Gerencia a reprodução de mídia no telão.
@@ -101,6 +131,10 @@ class MediaPlayer:
         # Só avisa uma vez por sessão sobre falta de controle remoto, para
         # não repetir o mesmo aviso a cada clique em pausar.
         self._ja_avisou_sem_controle: bool = False
+        # Versão do yt-dlp (cacheada) e trava para avisar só uma vez por
+        # sessão que ela está velha. None = ainda não checada.
+        self._ytdlp_versao: str | None = None
+        self._ja_avisou_ytdlp: bool = False
         # Referência para o root da janela principal (setado externamente)
         self._root_after: tk.Misc | None = None
         # Garante existência do telão antes de monitorar
@@ -347,11 +381,29 @@ class MediaPlayer:
         return None
 
     def _tocar_arquivo(self, arquivo: str) -> bool:
-        """Inicia a reprodução de um arquivo no player externo (sem sleep)."""
+        """Inicia a reprodução de um arquivo no player externo (sem sleep).
+
+        Aceita também uma URL (http/https, ex.: YouTube): nesse caso a
+        transmissão vai pelo mpv + yt-dlp, então os requisitos são checados
+        antes de encerrar a reprodução atual.
+        """
+        _url = _eh_url(arquivo)
+        if _url:
+            _falta = self._checar_requisitos_url()
+            if _falta:
+                self._avisar(_falta)
+                return False
+            # yt-dlp velho não impede a tentativa, mas costuma ser a causa
+            # do vídeo não abrir: avisa (uma vez por sessão) e segue.
+            if not self._ja_avisou_ytdlp:
+                self._ja_avisou_ytdlp = True
+                _aviso_ytdlp = self._aviso_ytdlp_desatualizado()
+                if _aviso_ytdlp:
+                    self._avisar(_aviso_ytdlp)
         # Mata processo anterior
         self._matar_processo()
 
-        if not os.path.exists(arquivo):
+        if not _url and not os.path.exists(arquivo):
             log.error(f"❌ Arquivo não encontrado: {arquivo}")
             return False
 
@@ -465,6 +517,77 @@ class MediaPlayer:
                 self._ipc = cliente
                 log.info("🎛️ Controle remoto do mpv ligado (IPC)")
 
+    def _checar_requisitos_url(self) -> str:
+        """Mensagem de aviso se faltar mpv/yt-dlp para tocar uma URL.
+
+        Devolve "" quando dá para transmitir. O mpv é quem toca e o yt-dlp
+        é quem resolve a URL do YouTube; sem um dos dois o operador recebe
+        uma instrução de instalação em vez de uma falha silenciosa.
+        """
+        if localizar_executavel("mpv") is None:
+            if _eh_windows():
+                return ("⚠️ Para reproduzir YouTube é preciso o mpv. "
+                        "Instale com: winget install mpv-player.mpv-CI.MSVC")
+            return ("⚠️ Para reproduzir YouTube é preciso o mpv. "
+                    "Instale com: sudo apt install mpv (ou equivalente).")
+        if (localizar_executavel("yt-dlp") is None
+                and localizar_executavel("youtube-dl") is None):
+            if _eh_windows():
+                return ("⚠️ Para reproduzir YouTube é preciso o yt-dlp. "
+                        "Instale com: winget install yt-dlp.yt-dlp")
+            return ("⚠️ Para reproduzir YouTube é preciso o yt-dlp. "
+                    "Instale com: sudo apt install yt-dlp (ou pipx install yt-dlp).")
+        return ""
+
+    def _versao_ytdlp(self) -> str:
+        """Versão do yt-dlp instalado ("" se não houver/der para descobrir).
+
+        Fica em cache por instância: é um processo a menos a cada item. Aceita
+        o yt-dlp ou o antigo youtube-dl como nome do executável.
+        """
+        if self._ytdlp_versao is not None:
+            return self._ytdlp_versao
+        exe = localizar_executavel("yt-dlp") or localizar_executavel("youtube-dl")
+        if not exe:
+            self._ytdlp_versao = ""
+            return ""
+        try:
+            r = subprocess.run(
+                [exe, "--version"], capture_output=True, text=True,
+                timeout=5, env=_ambiente_sem_appimage())
+            saida = (r.stdout or "").strip().splitlines()
+            self._ytdlp_versao = saida[0].strip() if saida else ""
+        except (subprocess.SubprocessError, OSError):
+            self._ytdlp_versao = ""
+        return self._ytdlp_versao
+
+    def _aviso_ytdlp_desatualizado(self) -> str:
+        """Aviso se o yt-dlp estiver velho demais para o YouTube (senão "").
+
+        NÃO bloqueia a reprodução: só alerta que o pacote do sistema está
+        desatualizado. O app não atualiza o yt-dlp por conta própria — quem
+        instala é o sistema (apt/pipx/binário), então a mensagem diz como.
+        """
+        versao = self._versao_ytdlp()
+        if not versao:
+            return ""
+        # yt-dlp é versionado por data (ex.: 2025.09.26). Nightly/fora do
+        # padrão não dá para medir: não avisa para não gerar falso positivo.
+        m = re.match(r"(\d{4})\.(\d{1,2})\.(\d{1,2})", versao)
+        if not m:
+            return ""
+        try:
+            lancamento = datetime.date(
+                int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return ""
+        idade = (datetime.date.today() - lancamento).days
+        if idade <= _YTDLP_IDADE_MAX_DIAS:
+            return ""
+        return (f"⚠️ yt-dlp desatualizado ({versao}, há {idade} dias). "
+                "Atualize com 'pipx upgrade yt-dlp' ou pelo gerenciador de "
+                "pacotes para o YouTube voltar a funcionar.")
+
     def _montar_comando_player(
         self, arquivo: str, mx: int, my: int, mw: int, mh: int
     ) -> list[str]:
@@ -488,6 +611,11 @@ class MediaPlayer:
           `posicionar_janela_player`.
         """
         player = self.player_cmd
+
+        # URL (ex.: item YouTube da Ordem de Serviço): caminho dedicado.
+        # Os requisitos (mpv/yt-dlp) já foram checados em _tocar_arquivo.
+        if _eh_url(arquivo):
+            return self._montar_comando_url(arquivo, mx, my, mw, mh)
 
         # Verifica se o player configurado existe no sistema
         if not self._player_existe(player):
@@ -572,6 +700,37 @@ class MediaPlayer:
                 # Abre com o aplicativo padrão do Windows (sem console).
                 return ['cmd', '/c', 'start', '', arquivo]
             return ['xdg-open', arquivo]
+
+    def _montar_comando_url(self, url: str, mx: int, my: int,
+                            mw: int, mh: int) -> list[str]:
+        """Comando do mpv para uma URL de vídeo (ex.: YouTube).
+
+        O mpv resolve a URL pelo yt-dlp (já verificado por _tocar_arquivo),
+        então este caminho força o mpv em vez de usar o player configurado.
+        No Windows liga o IPC (dá pausa/continuar/parar, como um vídeo local);
+        no Linux abre em tela cheia no telão.
+        """
+        self._player_em_uso = "mpv"
+        if _eh_windows():
+            exe = localizar_executavel("mpv") or "mpv"
+            self._contador_pipe += 1
+            self._pipe_mpv = nome_pipe_mpv(self._contador_pipe)
+            return [
+                exe, '--no-border',
+                '--really-quiet', '--no-terminal',
+                f'--input-ipc-server={self._pipe_mpv}',
+                '--keep-open=no',
+                f'--geometry={mw}x{mh}+{mx}+{my}',
+                *_MPV_YTDL_OPCOES,
+                url,
+            ]
+        return [
+            'mpv', '--fullscreen', '--screen=1',
+            '--really-quiet', '--no-terminal',
+            f'--geometry={mw}x{mh}+{mx}+{my}',
+            *_MPV_YTDL_OPCOES,
+            url,
+        ]
 
     def _eh_arquivo_de_video(self, arquivo: str) -> bool:
         """True para extensão de vídeo — só vídeo tem janela para posicionar."""

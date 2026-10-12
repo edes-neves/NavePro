@@ -99,7 +99,7 @@ from navepro.core.inicializacao import (
     inicializar_config,
 )
 from navepro.core.log import configurar_logging, get_logger
-from navepro.core.mediaplayer import MediaPlayer
+from navepro.core.mediaplayer import MediaPlayer, _eh_url
 from navepro.core.monitores import (
     _escolher_monitor_painel,
     get_monitors_config,
@@ -1227,13 +1227,18 @@ class AppInterface:
                 pass
 
         iniciado = False
+        # Item "YouTube": a URL informada no editor vira a mídia do item.
+        _url_youtube = ((item.get('youtube_url') or '').strip()
+                        if tipo == 'youtube' else '')
         # Resolve o caminho de mídia do item: 1ª o arquivo escolhido
         # diretamente no editor (vídeo/áudio/PowerPoint/Impress); 2ª o
         # vídeo/áudio do acervo (tabela midia); 3ª a mídia (vídeo/áudio)
         # anexada a um anúncio.
         caminho_media = None
         _caminho_direto = (item.get('caminho_arquivo') or '').strip()
-        if tipo in ('video', 'audio', 'sermao') and _caminho_direto \
+        if _url_youtube:
+            caminho_media = _url_youtube
+        elif tipo in ('video', 'audio', 'sermao') and _caminho_direto \
                 and os.path.exists(_caminho_direto):
             caminho_media = _caminho_direto
         else:
@@ -1250,7 +1255,8 @@ class AppInterface:
                 anun = _buscar_anuncio_por_ref(item['referencia_id'])
                 if anun and (anun.get('tipo_midia') or '').strip().lower() in ('video', 'audio'):
                     caminho_media = (anun.get('arquivo_midia') or '')
-        if caminho_media and os.path.exists(caminho_media):
+        if caminho_media and (_eh_url(caminho_media)
+                              or os.path.exists(caminho_media)):
             caminho = caminho_media
             _ext = os.path.splitext(caminho)[1].lower()
             if _ext in ('.ppt', '.pptx', '.pps', '.ppsx', '.odp', '.pdf'):
@@ -1946,6 +1952,8 @@ class AppInterface:
                 detalhe = os.path.basename(caminho)
         elif tipo == 'anuncio':
             detalhe = 'anúncio'
+        elif tipo == 'youtube':
+            detalhe = 'YouTube'
         ref = None
         if tipo == 'versiculo':
             primeira = (item.get('letra_snapshot') or '').split('\n', 1)[0].strip()
@@ -9005,7 +9013,7 @@ class AppInterface:
                 tipo = it.get("tipo") or "slide"
                 tipo_emoji = {"hino": "📖", "versiculo": "✝️", "video": "🎬",
                               "audio": "🎵", "slide": "📄", "anuncio": "📢",
-                              "sermao": "🎤"}.get(tipo, "📁")
+                              "sermao": "🎤", "youtube": "▶️"}.get(tipo, "📁")
                 tree.insert("", tk.END, iid=str(it.get("id")),
                             values=(i + 1, f"{tipo_emoji} {tipo.title()}",
                                     it.get("titulo_custom") or f"Item {i+1}",
@@ -9512,6 +9520,42 @@ class AppInterface:
                       ).pack(side='left', padx=(3, 0))
             arquivo_frame.pack_forget()
 
+            # ── Item "YouTube" (caixinha + URL) ──
+            # Independente do tipo escolhido acima: marcando a caixinha, o
+            # item passa a ser um vídeo do YouTube e a URL é usada na
+            # execução (mpv + yt-dlp). Fica sempre visível no editor.
+            youtube_var = tk.BooleanVar(
+                value=((item_edit or {}).get("tipo") or "").lower() == "youtube"
+                or bool((item_edit or {}).get("youtube_url")))
+            youtube_url_var = tk.StringVar(
+                value=(item_edit or {}).get("youtube_url") or "")
+
+            youtube_frame = tk.Frame(add_main, bg='#0d1117')
+            tk.Checkbutton(
+                youtube_frame, text="YouTube", variable=youtube_var,
+                bg='#0d1117', fg='#f0c040', selectcolor='#21262d',
+                activebackground='#0d1117', activeforeground='#f0c040',
+                font=("Arial", 11, "bold"),
+                command=lambda: _atualizar_youtube()
+            ).pack(anchor='w')
+
+            youtube_url_row = tk.Frame(youtube_frame, bg='#0d1117')
+            tk.Label(youtube_url_row, text="URL do vídeo:",
+                     fg='#c9d1d9', bg='#0d1117',
+                     font=("Arial", 10)).pack(side='left')
+            tk.Entry(youtube_url_row, textvariable=youtube_url_var,
+                     font=("Arial", 10), bg='#21262d', fg='#c9d1d9',
+                     insertbackground='#f0c040').pack(
+                side='left', fill='x', expand=True, padx=(4, 0), ipady=2)
+
+            def _atualizar_youtube():
+                if youtube_var.get():
+                    youtube_url_row.pack(fill='x', pady=(2, 0))
+                else:
+                    youtube_url_row.pack_forget()
+
+            _atualizar_youtube()
+
             # A janela é posicionada UMA única vez, na abertura, já
             # centralizada sobre a janela "Ordem de Serviço" (via
             # _centralizar_sobre, acima). Ao trocar o tipo do item, aplicamos
@@ -9545,10 +9589,14 @@ class AppInterface:
                     anuncio_frame.pack(fill='x', pady=(2, 0))
                 else:
                     anuncio_frame.pack_forget()
-                _aplicar_geometria("700x540" if t == "versiculo"
-                                   else "700x540" if t == "hino"
-                                   else "700x450" if t == "anuncio"
-                                   else "700x380")
+                # A caixinha YouTube fica sempre visível; repack garante que
+                # ela apareça depois dos painéis acima.
+                youtube_frame.pack_forget()
+                youtube_frame.pack(fill='x', pady=(6, 0))
+                _aplicar_geometria("700x600" if t == "versiculo"
+                                   else "700x600" if t == "hino"
+                                   else "700x510" if t == "anuncio"
+                                   else "700x450")
 
             tipo_var.trace_add("write", lambda *a: _atualizar_paineis())
             _atualizar_paineis()
@@ -9567,6 +9615,23 @@ class AppInterface:
                 termo = ref_entry.get().strip()
                 duracao = int(dur_entry.get().strip()) if dur_entry.get().strip().isdigit() else 0
                 caminho_arquivo = arquivo_path_var.get().strip()
+                # Caixinha "YouTube": quando marcada, o item vira um vídeo do
+                # YouTube e guarda a URL (em vez de um arquivo em disco).
+                youtube_url = ""
+                if youtube_var.get():
+                    youtube_url = youtube_url_var.get().strip()
+                    if not _eh_url(youtube_url):
+                        tkinter.messagebox.showwarning(
+                            "YouTube",
+                            "Informe a URL do vídeo (começando com http:// "
+                            "ou https://).", parent=janela)
+                        return
+                    tipo = "youtube"
+                    caminho_arquivo = ""
+                if tipo == "youtube" and not youtube_url:
+                    # Caixinha desmarcada num item que era YouTube: evita
+                    # salvar "youtube" sem URL (que ficaria sem mídia).
+                    tipo = "slide"
                 if tipo not in ("video", "audio", "sermao"):
                     caminho_arquivo = ""
 
@@ -9674,6 +9739,9 @@ class AppInterface:
                     _, _, letra_snap, ref_display, ref_id, vers_salvos = res
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_display
+                elif tipo == "youtube":
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = youtube_url or f"Item ({tipo.title()})"
                 elif termo.isdigit():
                     ref_id = int(termo)
                 if not titulo:
@@ -9702,6 +9770,7 @@ class AppInterface:
                         "titulo_custom": titulo,
                         "letra_snapshot": letra_snap,
                         "caminho_arquivo": caminho_arquivo,
+                        "youtube_url": youtube_url,
                         "duracao_estimada_segundos": duracao,
                     })
                     # Faixa de versículos: guarda os pares [número, texto] para
@@ -9721,6 +9790,7 @@ class AppInterface:
                         "titulo_custom": titulo,
                         "letra_snapshot": letra_snap,
                         "caminho_arquivo": caminho_arquivo,
+                        "youtube_url": youtube_url,
                         "duracao_estimada_segundos": duracao,
                     }
                     if vers_salvos:

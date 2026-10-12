@@ -46,6 +46,7 @@ sys.path.insert(0, RAIZ)
 from fixture_log import log  # noqa: E402
 
 from navepro.core.ambiente import _eh_windows  # noqa: E402
+from navepro.core.mediaplayer import _eh_url  # noqa: E402
 from navepro.core.player import (  # noqa: E402
     ClienteMpvIpc,
     encerrar_arvore,
@@ -72,6 +73,7 @@ def _extrair_metodo(classe: str, metodo: str) -> callable:
                             mod = ast.Module(body=[sub], type_ignores=[])
                             ast.fix_missing_locations(mod)
                             ns: dict = {"_eh_windows": _eh_windows,
+                                        "_eh_url": _eh_url,
                                         "localizar_executavel": localizar_executavel,
                                         "nome_pipe_mpv": nome_pipe_mpv,
                                         "log": log}
