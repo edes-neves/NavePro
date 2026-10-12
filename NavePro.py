@@ -32,7 +32,6 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from datetime import datetime
-from queue import Empty, Queue
 from tkinter import font as tkfont
 from tkinter import ttk
 from typing import Any
@@ -83,6 +82,7 @@ from navepro.core.banco import (
     db_execute,
     db_query,
 )
+from navepro.core.busca import SearchWorker
 from navepro.core.clima import (
     obter_temperatura,
 )
@@ -197,56 +197,7 @@ log = get_logger("app")
 # ────────────────────────────────────────────────────────────────────
 # WORKER DE BUSCA (ÚNICA THREAD COM FILA)
 # ────────────────────────────────────────────────────────────────────
-
-class SearchWorker:
-    """Worker único com fila para processar buscas de forma assíncrona."""
-
-    def __init__(self):
-        self.queue: Queue = Queue()
-        self._stop_event = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-        self._db = DatabaseManager()
-
-    def _run(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                task = self.queue.get(timeout=0.5)
-                if task is None:
-                    continue
-                term, version, callback = task
-                results = self._db.search(term)
-                if callback:
-                    try:
-                        root = tk._default_root
-                        if root is not None:
-                            # Dispatch via after(0) na thread principal
-                            root.after(0, self._dispatch_callback, results, version, callback)
-                        elif callback:
-                            callback(results, version)
-                    except Exception as e:
-                        log.exception(f"Erro ao chamar callback: {e}")
-                self.queue.task_done()
-            except Empty:
-                continue
-            except Exception as e:
-                log.exception(f"Erro no SearchWorker: {e}")
-
-    def _dispatch_callback(self, results: list[dict[str, Any]], version: int, callback: Callable) -> None:
-        """Dispatch seguro do callback na thread principal."""
-        try:
-            callback(list(results), version)
-        except Exception as e:
-            log.exception(f"Erro no dispatch: {e}")
-
-    def submit(self, term: str, version: int, callback: Callable) -> None:
-        """Enfileira uma tarefa de busca."""
-        self.queue.put((term, version, callback))
-
-    def stop(self) -> None:
-        self._stop_event.set()
-        if self._thread.is_alive():
-            self._thread.join(timeout=1.0)
+# (movido para navepro/core/busca.py — ver "IMPORTS INTERNOS" no topo)
 
 # ────────────────────────────────────────────────────────────────────
 # SERVIDOR HTTP - API REST (mantido como antes)
