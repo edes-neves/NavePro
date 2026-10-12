@@ -1618,6 +1618,8 @@ class AppInterface:
                 return self._remoto_projetar_biblia(dados)
             if acao == 'executar_midia':
                 return self._remoto_executar_midia(dados)
+            if acao == 'controle_player':
+                return self._remoto_controle_player(dados)
             if acao == 'projetar_anuncio':
                 self.player._garantir_telao()
                 return self.projetar_anuncio(int(dados.get('id') or 0))
@@ -1657,6 +1659,8 @@ class AppInterface:
             'arquivo': os.path.basename(self.arquivo_atual)
             if self.arquivo_atual else '',
             'indice': idx_m, 'total': len(pl),
+            'tocando': bool(getattr(self.player, 'is_playing', False)),
+            'pausado': bool(getattr(self.player, 'is_paused', False)),
         }
         return {'ok': True, 'versao': APP_VERSION,
                 'telao': info_telao, 'midia': info_midia,
@@ -1850,6 +1854,26 @@ class AppInterface:
         self.player.tocar_indice(0)
         return {'ok': True, 'arquivo': os.path.basename(caminho),
                 'tipo': rows[0].get('tipo') or ''}
+
+    def _remoto_controle_player(self, dados: dict) -> dict:
+        """Pausa/continua ou para a mídia em reprodução (controle remoto).
+
+        Usa exatamente os mesmos caminhos do painel do operador:
+        `player.play_pause()` para alternar pausa/continuar e `self.parar()`
+        para encerrar — assim o telão e os labels ficam iguais aos do app.
+        """
+        acao = str(dados.get('acao') or '').strip().lower()
+        player = self.player
+        if acao in ('play_pause', 'playpause', 'pause', 'pausar', 'continuar'):
+            if player is None or not player.is_playing:
+                return {'ok': False, 'erro': 'Nenhuma mídia em reprodução.'}
+            player.play_pause()
+            return {'ok': True, 'tocando': bool(player.is_playing),
+                    'pausado': bool(player.is_paused)}
+        if acao in ('parar', 'stop'):
+            self.parar()
+            return {'ok': True, 'tocando': False, 'pausado': False}
+        return {'ok': False, 'erro': f'Ação de player inválida: {acao}'}
 
     def _remoto_slide(self, acao: str) -> dict:
         """Navega/encerra a projeção em slides do telão."""

@@ -30,6 +30,7 @@ _ACOES_POST_REMOTO: dict = {
     '/api/remoto/hino': 'projetar_hino',
     '/api/remoto/biblia': 'projetar_biblia',
     '/api/remoto/midia': 'executar_midia',
+    '/api/remoto/player': 'controle_player',
     '/api/remoto/anuncio': 'projetar_anuncio',
     '/api/remoto/servico': 'executar_servico',
     '/api/remoto/servico_item': 'servico_item',

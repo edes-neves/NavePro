@@ -19,6 +19,7 @@ A API usada (tudo com o header `X-Token`):
   POST /api/remoto/hino        → {id}
   POST /api/remoto/biblia      → {q, versao} ou {versao, livro, cap, vers}
   POST /api/remoto/midia       → {id}   (executa áudio/vídeo no telão)
+  POST /api/remoto/player      → {acao: play_pause|parar} (pausa/continua/para)
   POST /api/remoto/anuncio     → {id}
   POST /api/remoto/servico     → {id, item?}
   POST /api/remoto/servico_item→ {operacao: add|editar|apagar|mover, servico, ...}
@@ -183,6 +184,16 @@ PAGINA = """<!DOCTYPE html>
     <button class="btn verde" onclick="buscarMidia()">&#128269; Buscar</button>
   </div>
   <div class="card"><ul id="lista_midias"><li class="vazio">Busque uma m&uacute;sica ou v&iacute;deo.</li></ul></div>
+  <div class="card">
+    <h3>Reprodu&ccedil;&atilde;o</h3>
+    <div class="linha">
+      <button class="btn" onclick="controlePlayer('play_pause')">&#9199; Play/Pause</button>
+      <button class="btn vermelho" onclick="controlePlayer('parar')">&#9209; Parar</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <span class="pill" id="player_estado">sem m&iacute;dia</span>
+    </div>
+  </div>
 </section>
 
 <section id="aba-biblia">
@@ -435,6 +446,17 @@ function buscarMidia() {
 document.getElementById('midia_busca').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') buscarMidia();
 });
+
+// ── Reprodução (pausa/continua e para a mídia no telão) ──
+function controlePlayer(acao) {
+  apiPost('/api/remoto/player', {acao: acao}).then(function(j) {
+    if (j && j.ok) {
+      if (acao === 'parar') aviso('M\u00fasica/v\u00eddeo parado', '#238636');
+      else aviso(j.pausado ? 'Pausado' : 'Reproduzindo', '#238636');
+    }
+    atualizarEstado();
+  });
+}
 
 // ── Bíblia ──
 function carregarVersoes(j) {
@@ -900,6 +922,11 @@ function atualizarEstado() {
     document.getElementById('midia_atual').textContent =
       j.midia.arquivo ? (j.midia.indice + 1) + '/' + j.midia.total + ' - ' + j.midia.arquivo
                       : 'nenhuma mídia';
+    var pe = document.getElementById('player_estado');
+    if (pe) {
+      pe.textContent = !j.midia.tocando ? 'sem m\u00eddia'
+        : (j.midia.pausado ? '\u23F8 pausado' : '\u25B6 tocando');
+    }
     var t = j.telao.tamanho || {};
     document.getElementById('tam_texto').textContent = t.composicao
       ? 'texto ' + (Number(t.texto_escala) || 1).toFixed(2) + '×'
