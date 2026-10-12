@@ -45,6 +45,8 @@
         <ul>
           <li>Ordem de Serviço: novo item "YouTube" — marque a caixinha, cole a URL e o vídeo toca no telão pelo mpv (via yt-dlp), com pausa/continuar/parar</li>
           <li>O app avisa quando falta o mpv/yt-dlp ou quando o yt-dlp está desatualizado, com a instrução de atualização do sistema</li>
+          <li>Vídeo/YouTube toca no monitor certo também no Linux: o player mira o mesmo monitor do telão Tk (o não-primário) e, em sessão Wayland, o mpv roda como X11 — corrige o mpv 0.41 que abria no monitor focado pelo compositor</li>
+          <li>Na janela Ad. Item, a caixinha/URL do YouTube só aparece com o tipo Vídeo marcado</li>
         </ul>
       </description>
     </release>

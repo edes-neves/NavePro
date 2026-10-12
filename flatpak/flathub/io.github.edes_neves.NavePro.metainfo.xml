@@ -48,6 +48,8 @@
           <li>Força um cliente do yt-dlp que contorna o bloqueio do YouTube ("The page needs to be reloaded") que fazia o vídeo não abrir</li>
           <li>Flatpak: player de vídeo (mpv) e YouTube funcionam dentro do sandbox via wrapper que delega para o mpv e o yt-dlp do sistema</li>
           <li>Imagens em anúncios/presentações voltam a ser exibidas no telão (regressão de projeção de imagem com texto e imagem de fundo)</li>
+          <li>Vídeo/YouTube toca no monitor certo também no Linux: o player mira o mesmo monitor do telão Tk (o não-primário) e, em sessão Wayland, o mpv roda como X11 — corrige o mpv 0.41 que abria no monitor focado pelo compositor</li>
+          <li>Na janela Ad. Item, a caixinha/URL do YouTube só aparece com o tipo Vídeo marcado</li>
         </ul>
       </description>
     </release>

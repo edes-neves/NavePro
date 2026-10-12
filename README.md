@@ -506,6 +506,13 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
   **yt-dlp está desatualizado** — com a instrução de atualização do sistema
   (`pipx upgrade yt-dlp` ou gerenciador de pacotes). O NavePro **não** atualiza
   o yt-dlp sozinho (é pacote do sistema).
+- **Vídeo/YouTube no monitor certo também no Linux**: o player agora mira o
+  **mesmo monitor do telão Tk** (o não-primário) e, em sessão **Wayland**, o
+  mpv roda como janela X11 (`--vo=x11`) — corrige os mpv 0.41 que, no Wayland,
+  abriam o vídeo no monitor **focado pelo compositor**, ignorando o configurado
+  (validado em BigLinux e Ubuntu 26.04/GNOME).
+- Na janela **Ad. Item**, a caixinha/URL do **YouTube** só aparece com o tipo
+  **Vídeo** marcado.
 
 ### 2.1.4
 
