@@ -21,11 +21,13 @@ sys.path.insert(0, RAIZ)
 
 from fixture_log import log  # noqa: E402
 
+import navepro.core.mediaplayer as mediaplayer_mod  # noqa: E402
 from navepro.core.ambiente import _eh_windows  # noqa: E402
 from navepro.core.mediaplayer import (  # noqa: E402
     _MPV_YTDL_OPCOES,
     _YTDLP_IDADE_MAX_DIAS,
     _eh_url,
+    _opcoes_telao_wayland,
 )
 from navepro.core.player import localizar_executavel, nome_pipe_mpv  # noqa: E402
 
@@ -44,6 +46,7 @@ def _extrair_metodo(classe: str, metodo: str):
                     ast.fix_missing_locations(mod)
                     ns: dict = {"_eh_windows": _eh_windows,
                                 "_eh_url": _eh_url,
+                                "_opcoes_telao_wayland": _opcoes_telao_wayland,
                                 "_MPV_YTDL_OPCOES": _MPV_YTDL_OPCOES,
                                 "_YTDLP_IDADE_MAX_DIAS": _YTDLP_IDADE_MAX_DIAS,
                                 "localizar_executavel": localizar_executavel,
@@ -83,6 +86,17 @@ class _FakeUrl:
     _contador_pipe = 0
     _pipe_mpv = ""
 
+    @staticmethod
+    def _indice_screennumber():
+        # Índice do MONITOR CONFIGURADO do telão — 3 de propósito para
+        # provar que o mpv recebe esse índice e não o "1" fixo.
+        return 3
+
+    @staticmethod
+    def _monitor_alvo():
+        # Monitor do telão configurado (nome da saída, usado no Wayland).
+        return type("_M", (), {"name": "HDMI-2"})()
+
 
 url = "https://youtu.be/abc123"
 self_fake = _FakeUrl()
@@ -99,6 +113,9 @@ if _eh_windows():
     checar("no Windows o pipe do mpv é criado", bool(self_fake._pipe_mpv))
 else:
     checar("no Linux abre em tela cheia", "--fullscreen" in cmd)
+    checar("no Linux o mpv segue o monitor configurado do telão (não o 1 fixo)",
+           any(c.startswith("--screen=") and c != "--screen=1" for c in cmd)
+           and "--screen=3" in cmd)
 
 # ── 3. _montar_comando_player roteia URL para o mpv ───────────────────
 _montar_player = _extrair_metodo("MediaPlayer", "_montar_comando_player")
@@ -144,6 +161,31 @@ checar("sem yt-dlp não gera aviso (quem trata é _checar_requisitos_url)",
        _aviso_ytdlp(_fake_versao("")) == "")
 checar("versão fora do padrão de data não gera aviso",
        _aviso_ytdlp(_fake_versao("nightly")) == "")
+
+# ── 5. Monitor do telão no Wayland (mpv ignora --screen) ──────────────
+# Sessão Wayland: o mpv nativo não respeita o `--screen` (índice X11) e
+# abre em tela cheia na saída do foco — o vídeo ia para o monitor do
+# operador. O `--screen-name` é quem escolhe a saída lá (mpv >= 0.34).
+_orig_wayland = mediaplayer_mod._eh_wayland
+_orig_versao = mediaplayer_mod._versao_mpv_cacheada
+try:
+    mediaplayer_mod._eh_wayland = lambda: True
+    mediaplayer_mod._versao_mpv_cacheada = lambda: (0, 37)
+    _dec = _opcoes_telao_wayland("HDMI-2")
+    checar("Wayland nativo: mpv recebe --screen-name do telão",
+           _dec == ["--screen-name=HDMI-2"])
+    checar("Wayland sem nome de saída: nenhuma opção extra",
+           _opcoes_telao_wayland("") == [])
+    mediaplayer_mod._versao_mpv_cacheada = lambda: (0, 32)
+    checar("mpv anterior ao 0.34 não ganha opção desconhecida (não quebra)",
+           _opcoes_telao_wayland("HDMI-2") == [])
+    mediaplayer_mod._eh_wayland = lambda: False
+    mediaplayer_mod._versao_mpv_cacheada = lambda: (0, 37)
+    checar("sessão X11: sem --screen-name (o --screen do índice resolve)",
+           _opcoes_telao_wayland("HDMI-2") == [])
+finally:
+    mediaplayer_mod._eh_wayland = _orig_wayland
+    mediaplayer_mod._versao_mpv_cacheada = _orig_versao
 
 print("OK" if not falhas else f"\n{falhas} falha(s)")
 sys.exit(1 if falhas else 0)

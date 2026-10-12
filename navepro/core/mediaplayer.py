@@ -20,6 +20,7 @@ from navepro.core.ambiente import (
     _ambiente_sem_appimage,
     _eh_flatpak,
     _eh_linux,
+    _eh_wayland,
     _eh_windows,
 )
 from navepro.core.log import get_logger
@@ -65,6 +66,48 @@ _MPV_YTDL_OPCOES = [
 # app NÃO atualiza o yt-dlp sozinho (é pacote do sistema: apt/pipx/binário) —
 # só avisa o operador (ver _aviso_ytdlp_desatualizado).
 _YTDLP_IDADE_MAX_DIAS = 120
+
+# Versão do mpv instalado, cacheada (None = não descobriu). Usada para saber
+# se o mpv conhece o `--screen-name` (Wayland) sem um subprocess por vídeo.
+_MPV_VERSAO_CACHE: tuple[int, int] | None = None
+
+
+def _versao_mpv_cacheada() -> tuple[int, int] | None:
+    """Versão (maior, menor) do mpv instalado, ou None se não der para saber."""
+    global _MPV_VERSAO_CACHE
+    if _MPV_VERSAO_CACHE is not None:
+        return _MPV_VERSAO_CACHE
+    try:
+        exe = localizar_executavel("mpv") or "mpv"
+        resp = subprocess.run(
+            [exe, '--version'], timeout=5, capture_output=True, text=True,
+            env=_ambiente_sem_appimage())
+        m = re.search(r'mpv\s+v?(\d+)\.(\d+)', resp.stdout or '')
+        if m:
+            _MPV_VERSAO_CACHE = (int(m.group(1)), int(m.group(2)))
+    except Exception:
+        _MPV_VERSAO_CACHE = None
+    return _MPV_VERSAO_CACHE
+
+
+def _opcoes_telao_wayland(nome_monitor: str) -> list[str]:
+    """Opções do mpv para o telão quando a sessão é Wayland nativa.
+
+    Numa sessão Wayland o mpv IGNORA o `--screen` (índice X11) e abre em
+    tela cheia na saída do foco — o que mandava vídeo/YouTube para o monitor
+    do operador. O que escolhe a saída lá é o `--screen-name=<nome>` (mpv >=
+    0.34). Devolve [] quando não dá para usar: sessão X11, sem nome de saída,
+    ou mpv antigo demais (que morreria com "option not found").
+    """
+    if not _eh_wayland():
+        return []
+    nome = (nome_monitor or "").strip()
+    if not nome:
+        return []
+    versao = _versao_mpv_cacheada()
+    if versao is None or versao < (0, 34):
+        return []
+    return [f"--screen-name={nome}"]
 
 
 class MediaPlayer:
@@ -689,9 +732,11 @@ class MediaPlayer:
                     arquivo,
                 ]
             return [
-                'mpv', '--fullscreen', '--screen=1',
+                'mpv', '--fullscreen',
+                f'--screen={self._indice_screennumber()}',
                 '--really-quiet', '--no-terminal',
                 f'--geometry={mw}x{mh}+{mx}+{my}',
+                *_opcoes_telao_wayland(self._monitor_alvo().name),
                 arquivo,
             ]
         else:
@@ -708,7 +753,10 @@ class MediaPlayer:
         O mpv resolve a URL pelo yt-dlp (já verificado por _tocar_arquivo),
         então este caminho força o mpv em vez de usar o player configurado.
         No Windows liga o IPC (dá pausa/continuar/parar, como um vídeo local);
-        no Linux abre em tela cheia no telão.
+        no Linux abre em tela cheia no telão — o `--screen` segue o monitor
+        configurado (`_indice_screennumber`), não o índice 1 fixo: com o
+        `--screen=1` empedrado o vídeo abria no monitor do operador quando o
+        telão configurado não era o segundo da lista.
         """
         self._player_em_uso = "mpv"
         if _eh_windows():
@@ -725,9 +773,11 @@ class MediaPlayer:
                 url,
             ]
         return [
-            'mpv', '--fullscreen', '--screen=1',
+            'mpv', '--fullscreen',
+            f'--screen={self._indice_screennumber()}',
             '--really-quiet', '--no-terminal',
             f'--geometry={mw}x{mh}+{mx}+{my}',
+            *_opcoes_telao_wayland(self._monitor_alvo().name),
             *_MPV_YTDL_OPCOES,
             url,
         ]

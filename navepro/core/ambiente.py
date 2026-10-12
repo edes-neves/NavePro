@@ -106,3 +106,17 @@ def _eh_appimage() -> bool:
     APPDIR/OWD (removidos em _ambiente_sem_appimage ao lançar filhos).
     """
     return bool(os.environ.get('APPIMAGE'))
+
+
+def _eh_wayland() -> bool:
+    """True se a sessão gráfica for Wayland (GNOME/KDE/etc. modernos).
+
+    O que importa para o NavePro: o **mpv nativo** numa sessão Wayland ignora
+    o `--screen` do player (índice X11) e abre em tela cheia na saída do foco
+    — por isso vídeos/YouTube iam parar no monitor do operador. Nesse caso o
+    correto é escolher a saída por nome (`--screen-name`). Em sessão X11 (o
+    Tk também roda X11) o `--screen` continua sendo o mecanismo.
+    """
+    if os.environ.get('WAYLAND_DISPLAY'):
+        return True
+    return os.environ.get('XDG_SESSION_TYPE', '').lower() == 'wayland'

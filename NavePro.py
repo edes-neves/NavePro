@@ -9521,9 +9521,9 @@ class AppInterface:
             arquivo_frame.pack_forget()
 
             # ── Item "YouTube" (caixinha + URL) ──
-            # Independente do tipo escolhido acima: marcando a caixinha, o
-            # item passa a ser um vídeo do YouTube e a URL é usada na
-            # execução (mpv + yt-dlp). Fica sempre visível no editor.
+            # Só aparece quando o tipo é "Vídeo" (ou na edição de um item que
+            # já é YouTube): marcando a caixinha, o item passa a ser um vídeo
+            # do YouTube e a URL é usada na execução (mpv + yt-dlp).
             youtube_var = tk.BooleanVar(
                 value=((item_edit or {}).get("tipo") or "").lower() == "youtube"
                 or bool((item_edit or {}).get("youtube_url")))
@@ -9589,10 +9589,16 @@ class AppInterface:
                     anuncio_frame.pack(fill='x', pady=(2, 0))
                 else:
                     anuncio_frame.pack_forget()
-                # A caixinha YouTube fica sempre visível; repack garante que
-                # ela apareça depois dos painéis acima.
-                youtube_frame.pack_forget()
-                youtube_frame.pack(fill='x', pady=(6, 0))
+                # YouTube (caixinha + URL) só tem sentido com o tipo "Vídeo"
+                # (ou na edição de um item que já é YouTube). Ao sair do
+                # vídeo a caixinha é desmarcada — senão o _salvar_item forçaria
+                # tipo "youtube" por baixo do tipo que o operador acabou de
+                # marcar.
+                if t in ("video", "youtube"):
+                    youtube_frame.pack(fill='x', pady=(6, 0))
+                else:
+                    youtube_frame.pack_forget()
+                    youtube_var.set(False)
                 _aplicar_geometria("700x600" if t == "versiculo"
                                    else "700x600" if t == "hino"
                                    else "700x510" if t == "anuncio"
