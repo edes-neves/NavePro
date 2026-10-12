@@ -43,12 +43,12 @@
     <release version="2.1.5" date="2026-10-12">
       <description>
         <ul>
-          <li>Item "YouTube" na Ordem de Serviço: na janela "Ad. Item", marque a caixinha YouTube, cole a URL do vídeo e ele toca no telão pelo mpv (transmitido pelo yt-dlp), com pausa/continuar/parar no painel</li>
-          <li>O app avisa o operador quando falta o mpv ou o yt-dlp, e quando o yt-dlp está desatualizado — mostrando como atualizá-lo no sistema (pipx upgrade yt-dlp ou gerenciador de pacotes)</li>
+          <li>Ordem de Serviço: novo item "YouTube" — na janela "Ad. Item", marque a caixinha, cole a URL e o vídeo toca no telão pelo mpv (via yt-dlp), com pausa/continuar/parar no painel</li>
+          <li>O app avisa o operador quando falta o mpv ou o yt-dlp, e quando o yt-dlp está desatualizado — mostrando como atualizá-lo no sistema (pipx upgrade yt-dlp ou gerenciador)</li>
           <li>Força um cliente do yt-dlp que contorna o bloqueio do YouTube ("The page needs to be reloaded") que fazia o vídeo não abrir</li>
           <li>Flatpak: player de vídeo (mpv) e YouTube funcionam dentro do sandbox via wrapper que delega para o mpv e o yt-dlp do sistema</li>
           <li>Imagens em anúncios/presentações voltam a ser exibidas no telão (regressão de projeção de imagem com texto e imagem de fundo)</li>
-          <li>Vídeo/YouTube toca no monitor certo também no Linux: o player mira o mesmo monitor do telão Tk (o não-primário) e, em sessão Wayland, o mpv roda como X11 — corrige o mpv 0.41 que abria no monitor focado pelo compositor</li>
+          <li>Vídeo/YouTube toca no monitor certo também no Linux: o player mira o mesmo monitor do telão Tk (o não-primário) e, em sessão Wayland, o mpv roda como X11 — corrige o mpv 0.41 que abria no monitor focado pelo compositor; e sem --geometry no Linux, pois a posição do mpv fazia o XWayland devolver a janela ao monitor do operador (validado no BigLinux)</li>
           <li>Na janela Ad. Item, a caixinha/URL do YouTube só aparece com o tipo Vídeo marcado</li>
         </ul>
       </description>

@@ -511,6 +511,11 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
   mpv roda como janela X11 (`--vo=x11`) — corrige os mpv 0.41 que, no Wayland,
   abriam o vídeo no monitor **focado pelo compositor**, ignorando o configurado
   (validado em BigLinux e Ubuntu 26.04/GNOME).
+- **...e sem `--geometry` no Linux**: o `--geometry=WxH+X+Y` do mpv fazia o
+  XWayland "clampiar" a janela de volta para o monitor do operador antes do
+  tela cheia (validado no BigLinux — mesmo vídeo abria no operador **com**
+  `--geometry` e no telão **sem**). Em tela cheia o tamanho é o do monitor, então
+  a geometria era redundante.
 - Na janela **Ad. Item**, a caixinha/URL do **YouTube** só aparece com o tipo
   **Vídeo** marcado.
 

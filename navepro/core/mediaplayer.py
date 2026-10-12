@@ -762,11 +762,16 @@ class MediaPlayer:
                     f'--geometry={mw}x{mh}+{mx}+{my}',
                     arquivo,
                 ]
+            # Sem --geometry no Linux: sob XWayland (GNOME/Wayland) um
+            # --geometry cuja posição caia fora da saída é "clampado" de volta
+            # para o monitor do operador ANTES do fullscreen (medido no
+            # BigLinux: com --geometry o vídeo abria no primário; sem, no
+            # telão). Em tela cheia o tamanho é o do monitor, então a
+            # geometria era redundante mesmo.
             return [
                 'mpv', '--fullscreen',
                 f'--screen={self._indice_screennumber()}',
                 '--really-quiet', '--no-terminal',
-                f'--geometry={mw}x{mh}+{mx}+{my}',
                 *_opcoes_telao_wayland(self._monitor_alvo().name),
                 arquivo,
             ]
@@ -803,11 +808,12 @@ class MediaPlayer:
                 *_MPV_YTDL_OPCOES,
                 url,
             ]
+        # Sem --geometry no Linux pelo mesmo motivo do mpv local (XWayland
+        # clampia a posição fora da saída de volta para o operador).
         return [
             'mpv', '--fullscreen',
             f'--screen={self._indice_screennumber()}',
             '--really-quiet', '--no-terminal',
-            f'--geometry={mw}x{mh}+{mx}+{my}',
             *_opcoes_telao_wayland(self._monitor_alvo().name),
             *_MPV_YTDL_OPCOES,
             url,
