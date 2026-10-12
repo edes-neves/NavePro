@@ -35,6 +35,7 @@
 # Windows). Toda instalação nova nascia no player que não aceita pausar, e o
 # operador ganhava o aviso "pausar/continuar não funciona" no primeiro uso.
 import os
+import sys
 
 # `console` e `icon` são resolvidos aqui para permitir vars por ambiente
 # sem duplicar o spec.
@@ -79,6 +80,24 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# ── Fonte do Tk: NÃO embutir libfontconfig/libXft no Linux ───────────
+# O PyInstaller puxa o libfontconfig.so.1 + libXft.so.2 da máquina de build
+# junto com o libtk8.6. Quando a distro do usuário tem esses dois MAIS NOVOS
+# (ou mais velhos) que os embutidos, a lib embutida é quem lê os configs do
+# sistema — ex.: BigLinux com fontconfig 2.18 e configs 2.18
+# (48-guessfamily.conf com "xsi:nil"): a lib 2.15 embutida emite "invalid
+# attribute 'xsi:nil'" e quebra os aliases de família, deixando a interface
+# com fonte miúda/quadradinhos (o mesmo sintoma que o Tk 9.0 causava). Sem as
+# libs embutidas, o Tk resolve ambas SÓ no sistema, casadas entre si e com os
+# próprios configs (o comportamento de um app normal). O Windows não usa
+# fontconfig/Xft (GDI) e no Flatpak o fontconfig é o da runtime (casado com
+# os configs dela).
+if sys.platform.startswith("linux"):
+    a.binaries = [
+        b for b in a.binaries
+        if not os.path.basename(b[0]).startswith(("libfontconfig", "libXft"))
+    ]
 pyz = PYZ(a.pure)
 
 exe = EXE(
