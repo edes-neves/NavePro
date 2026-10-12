@@ -40,6 +40,17 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.5" date="2026-10-12">
+      <description>
+        <ul>
+          <li>Item "YouTube" na Ordem de Serviço: na janela "Ad. Item", marque a caixinha YouTube, cole a URL do vídeo e ele toca no telão pelo mpv (transmitido pelo yt-dlp), com pausa/continuar/parar no painel</li>
+          <li>O app avisa o operador quando falta o mpv ou o yt-dlp, e quando o yt-dlp está desatualizado — mostrando como atualizá-lo no sistema (pipx upgrade yt-dlp ou gerenciador de pacotes)</li>
+          <li>Força um cliente do yt-dlp que contorna o bloqueio do YouTube ("The page needs to be reloaded") que fazia o vídeo não abrir</li>
+          <li>Flatpak: player de vídeo (mpv) e YouTube funcionam dentro do sandbox via wrapper que delega para o mpv e o yt-dlp do sistema</li>
+          <li>Imagens em anúncios/presentações voltam a ser exibidas no telão (regressão de projeção de imagem com texto e imagem de fundo)</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.4" date="2026-10-09">
       <description>
         <ul>

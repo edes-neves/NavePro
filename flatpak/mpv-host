@@ -1,0 +1,45 @@
+#!/bin/sh
+# /app/bin/mpv — wrapper para o Flatpak.
+#
+# O sandbox NÃO tem mpv (a runtime freedesktop não o traz). Substituímos o
+# comando `mpv` por este script, que lança o mpv REAL do sistema via
+# `flatpak-spawn --host`. Sem ele, tanto o vídeo local com o player mpv
+# quanto o item "YouTube" (mpv + yt-dlp) falhavam em silêncio: o NavePro
+# chamava o nome `mpv` e o PATH do sandbox (/app/bin:/usr/bin) não o tinha.
+#
+# O NavePro encerra o player matando o grupo de processos (killpg com
+# SIGTERM). Como o mpv roda fora do sandbox, capturamos o TERM/INT aqui e
+# repassamos o sinal ao processo real no host (mesma estratégia do
+# smplayer-host), para o vídeo parar.
+set +e
+
+PIDFILE="$HOME/.navepro/mpv-host.pid"
+rm -f "$PIDFILE"
+
+# Dispara o mpv no host. O `$$` do host-shell vira o PID do mpv após o exec;
+# anotamos esse PID no pidfile (mesmo caminho no host e aqui). `_` é o $0 do
+# shell; "$@" (os argumentos reais do NavePro) ficam em $1...
+flatpak-spawn --host /bin/sh -c \
+  'echo $$ > "$HOME/.navepro/mpv-host.pid"; exec mpv "$@"' \
+  _ "$@" &
+BROKER_PID=$!
+
+_kill_host_player() {
+  pid=$(cat "$PIDFILE" 2>/dev/null)
+  if [ -n "$pid" ]; then
+    # kill DIRETO (util-linux) via flatpak-spawn — sem wrapper de sh: o
+    # /bin/sh do host é o dash e o builtin dele rejeita pid negativo
+    # ("Illegal number: -"). O pause congela o grupo com SIGSTOP; processo
+    # parado NÃO entrega SIGTERM, então CONT acorda e o TERM mata.
+    flatpak-spawn --host kill -CONT -- "-$pid" 2>/dev/null
+    flatpak-spawn --host kill -TERM -- "-$pid" 2>/dev/null
+  fi
+  exit 0
+}
+
+trap _kill_host_player TERM INT
+
+wait "$BROKER_PID"
+RESULT=$?
+rm -f "$PIDFILE"
+exit "$RESULT"

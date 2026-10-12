@@ -903,15 +903,27 @@ class MediaPlayer:
     def _pausar_player_flatpak(self) -> bool:
         """Pausa/continua o player do HOST (Flatpak) pelo pidfile do shim.
 
-        O `smplayer-host` grava o PID real do smplayer em
-        ~/.navepro/smplayer-host.pid — mesmo caminho dentro e fora do sandbox.
+        Os shims `smplayer-host`/`mpv-host` gravam o PID real do player em
+        ~/.navepro/<player>-host.pid — mesmo caminho dentro e fora do sandbox.
         O sinal vai por `flatpak-spawn --host` no GRUPO de processos, o mesmo
         mecanismo que o shim usa para repassar o TERM: smplayer e mpv param
         juntos. SIGSTOP no proxy (o processo que o NavePro tem na mão) não
         pausava nada — é por isso que o pause não funcionava no Flatpak.
+
+        O mpv tem shim próprio (mpv-host) porque o sandbox não traz mpv: sem
+        ele o item YouTube e o vídeo local com o player mpv nem abriam. Só o
+        pidfile do player em uso é consultado — um `mpv-host.pid` velho (de
+        outra sessão) nunca deve receber sinal de pause do smplayer, nem
+        vice-versa. VLC não tem shim no Flatpak: sem pidfile, cai no MPRIS.
         """
-        pidfile = os.path.join(os.path.expanduser("~"), ".navepro",
-                               "smplayer-host.pid")
+        if self._player_em_uso == "mpv":
+            nome = "mpv-host.pid"
+        elif self._player_em_uso == "smplayer":
+            nome = "smplayer-host.pid"
+        else:
+            return False  # sem shim (ex.: vlc) → pause fica com o MPRIS
+        pidfile = os.path.join(os.path.expanduser("~"), ".navepro", nome)
+        sig = "CONT" if self.is_paused else "STOP"
         try:
             with open(pidfile, encoding="utf-8") as arq:
                 pid = int(arq.read().strip())
@@ -919,7 +931,6 @@ class MediaPlayer:
             return False
         if pid <= 0:
             return False
-        sig = "CONT" if self.is_paused else "STOP"
         # kill direto (util-linux), sem wrapper de sh: o /bin/sh do host é o
         # dash, cujo builtin kill rejeita pid negativo ("Illegal number: -")
         # e aí o mpv do grupo seguia tocando. Grupo primeiro (smplayer + mpv);

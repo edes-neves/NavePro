@@ -30,6 +30,12 @@
 # Script auxiliar com token GitHub embutido (não versionar)
 /check-flathub.sh
 
+# Artefatos do build local do Flatpak e utilitário de teste
+/flatpak/build/
+/flatpak/repo/
+/io.github.edes_neves.NavePro.*.flatpak
+/yt-dlp
+
 # Configuração local e utilitários
 /config.json
 /tempCodeRunnerFile.py

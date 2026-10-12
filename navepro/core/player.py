@@ -68,8 +68,13 @@ _CANDIDATOS_WINDOWS: dict[str, tuple[str, ...]] = {
 }
 
 # Caminhos absolutos do Linux, mantidos exatamente como o NavePro já usava.
-_CAMINHOS_LINUX: tuple[str, ...] = ("/usr/bin", "/usr/local/bin",
-                                    "/run/host/usr/bin")
+# `~/.local/bin` entra por causa do yt-dlp instalado com pipx (fica só ali e
+# não no PATH quando o app roda dentro do Flatpak) — sem isso o item YouTube
+# era bloqueado com "instale o yt-dlp" mesmo com o yt-dlp no host.
+_CAMINHOS_LINUX: tuple[str, ...] = (
+    "/usr/bin", "/usr/local/bin", "/run/host/usr/bin",
+    os.path.expanduser("~/.local/bin"),
+)
 
 # Cache de resoluções: localizar executável custa alguns stat() no disco e o
 # NavePro pergunta várias vezes por faixa. Valores: nome -> caminho ou None.

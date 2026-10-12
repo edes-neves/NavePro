@@ -9,6 +9,18 @@ import os
 import tkinter as tk
 import tkinter.font as tkfont
 
+# Pillow é dependência do app. Import separado porque em algumas distros o
+# ImageTk vem em pacote à parte (ex.: Debian python3-pil.imagetk): sem ele só
+# a projeção de imagem deixa de funcionar, o resto do telão segue igual.
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+try:
+    from PIL import ImageTk
+except ImportError:
+    ImageTk = None
+
 from navepro.core.ambiente import _eh_windows
 from navepro.core.fontes_pil import (
     _PCT_FONTE_CAIXA,
