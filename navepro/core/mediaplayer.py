@@ -24,7 +24,11 @@ from navepro.core.ambiente import (
     _eh_windows,
 )
 from navepro.core.log import get_logger
-from navepro.core.monitores import MonitorInfo, get_monitors_config
+from navepro.core.monitores import (
+    MonitorInfo,
+    _escolher_monitor_telao,
+    get_monitors_config,
+)
 from navepro.core.player import (
     MPRIS_DESTS,
     ClienteMpvIpc,
@@ -129,7 +133,8 @@ class MediaPlayer:
     # Mapeamento player -> D-Bus (fonte única em navepro/core/player.py)
     _MPRIS_DESTS: dict[str, str] = dict(MPRIS_DESTS)
 
-    def __init__(self, monitor_index: int = 1, player_cmd: str = PLAYER_PADRAO,
+    def __init__(self, monitor_index: int | None = None,
+                 player_cmd: str = PLAYER_PADRAO,
                  telao: TelaoWindow | None = None) -> None:  # noqa: F821
         self.playlist: list[str] = []
         self.index: int = 0
@@ -137,7 +142,7 @@ class MediaPlayer:
         self.is_paused: bool = False
         self._process: subprocess.Popen | None = None
         self._process_lock: threading.Lock = threading.Lock()
-        self.monitor_index: int = monitor_index
+        self.monitor_index: int | None = monitor_index
         self.player_cmd: str = player_cmd
         self.tempo_inicio: float | None = None
         self.tempo_acumulado: float = 0.0
@@ -279,16 +284,32 @@ class MediaPlayer:
         self.index = 0
 
     def _monitor_alvo(self):
-        """Devolve o MonitorInfo do telão (com fallback se a lista falhar)."""
+        """Devolve o MonitorInfo do monitor do telão.
+
+        Prioridade:
+        1. `monitor_index` explícito (config.json "monitor") — escolha manual
+           do operador, 1-based na ordem de `get_monitors_config()`.
+        2. Sem config explícita: o monitor NÃO primário, exatamente a regra
+           do TelaoWindow (`_escolher_monitor_telao`). Antes o padrão era "o
+           segundo da lista"; quando o xrandr/screeninfo enumerava o telão
+           primeiro (ex.: [HDMI-1, DP-1]), o "segundo" virava o monitor do
+           operador e o mpv abria vídeo/YouTube lá, mesmo com o
+           `--screen-name` certo — o telão da projeção Tk seguia certo.
+        3. O único/primeiro monitor (fallback).
+        """
         try:
             monitors = get_monitors_config()
-            if len(monitors) >= self.monitor_index:
-                return monitors[self.monitor_index - 1]
-            if len(monitors) > 1:
-                return monitors[1]
-            return monitors[0]
+            if monitors:
+                if self.monitor_index is not None and self.monitor_index > 0:
+                    if len(monitors) >= self.monitor_index:
+                        return monitors[self.monitor_index - 1]
+                m = _escolher_monitor_telao(monitors)
+                if m is not None:
+                    return m
+                return monitors[0]
         except Exception:
-            return MonitorInfo(1920, 0, 1920, 1080, "Telão")
+            pass
+        return MonitorInfo(1920, 0, 1920, 1080, "Telão")
 
     def _get_monitor_geometry(self) -> tuple[int, int, int, int]:
         """Retorna (x, y, width, height) do monitor alvo."""

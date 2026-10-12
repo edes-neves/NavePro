@@ -445,6 +445,59 @@ def _rodar() -> int:
     checar("encerrar() sem pipe devolve False",
            cliente.encerrar(timeout=0.2) is False)
 
+    # ── 8. Monitor alvo do player == monitor do telão Tk (2.1.5) ──────
+    # Sem config explícita ("monitor" ausente), o player tem que mirar o
+    # MESMO monitor que a projeção Tk (o NÃO primário), independente da
+    # ordem em que screeninfo/xrandr enumera os monitores. Antes o padrão
+    # era "o segundo da lista": se o telão venha enumerado antes do operador
+    # ([HDMI-1, DP-1]), o "segundo" virava o operador e o mpv abria o
+    # vídeo/YouTube no monitor errado.
+    from navepro.core.monitores import MonitorInfo as _MonitInfo  # noqa: PLC0415
+    from navepro.core.monitores import _escolher_monitor_telao as _telao_regra  # noqa: PLC0415
+    # _monitor_alvo está no mediaplayer (não no NavePro.py)
+    _alvo_ns: dict = {"log": log}
+    _metodo_alvo = None
+    for _fname in ("navepro/core/mediaplayer.py", "NavePro.py"):
+        try:
+            _src = open(os.path.join(RAIZ, _fname), encoding="utf-8").read()
+            for _no in ast.walk(ast.parse(_src)):
+                if isinstance(_no, ast.ClassDef) and _no.name == "MediaPlayer":
+                    for _sub in _no.body:
+                        if (isinstance(_sub, ast.FunctionDef)
+                                and _sub.name == "_monitor_alvo"):
+                            _ma = ast.Module(body=[_sub], type_ignores=[])
+                            ast.fix_missing_locations(_ma)
+                            exec(compile(_ma, "<MediaPlayer._monitor_alvo>",
+                                         "exec"), _alvo_ns)
+                            _metodo_alvo = _alvo_ns["_monitor_alvo"]
+                            break
+                    break
+        except Exception:
+            continue
+        if _metodo_alvo is not None:
+            break
+    checar("_monitor_alvo extraído do mediaplayer", _metodo_alvo is not None)
+
+    if _metodo_alvo is not None:
+        _lista_atual: list = []
+        _alvo_ns["get_monitors_config"] = lambda: list(_lista_atual)
+        _alvo_ns["_escolher_monitor_telao"] = _telao_regra
+        _alvo_ns["MonitorInfo"] = _MonitInfo
+        _operador = _MonitInfo(0, 0, 1920, 1080, "DP-1", primary=True)
+        _telao_ = _MonitInfo(1920, 0, 1920, 1080, "HDMI-1", primary=False)
+        _sem_idx = type("F", (), {"monitor_index": None})()
+        _idx2 = type("F", (), {"monitor_index": 2})()
+        # ordem [operador, telão]
+        _lista_atual[:] = [_operador, _telao_]
+        checar("sem config: telão é o NÃO primário (ordem normal)",
+               _metodo_alvo(_sem_idx) is _telao_)
+        # ordem invertida [telão, operador] — o que derrubava o 2.1.5
+        _lista_atual[:] = [_telao_, _operador]
+        checar("sem config: telão segue o NÃO primário MESMO se listado 1º",
+               _metodo_alvo(_sem_idx) is _telao_)
+        checar("config explícita monitor=2 continua valendo (2º da lista)",
+               _metodo_alvo(_idx2) is _operador)
+
     return falhas
 
 

@@ -553,8 +553,17 @@ class AppInterface:
         self.tema: str = self.config_data.get("tema", "escuro")
         if self.tema not in ("escuro", "claro"):
             self.tema = "escuro"
-        # Monitor do telão é determinado pelo primário do SO (não primário)
-        self.monitor_index: int = self.config_data.get("monitor", 2)
+        # Monitor do telão: se o operador definiu "monitor" no config, o valor
+        # vira o PC alvo do vídeo (1-based na ordem de get_monitors_config).
+        # Sem config, o player usa a MESMA regra do TelaoWindow (_escolher_
+        # monitor_telao: o monitor NÃO primário) — o vídeo abre onde a projeção
+        # Tk já aparece, independente da ordem da lista. (Antes o padrão "2" —
+        # "segundo da lista" — errava quando o telão vinha enumerado antes do
+        # operador.)
+        _monitor_cfg = self.config_data.get("monitor")
+        self.monitor_index: int | None = (
+            _monitor_cfg if isinstance(_monitor_cfg, int) and _monitor_cfg > 0
+            else None)
         self.player_cmd: str = self.config_data.get("player", PLAYER_PADRAO)
         self.placeholder_busca: str = "Buscar hino... [BD]"
         self.arquivos_encontrados: list[str] = []
