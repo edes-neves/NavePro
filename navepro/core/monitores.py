@@ -141,3 +141,49 @@ def get_monitors_config() -> list[MonitorInfo]:
     result.sort(key=lambda m: (m.x, m.y))
     _MONITORS_CACHE = (time.time(), result)
     return result
+
+
+# ────────────────────────────────────────────────────────────────────
+# ESCOLHA DO MONITOR (painel / telão)
+# ────────────────────────────────────────────────────────────────────
+
+
+def _escolher_monitor_painel(monitors: list[MonitorInfo]) -> MonitorInfo | None:
+    """Monitor do painel do administrador: o primário do SO, ou o primeiro.
+
+    É a mesma escolha de sempre — só que isolada, para que o telão possa
+    garantir que não vai cair no mesmo monitor.
+    """
+    if not monitors:
+        return None
+    for m in monitors:
+        if getattr(m, 'primary', False):
+            return m
+    # Nenhum primário informado: por convenção do SO o primeiro é o primário.
+    return monitors[0]
+
+
+def _escolher_monitor_telao(monitors: list[MonitorInfo]) -> MonitorInfo | None:
+    """Escolhe em qual monitor o TELÃO abre.
+
+    Regra: nunca o mesmo monitor do painel, senão as duas janelas se sobrepõem
+    e o telão não cobre a segunda tela. O painel ocupa o primário (ver
+    _escolher_monitor_painel), então o telão pega o primeiro que sobra.
+
+    Importante para o caso em que a detecção do primário falha: antes, o telão
+    caía em monitors[0] — exatamente o monitor do painel. Agora ele é sempre
+    um monitor diferente, mesmo sem primário definido.
+
+    Com o primário corretamente detectado (xrandr no Linux, screeninfo no
+    Windows), o resultado é o primeiro não primário — idêntico ao
+    comportamento anterior.
+    """
+    if not monitors:
+        return None
+    if len(monitors) == 1:
+        return monitors[0]
+    painel = _escolher_monitor_painel(monitors)
+    for m in monitors:
+        if m is not painel:
+            return m
+    return monitors[0]

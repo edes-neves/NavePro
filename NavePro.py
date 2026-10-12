@@ -101,7 +101,7 @@ from navepro.core.inicializacao import (
 from navepro.core.log import configurar_logging, get_logger
 from navepro.core.mediaplayer import MediaPlayer
 from navepro.core.monitores import (
-    MonitorInfo,
+    _escolher_monitor_painel,
     get_monitors_config,
 )
 from navepro.core.paths import (
@@ -154,6 +154,7 @@ from navepro.core.transferencia import (
 from navepro.core.transferencia import (
     _nome_arquivo as _nome_arquivo_transferencia,
 )
+from navepro.core.util_tk import _centralizar_sobre, _normalizar_escala_tk
 
 # Precisa rodar ANTES de qualquer tk.Tk(): o Tk 8.6 do Windows não é
 # DPI-aware e cacheia a tela em pixels lógicos, enquanto o screeninfo ativa o
@@ -273,123 +274,18 @@ class SearchWorker:
 # ────────────────────────────────────────────────────────────────────
 
 
-def _centralizar_sobre(janela, pai=None) -> None:
-    """Posiciona `janela` centralizada sobre `pai` (ou sobre a tela).
-
-    Uma Toplevel criada só com geometry("LxA") (sem coordenadas) deixa o
-    posicionamento por conta do window manager: no Windows ele centraliza
-    sobre a janela pai, mas no Linux/Wayland ele decide sozinho e em
-    multi-monitor abre até no monitor errado (ex.: no telão). Aqui a
-    posição é explícita e igual em qualquer SO.
-
-    Mede o tamanho real da janela (com fallback para o tamanho requisitado
-    quando ainda não mapeada) e desloca o centro dela para o centro de
-    `pai`. Se `pai` não existir mais, centraliza na tela.
-    """
-    try:
-        janela.update_idletasks()
-        w = janela.winfo_width()
-        h = janela.winfo_height()
-        if w <= 1 or h <= 1:
-            w = max(w, janela.winfo_reqwidth())
-            h = max(h, janela.winfo_reqheight())
-        if pai is not None:
-            try:
-                if pai.winfo_exists():
-                    px, py = pai.winfo_x(), pai.winfo_y()
-                    pw, ph = pai.winfo_width(), pai.winfo_height()
-                else:
-                    raise tk.TclError
-            except tk.TclError:
-                px = py = 0
-                pw = janela.winfo_screenwidth()
-                ph = janela.winfo_screenheight()
-        else:
-            px = py = 0
-            pw = janela.winfo_screenwidth()
-            ph = janela.winfo_screenheight()
-        if pw <= 1 or ph <= 1:
-            return
-        x = px + max(0, (pw - w) // 2)
-        y = py + max(0, (ph - h) // 2)
-        janela.geometry(f"+{x}+{y}")
-    except tk.TclError:
-        pass
+# (_centralizar_sobre movido para navepro/core/util_tk.py — ver "IMPORTS INTERNOS" no topo)
 
 
 # ────────────────────────────────────────────────────────────────────
 # TELÃO - JANELA DE PROJEÇÃO (mantido)
 # ────────────────────────────────────────────────────────────────────
 
-def _escolher_monitor_painel(monitors: list[MonitorInfo]) -> MonitorInfo | None:
-    """Monitor do painel do administrador: o primário do SO, ou o primeiro.
-
-    É a mesma escolha de sempre — só que isolada, para que o telão possa
-    garantir que não vai cair no mesmo monitor.
-    """
-    if not monitors:
-        return None
-    for m in monitors:
-        if getattr(m, 'primary', False):
-            return m
-    # Nenhum primário informado: por convenção do SO o primeiro é o primário.
-    return monitors[0]
+# (_escolher_monitor_painel/_escolher_monitor_telao movidos para
+#  navepro/core/monitores.py — ver "IMPORTS INTERNOS" no topo)
 
 
-
-
-
-def _escolher_monitor_telao(monitors: list[MonitorInfo]) -> MonitorInfo | None:
-    """Escolhe em qual monitor o TELÃO abre.
-
-    Regra: nunca o mesmo monitor do painel, senão as duas janelas se sobrepõem
-    e o telão não cobre a segunda tela. O painel ocupa o primário (ver
-    _escolher_monitor_painel), então o telão pega o primeiro que sobra.
-
-    Importante para o caso em que a detecção do primário falha: antes, o telão
-    caía em monitors[0] — exatamente o monitor do painel. Agora ele é sempre
-    um monitor diferente, mesmo sem primário definido.
-
-    Com o primário corretamente detectado (xrandr no Linux, screeninfo no
-    Windows), o resultado é o primeiro não primário — idêntico ao
-    comportamento anterior.
-    """
-    if not monitors:
-        return None
-    if len(monitors) == 1:
-        return monitors[0]
-    painel = _escolher_monitor_painel(monitors)
-    for m in monitors:
-        if m is not painel:
-            return m
-    return monitors[0]
-
-
-
-
-
-def _normalizar_escala_tk(root) -> float:
-    """Garante texto legível e consistente entre Python/Tk diferentes.
-
-    O AppImage usa o python do sistema (AppRun), que pode ter um Tk com
-    'tk scaling' baixo (ex.: dpi desconhecido), deixando botões e fontes
-    minúsculos no monitor 1 e as letras pequenas no telão. Este ajuste
-    aplica um piso de zoom (1.3 px/ponto, ≈96dpi) em qualquer interpretador.
-    """
-    escala_min = 1.3
-    try:
-        pixels_por_pol = float(root.winfo_fpixels('1i'))
-        escala = pixels_por_pol / 72.0
-        if escala < escala_min:
-            escala = escala_min
-        root.tk.call('tk', 'scaling', escala)
-        return escala
-    except Exception:
-        try:
-            root.tk.call('tk', 'scaling', escala_min)
-        except Exception:
-            pass
-        return escala_min
+# (_normalizar_escala_tk movido para navepro/core/util_tk.py — ver "IMPORTS INTERNOS" no topo)
 
 
 # ────────────────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ from navepro.core.fontes_pil import (
     _fonte_familia_do_pil,
 )
 from navepro.core.log import get_logger
-from navepro.core.monitores import get_monitors_config
+from navepro.core.monitores import _escolher_monitor_telao, get_monitors_config
 from navepro.core.paths import _aplicar_icone_janela
 from navepro.core.util_tk import _normalizar_escala_tk
 
@@ -47,16 +47,7 @@ class TelaoWindow:
         # TelaoWindow (relogio/telão) abre SEMPRE no monitor que NÃO é
         # o primário, conforme definido pelo SO. Se houver apenas um
         # monitor, usa-o.
-        # escolhe monitor secundário; fallback se necessário
-        monitor = None
-        primarios = [m for m in monitors if getattr(m, 'primary', False)]
-        secundarios = [m for m in monitors if not getattr(m, 'primary', False)]
-        if secundarios:
-            monitor = secundarios[0]
-        elif primarios and len(monitors) == 1:
-            monitor = primarios[0]
-        elif monitors:
-            monitor = monitors[0]
+        monitor = _escolher_monitor_telao(monitors)
         # Cache de geometria privada (evita acessos repetidos)
         self._monitor = monitor
         geometry = f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}"

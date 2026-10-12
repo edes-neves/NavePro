@@ -26,37 +26,46 @@ def _carregar_monitorinfo() -> type:
 
 
 def _carregar_escolher() -> callable:
-    """Extrai _escolher_monitor_telao do NavePro.py sem importar o app."""
+    """Extrai _escolher_monitor_telao dos módulos (ou NavePro.py)."""
     return _extrair("_escolher_monitor_telao")
 
 
 def _carregar_painel() -> callable:
-    """Extrai _escolher_monitor_painel do NavePro.py sem importar o app."""
+    """Extrai _escolher_monitor_painel dos módulos (ou NavePro.py)."""
     return _extrair("_escolher_monitor_painel")
 
 
 def _extrair(nome_funcao: str) -> callable:
-    """Extrai uma função de nível superior do NavePro.py via AST."""
-    src = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
-    no = ast.parse(src)
-    # _escolher_monitor_telao chama _escolher_monitor_painel: precisa dos dois.
-    corpos = []
-    for node in no.body:
-        if isinstance(node, ast.FunctionDef) and node.name in (
-            "_escolher_monitor_telao", "_escolher_monitor_painel"
-        ):
-            corpos.append(node)
-    mod = ast.Module(body=corpos, type_ignores=[])
-    ast.fix_missing_locations(mod)
-    ns: dict = {
-        "MonitorInfo": _carregar_monitorinfo(),
-        "List": list,
-        "Optional": Optional,
-        "log": log,
-    }
-    exec(compile(mod, "<escolher>", "exec"), ns)
-    assert nome_funcao in ns, f"{nome_funcao} não encontrada em NavePro.py"
-    return ns[nome_funcao]
+    """Extrai funções de escolha de monitor (fallback para módulo)."""
+    # Tentar primeiro no módulo core.monitores (local atual)
+    from navepro.core import monitores
+    if hasattr(monitores, nome_funcao):
+        return getattr(monitores, nome_funcao)
+    # fallback legacy: NavePro.py
+    try:
+        src = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+        no = ast.parse(src)
+        corpos = []
+        for node in no.body:
+            if isinstance(node, ast.FunctionDef) and node.name in (
+                "_escolher_monitor_telao", "_escolher_monitor_painel"
+            ):
+                corpos.append(node)
+        if corpos:
+            mod = ast.Module(body=corpos, type_ignores=[])
+            ast.fix_missing_locations(mod)
+            ns: dict = {
+                "MonitorInfo": _carregar_monitorinfo(),
+                "List": list,
+                "Optional": Optional,
+                "log": log,
+            }
+            exec(compile(mod, "<escolher>", "exec"), ns)
+            if nome_funcao in ns:
+                return ns[nome_funcao]
+    except Exception:
+        pass
+    raise AssertionError(f"{nome_funcao} não encontrada")
 
 
 def _mk(cls, x, y, w, h, primary=False, name="M"):
