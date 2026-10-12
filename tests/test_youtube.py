@@ -172,16 +172,16 @@ try:
     mediaplayer_mod._eh_wayland = lambda: True
     mediaplayer_mod._versao_mpv_cacheada = lambda: (0, 37)
     _dec = _opcoes_telao_wayland("HDMI-2")
-    checar("Wayland nativo: mpv recebe --screen-name do telão",
-           _dec == ["--screen-name=HDMI-2"])
-    checar("Wayland sem nome de saída: nenhuma opção extra",
-           _opcoes_telao_wayland("") == [])
+    checar("Wayland nativo: mpv roda como X11 + --screen-name do telão",
+           _dec == ["--vo=x11", "--screen-name=HDMI-2"])
+    checar("Wayland sem nome de saída: só o VO X11",
+           _opcoes_telao_wayland("") == ["--vo=x11"])
     mediaplayer_mod._versao_mpv_cacheada = lambda: (0, 32)
     checar("mpv anterior ao 0.34 não ganha opção desconhecida (não quebra)",
-           _opcoes_telao_wayland("HDMI-2") == [])
+           _opcoes_telao_wayland("HDMI-2") == ["--vo=x11"])
     mediaplayer_mod._eh_wayland = lambda: False
     mediaplayer_mod._versao_mpv_cacheada = lambda: (0, 37)
-    checar("sessão X11: sem --screen-name (o --screen do índice resolve)",
+    checar("sessão X11: sem vo=x11 nem --screen-name (o --screen resolve)",
            _opcoes_telao_wayland("HDMI-2") == [])
 finally:
     mediaplayer_mod._eh_wayland = _orig_wayland

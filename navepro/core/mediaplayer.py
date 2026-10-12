@@ -95,23 +95,33 @@ def _versao_mpv_cacheada() -> tuple[int, int] | None:
 
 
 def _opcoes_telao_wayland(nome_monitor: str) -> list[str]:
-    """Opções do mpv para o telão quando a sessão é Wayland nativa.
+    """Opções do mpv para o telão numa sessão Wayland nativa.
 
     Numa sessão Wayland o mpv IGNORA o `--screen` (índice X11) e abre em
-    tela cheia na saída do foco — o que mandava vídeo/YouTube para o monitor
-    do operador. O que escolhe a saída lá é o `--screen-name=<nome>` (mpv >=
-    0.34). Devolve [] quando não dá para usar: sessão X11, sem nome de saída,
-    ou mpv antigo demais (que morreria com "option not found").
+    tela cheia na saída do FOCO/compositor — testado nos mpv 0.41 de
+    BigLinux e Ubuntu/GNOME: o `--screen-name` só funcionou quando a janela
+    nascia já no monitor certo (terminal no telão). O caminho que funciona é
+    o MESMO do telão Tk: janela X11 (XWayland), que respeita geometria e
+    Xinerama. Então ao detectar Wayland:
+
+      - `--vo=x11` (disponível em todos os builds testados) força o mpv a
+        rodar como janela X11 — o compositor posiciona por geometria/Xinerama
+        como faz com o próprio Tk do NavePro;
+      - `--screen-name=<saída>` como reforço quando o mpv for >= 0.34.
+
+    Devolve [] para sessão X11 pura: lá o comportamento já é o certo, sem
+    custo de renderização por software.
     """
     if not _eh_wayland():
         return []
+    opcoes = ["--vo=x11"]
     nome = (nome_monitor or "").strip()
     if not nome:
-        return []
+        return opcoes
     versao = _versao_mpv_cacheada()
-    if versao is None or versao < (0, 34):
-        return []
-    return [f"--screen-name={nome}"]
+    if versao is None or versao >= (0, 34):
+        opcoes.append(f"--screen-name={nome}")
+    return opcoes
 
 
 class MediaPlayer:
