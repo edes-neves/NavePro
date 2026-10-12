@@ -22,6 +22,7 @@ sys.path.insert(0, RAIZ)
 from fixture_log import log  # noqa: E402
 
 import navepro.core.mediaplayer as mediaplayer_mod  # noqa: E402
+from navepro.core import player as player_mod  # noqa: E402
 from navepro.core.ambiente import _eh_windows  # noqa: E402
 from navepro.core.mediaplayer import (  # noqa: E402
     _MPV_YTDL_OPCOES,
@@ -186,6 +187,15 @@ try:
 finally:
     mediaplayer_mod._eh_wayland = _orig_wayland
     mediaplayer_mod._versao_mpv_cacheada = _orig_versao
+
+# ── 6. yt-dlp do host acessível no Flatpak ────────────────────────────
+# O Flatpak não herda o PATH do host nem o /usr/local/bin dele (o sandbox
+# mostra o /usr/local da runtime). O yt-dlp instalado pelo binário oficial
+# (ex.: wget -O /usr/local/bin/yt-dlp) só é visto via /run/host/usr/local/bin.
+checar("Flatpak enxerga o /usr/local/bin do host (yt-dlp oficial)",
+       "/run/host/usr/local/bin" in player_mod._CAMINHOS_LINUX)
+checar("sandbox também cobre /run/host/usr/bin (mpv do apt)",
+       "/run/host/usr/bin" in player_mod._CAMINHOS_LINUX)
 
 print("OK" if not falhas else f"\n{falhas} falha(s)")
 sys.exit(1 if falhas else 0)

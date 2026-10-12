@@ -71,8 +71,13 @@ _CANDIDATOS_WINDOWS: dict[str, tuple[str, ...]] = {
 # `~/.local/bin` entra por causa do yt-dlp instalado com pipx (fica só ali e
 # não no PATH quando o app roda dentro do Flatpak) — sem isso o item YouTube
 # era bloqueado com "instale o yt-dlp" mesmo com o yt-dlp no host.
+# `/run/host/usr/local/bin` cobre o yt-dlp instalado pelo binário oficial
+# (wget para /usr/local/bin, fora do apt): dentro do Flatpak o caminho do
+# host fica montado em /run/host/... e o /usr/local/bin do sandbox é o da
+# runtime, não o do sistema.
 _CAMINHOS_LINUX: tuple[str, ...] = (
     "/usr/bin", "/usr/local/bin", "/run/host/usr/bin",
+    "/run/host/usr/local/bin",
     os.path.expanduser("~/.local/bin"),
 )
 
