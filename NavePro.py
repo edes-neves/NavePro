@@ -4129,6 +4129,16 @@ class AppInterface:
         # Espaçador flexível
         tk.Frame(controls_frame, bg='#161b22').pack(side='left', fill='x', expand=True)
 
+        # Botão Sorteio (parte inferior direita do painel)
+        btn_sorteio = tk.Button(
+            controls_frame, text="🎲 Sorteio", font=("Arial", 12, "bold"),
+            bg='#6e40c9', fg='#ffffff', activebackground='#f0c040',
+            activeforeground='#161b22', command=self.abrir_sorteio,
+            cursor='hand2', bd=0, highlightthickness=0, padx=14, pady=6
+        )
+        btn_sorteio.pack(side='right', padx=5)
+        _criar_tooltip(btn_sorteio, "Sorteio Profissional")
+
         # Botões dos novos módulos (frame separado à direita)
         modulos_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
         modulos_frame.pack(side='right', padx=5)
@@ -5459,6 +5469,20 @@ class AppInterface:
                 "⚠️", "Nenhuma mídia válida foi adicionada.",
                 parent=janela_pai,
             )
+
+    # ────────────────────────────────────────────────────────────────────
+    # SORTEIO PROFISSIONAL
+    # ────────────────────────────────────────────────────────────────────
+
+    def abrir_sorteio(self) -> None:
+        """Abre a janela do Sorteio Profissional (integrada ao NavePro).
+
+        O sorteio abre numa janela sobre o painel do operador e projeta a
+        tela pública (o número/nome sorteado) no telão, por cima do relógio.
+        """
+        from navepro.sorteio.integracao import abrir_sorteio
+
+        abrir_sorteio(self)
 
     # ────────────────────────────────────────────────────────────────────
     # JANELA DE HINOS / LETRAS
