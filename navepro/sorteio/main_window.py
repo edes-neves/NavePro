@@ -128,8 +128,6 @@ class MainWindow:
         self._master.title(f"Sorteio Profissional v{APP_VERSION} - Operador")
         self._master.configure(fg_color=self._theme.c("bg"))
 
-        self._build_menu()
-
         self._container = ctk.CTkFrame(
             self._master,
             fg_color=self._theme.c("bg"),
@@ -162,88 +160,25 @@ class MainWindow:
         self._build_history()
 
     def _fit_window_to_content(self) -> None:
-        """Grows the window when taller fonts make the layout overflow,
-        keeping it fully inside the screen."""
+        """Grows the window when taller/wider fonts make the layout overflow,
+        keeping it fully inside the screen (all items stay visible)."""
         self._master.update_idletasks()
-        window_h = self._master.winfo_height()
-        needed = self._container.winfo_reqheight() + 65
-        if needed <= window_h:
-            return
+        win_w = self._master.winfo_width()
+        win_h = self._master.winfo_height()
+        need_w = self._container.winfo_reqwidth() + 65
+        need_h = self._container.winfo_reqheight() + 65
+        max_w = self._master.winfo_screenwidth() - 80
         max_h = self._master.winfo_screenheight() - 130
-        target = min(needed, max_h)
-        if target <= window_h:
+        target_w = min(max(win_w, need_w), max_w)
+        target_h = min(max(win_h, need_h), max_h)
+        if target_w <= win_w and target_h <= win_h:
             return
         x, y = self._master.winfo_x(), self._master.winfo_y()
-        if y + target > self._master.winfo_screenheight():
-            y = max(self._master.winfo_screenheight() - target - 10, 0)
-        self._master.geometry(f"{self._master.winfo_width()}x{target}+{x}+{y}")
-
-    def _build_menu(self) -> None:
-        menu = tk.Menu(self._master)
-
-        arquivos = tk.Menu(menu, tearoff=0)
-        arquivos.add_command(
-            label="Exportar Histórico",
-            accelerator="Ctrl+E",
-            command=self._on_export_click,
-        )
-        arquivos.add_command(
-            label="Configurações",
-            command=self._on_settings_click,
-        )
-        arquivos.add_separator()
-        arquivos.add_command(
-            label="Sair",
-            accelerator="Ctrl+Q",
-            command=self._on_quit_click,
-        )
-        menu.add_cascade(label="Arquivos", menu=arquivos)
-
-        editar = tk.Menu(menu, tearoff=0)
-        editar.add_command(
-            label="Limpar Histórico",
-            command=self._on_clear_click,
-        )
-        editar.add_command(
-            label="Resetar Tudo",
-            accelerator="Ctrl+R",
-            command=self._on_reset_click,
-        )
-        menu.add_cascade(label="Editar", menu=editar)
-
-        exibir = tk.Menu(menu, tearoff=0)
-        exibir.add_command(
-            label="Alternar Tema",
-            accelerator="Ctrl+T",
-            command=self._on_toggle_theme_click,
-        )
-        exibir.add_separator()
-        exibir.add_command(
-            label="Tela Cheia (F11)",
-            accelerator="F11",
-            command=self._on_fullscreen_click,
-        )
-        exibir.add_command(
-            label="Minimizar/Restaurar Tela Pública",
-            accelerator="Ctrl+M",
-            command=self._on_minimize_click,
-        )
-        menu.add_cascade(label="Exibir", menu=exibir)
-
-        sobre = tk.Menu(menu, tearoff=0)
-        sobre.add_command(
-            label="Sobre o Sorteio Profissional",
-            command=self._on_about_click,
-        )
-        ajuda = tk.Menu(sobre, tearoff=0)
-        ajuda.add_command(
-            label="Enviar Email de Suporte",
-            command=self._on_support_email,
-        )
-        sobre.add_cascade(label="Preciso de ajuda", menu=ajuda)
-        menu.add_cascade(label="Sobre", menu=sobre)
-
-        self._master.configure(menu=menu)
+        if x + target_w > self._master.winfo_screenwidth():
+            x = max(self._master.winfo_screenwidth() - target_w - 10, 0)
+        if y + target_h > self._master.winfo_screenheight():
+            y = max(self._master.winfo_screenheight() - target_h - 10, 0)
+        self._master.geometry(f"{target_w}x{target_h}+{x}+{y}")
 
     def _build_header(self) -> None:
         header = ctk.CTkFrame(
@@ -409,6 +344,7 @@ class MainWindow:
 
         self._names_text = ctk.CTkTextbox(
             panel,
+            width=40,
             height=90,
             font=(ui_font(), 17, "bold"),
             fg_color=self._theme.c("input_bg"),
@@ -427,6 +363,38 @@ class MainWindow:
             text_color=self._theme.c("success"),
         )
         self._names_info.pack(anchor="w", padx=0, pady=(0, 5))
+
+        names_count_frame = ctk.CTkFrame(panel, fg_color="transparent")
+        names_count_frame.pack(anchor="w", padx=0, pady=(5, 0))
+
+        ctk.CTkLabel(
+            names_count_frame,
+            text="Nomes por vez:",
+            font=(ui_font(), 16, "bold"),
+            text_color=self._theme.c("text_secondary"),
+        ).pack(side="left")
+
+        self._names_count_vars: list[tuple[tk.BooleanVar, int]] = []
+        for n in (2, 3, 4, 5):
+            var = tk.BooleanVar(master=self._master, value=False)
+            ctk.CTkCheckBox(
+                names_count_frame,
+                text=str(n),
+                variable=var,
+                font=(ui_font(), 16, "bold"),
+                width=48,
+                checkbox_width=18,
+                checkbox_height=18,
+                command=lambda v=var: self._on_names_count_toggle(v),
+            ).pack(side="left", padx=(8, 0))
+            self._names_count_vars.append((var, n))
+
+        ctk.CTkLabel(
+            panel,
+            text="Sem seleção, o sorteio gera 1 nome por vez.",
+            font=(ui_font(), 16, "bold"),
+            text_color=self._theme.c("text_secondary"),
+        ).pack(anchor="w", padx=0, pady=(0, 5))
 
     def _on_mode_change(self, value: str) -> None:
         self._mode = "names" if value == "Nomes" else "numbers"
@@ -671,7 +639,7 @@ class MainWindow:
             self._container,
             fg_color=self._theme.c("bg_card"),
             corner_radius=12,
-            height=60,
+            height=72,
             **self._card_style(),
         )
         frame.pack(fill="x", pady=(0, 15))
@@ -844,6 +812,7 @@ class MainWindow:
 
         self._history_text = ctk.CTkTextbox(
             frame,
+            width=40,
             font=(ui_font(), 13, "bold"),
             fg_color=self._theme.c("input_bg"),
             text_color=self._theme.c("text"),
@@ -917,6 +886,20 @@ class MainWindow:
                 return n
         return 1
 
+    def _on_names_count_toggle(self, var: tk.BooleanVar) -> None:
+        """Keeps the names count checkboxes mutually exclusive (radio)."""
+        if not var.get():
+            return
+        for v, _n in self._names_count_vars:
+            if v is not var and v.get():
+                v.set(False)
+
+    def _names_per_draw(self) -> int:
+        for var, n in self._names_count_vars:
+            if var.get():
+                return n
+        return 1
+
     def _draw_numbers(self, count: int) -> list[int]:
         """Draws up to `count` numbers, records them in the history and
         refreshes the UI. Returns the drawn numbers (empty when the raffle
@@ -959,7 +942,7 @@ class MainWindow:
         self._update_status()
         self._fit_window_to_content()
 
-        drawn = self._draw_numbers(1)
+        drawn = self._draw_numbers(self._names_per_draw())
         if drawn and self._on_start_draw:
             self._draw_state = "new"
             self._btn_iniciar.configure(text="Sortear Próximo")
@@ -982,7 +965,7 @@ class MainWindow:
             )
             return
 
-        drawn = self._draw_numbers(1)
+        drawn = self._draw_numbers(self._names_per_draw())
         if drawn and self._on_start_draw:
             self._on_start_draw(drawn)
             return

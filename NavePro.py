@@ -155,6 +155,12 @@ from navepro.core.transferencia import (
     _nome_arquivo as _nome_arquivo_transferencia,
 )
 from navepro.core.util_tk import _centralizar_sobre, _normalizar_escala_tk
+from navepro.core.widgets_arredondados import TkArredondado
+
+# Botões e campos de digitação de todo o app desenham cantos arredondados.
+# `tk` vira uma fachada que delega tudo ao tkinter real, trocando apenas
+# `Button` e `Entry` — sem alterar nenhuma chamada existente.
+tk = TkArredondado(tk)
 
 # Precisa rodar ANTES de qualquer tk.Tk(): o Tk 8.6 do Windows não é
 # DPI-aware e cacheia a tela em pixels lógicos, enquanto o screeninfo ativa o
@@ -468,6 +474,32 @@ def _escolher_arquivos_usuario(
     dial.grab_set()
     dial.wait_window()
     return tuple(escolhidos)
+
+
+def _criar_faixa_secao(parent, topo: bool = True):
+    """Faixa cinza no topo/base de uma seção do painel do operador.
+
+    No tema ESCURO a faixa assume a cor do cartão e fica invisível (o visual
+    escuro permanece idêntico). No tema CLARO a faixa fica num cinza carvão,
+    delimitando as seções. A cor é aplicada em ``_aplicar_tema_widget`` a partir
+    do atributo ``_navepro_faixa_secao``.
+    """
+    faixa = tk.Frame(parent, bg='#161b22', height=6)
+    faixa._navepro_faixa_secao = True
+    faixa.pack(fill='x', side='top' if topo else 'bottom')
+    return faixa
+
+
+def _marcar_area_cinza_clara(widget, escuro: str = '#21262d'):
+    """Marca um widget para ficar cinza no tema CLARO (no escuro usa `escuro`).
+
+    Usado na faixa inferior de controles do painel do operador, que deve virar
+    um bloco cinza apenas no tema claro. A cor é aplicada em
+    ``_aplicar_tema_widget`` (atributo ``_navepro_area_cinza_clara``).
+    """
+    widget._navepro_area_cinza_clara = True
+    widget._navepro_area_cinza_escuro = escuro
+    return widget
 
 
 class AppInterface:
@@ -825,27 +857,27 @@ class AppInterface:
     def _on_focus_cidade(self) -> None:
         if self.entry_cidade.get() == "Cidade":
             self.entry_cidade.delete(0, tk.END)
-            self.entry_cidade.config(fg='white')
+            self.entry_cidade.config(fg='#1f2328')
         self._reset_focus_timer()
 
     def _on_focus_out_cidade(self) -> None:
         if not self.entry_cidade.get().strip():
             self.entry_cidade.delete(0, tk.END)
             self.entry_cidade.insert(0, "Cidade")
-            self.entry_cidade.config(fg='gray')
+            self.entry_cidade.config(fg='#656d76')
         self._cancel_focus_timer()
 
     def _on_focus_estado(self) -> None:
         if self.entry_estado.get() == "UF":
             self.entry_estado.delete(0, tk.END)
-            self.entry_estado.config(fg='white')
+            self.entry_estado.config(fg='#1f2328')
         self._reset_focus_timer()
 
     def _on_focus_out_estado(self) -> None:
         if not self.entry_estado.get().strip():
             self.entry_estado.delete(0, tk.END)
             self.entry_estado.insert(0, "UF")
-            self.entry_estado.config(fg='gray')
+            self.entry_estado.config(fg='#656d76')
         self._cancel_focus_timer()
 
     def _on_focus_in(self, event: object = None) -> None:
@@ -3357,19 +3389,19 @@ class AppInterface:
             if self.tema == 'claro':
                 style.configure(
                     "Treeview",
-                    background="#ffffff", foreground="#1f2328",
-                    fieldbackground="#ffffff", font=("Arial", 10))
+                    background="#8b949e", foreground="#1f2328",
+                    fieldbackground="#8b949e", font=("Arial", 10))
                 style.configure(
                     "Treeview.Heading",
-                    background="#f6f8fa", foreground="#24292f",
+                    background="#6e7681", foreground="#ffffff",
                     font=("Arial", 10, "bold"))
                 style.map('Treeview',
                           background=[('selected', '#0969da')],
                           foreground=[('selected', '#ffffff')])
                 style.configure(
                     "Vertical.TScrollbar",
-                    background="#ffffff", troughcolor="#eaeef2",
-                    arrowcolor="#57606a")
+                    background="#8b949e", troughcolor="#6e7681",
+                    arrowcolor="#1f2328")
             else:
                 style.configure(
                     "Treeview",
@@ -3456,7 +3488,31 @@ class AppInterface:
         try:
             if not widget.winfo_exists():
                 return
+            # Faixas que delimitam as seções do painel: cor própria por tema
+            # (carvão no claro; igual ao cartão no escuro, isto é, invisível).
+            if getattr(widget, '_navepro_faixa_secao', False):
+                try:
+                    widget.configure(
+                        bg='#30363d' if self.tema == 'claro' else '#161b22'
+                    )
+                except tk.TclError:
+                    pass
+                return
+            # Área de controles do operador: bloco cinza só no tema claro.
+            if getattr(widget, '_navepro_area_cinza_clara', False):
+                escuro = getattr(widget, '_navepro_area_cinza_escuro', '#161b22')
+                try:
+                    widget.configure(
+                        bg='#8b949e' if self.tema == 'claro' else escuro
+                    )
+                except tk.TclError:
+                    pass
+                return
             if isinstance(widget, ttk.Widget):
+                return
+            # Menus têm tratamento próprio (_aplicar_tema_menu); recolorir
+            # aqui brigaria com ele e restauraria a cor errada ao voltar.
+            if str(widget.winfo_class()) == 'Menu':
                 return
             keys = set(widget.keys())
         except tk.TclError:
@@ -3466,9 +3522,14 @@ class AppInterface:
 
         def _ler(op):
             try:
-                return widget.cget(op)
+                valor = widget.cget(op)
             except tk.TclError:
                 return None
+            # Alguns widgets (ex.: tk.Menu) devolvem Tcl_Obj em vez de str;
+            # sem normalizar, _cor_clara quebra com AttributeError.
+            if valor is None or isinstance(valor, str):
+                return valor
+            return str(valor)
 
         origem = getattr(widget, '_navepro_tema_origem', None)
         aplicado = getattr(widget, '_navepro_tema_aplicado', None)
@@ -3933,6 +3994,7 @@ class AppInterface:
         clima_card = tk.Frame(main_frame, bg='#161b22', highlightbackground='#30363d',
                                highlightthickness=1)
         clima_card.pack(pady=5, ipady=8, ipadx=15)
+        _criar_faixa_secao(clima_card, topo=True)
 
         # Linha 1: Cidade + Estado + Salvar
         clima_linha1 = tk.Frame(clima_card, bg='#161b22')
@@ -3946,11 +4008,13 @@ class AppInterface:
 
         self.entry_cidade = tk.Entry(
             clima_linha1, width=15, font=("Arial", 11),
-            bg='#21262d', fg='#f0c040', insertbackground='#f0c040',
-            bd=0, highlightthickness=0
+            bg='#eaeef2', fg='#1f2328', insertbackground='#1f2328',
+            justify='center', bd=0, highlightthickness=0
         )
         self.entry_cidade.pack(side='left', padx=2, ipady=3)
         self.entry_cidade.insert(0, "Cidade")
+        self.entry_cidade.config(fg='#656d76')
+        _marcar_area_cinza_clara(self.entry_cidade, '#eaeef2')
         self.entry_cidade.bind("<FocusIn>", lambda e: self._on_focus_cidade())
         self.entry_cidade.bind("<FocusOut>", lambda e: self._on_focus_out_cidade())
         self.entry_cidade.bind("<KeyRelease>", self._reset_focus_timer)
@@ -3958,15 +4022,17 @@ class AppInterface:
         if self.cidade_salva:
             self.entry_cidade.delete(0, tk.END)
             self.entry_cidade.insert(0, self.cidade_salva)
-            self.entry_cidade.config(fg='#f0c040')
+            self.entry_cidade.config(fg='#1f2328')
 
         self.entry_estado = tk.Entry(
             clima_linha1, width=5, font=("Arial", 11),
-            bg='#21262d', fg='#f0c040', insertbackground='#f0c040',
-            bd=0, highlightthickness=0
+            bg='#eaeef2', fg='#1f2328', insertbackground='#1f2328',
+            justify='center', bd=0, highlightthickness=0
         )
         self.entry_estado.pack(side='left', padx=2, ipady=3)
         self.entry_estado.insert(0, "UF")
+        self.entry_estado.config(fg='#656d76')
+        _marcar_area_cinza_clara(self.entry_estado, '#eaeef2')
         self.entry_estado.bind("<FocusIn>", lambda e: self._on_focus_estado())
         self.entry_estado.bind("<FocusOut>", lambda e: self._on_focus_out_estado())
         self.entry_estado.bind("<KeyRelease>", self._reset_focus_timer)
@@ -3974,7 +4040,7 @@ class AppInterface:
         if self.estado_salvo:
             self.entry_estado.delete(0, tk.END)
             self.entry_estado.insert(0, self.estado_salvo)
-            self.entry_estado.config(fg='#f0c040')
+            self.entry_estado.config(fg='#1f2328')
 
         tk.Button(
             clima_linha1, text="Salvar",
@@ -3983,6 +4049,7 @@ class AppInterface:
             command=self.salvar_cidade, cursor='hand2', bd=0,
             padx=10, pady=2
         ).pack(side='left', padx=8)
+        _criar_faixa_secao(clima_card, topo=False)
 
         # Separador
         sep2 = tk.Frame(main_frame, bg='#30363d', height=1)
@@ -3994,6 +4061,7 @@ class AppInterface:
 
         busca_frame = tk.Frame(busca_container, bg='#161b22')
         busca_frame.pack(ipady=8, ipadx=10)
+        _criar_faixa_secao(busca_frame, topo=True)
 
         tk.Label(
             busca_frame, text="🔍",
@@ -4025,6 +4093,7 @@ class AppInterface:
             font=("Arial", 11),
             cursor='hand2'
         ).pack(side='left', padx=(5, 10))
+        _criar_faixa_secao(busca_frame, topo=False)
 
         # Separador
         sep3 = tk.Frame(main_frame, bg='#30363d', height=1)
@@ -4033,6 +4102,7 @@ class AppInterface:
         # ── Lista de resultados ──
         list_container = tk.Frame(main_frame, bg='#161b22')
         list_container.pack(fill='both', expand=True, pady=10)
+        _criar_faixa_secao(list_container, topo=True)
 
         self.canvas_lista = tk.Canvas(
             list_container, bg='#161b22', highlightthickness=0
@@ -4062,15 +4132,19 @@ class AppInterface:
 
         self.canvas_lista.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        _criar_faixa_secao(list_container, topo=False)
 
 
         # ── Controles ──
         controls_frame = tk.Frame(main_frame, bg='#161b22')
         controls_frame.pack(fill='x', pady=(10, 0), ipady=8)
+        _marcar_area_cinza_clara(controls_frame, '#161b22')
+        _criar_faixa_secao(controls_frame, topo=True)
 
         # Botões de controle em estilo "pill" (ícones grandes, sem texto)
         pill_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
         pill_frame.pack(side='left', padx=5)
+        _marcar_area_cinza_clara(pill_frame)
 
         def _criar_botao_pill(parent, icone, tooltip, comando, icone_png=None):
             """Botão-pílula: usa o PNG `icone_png` (ícone fixo) quando existe;
@@ -4093,6 +4167,7 @@ class AppInterface:
                 args.update(text=icone, font=("Arial", 18))
                 btn = tk.Button(parent, **args)
             btn.pack(side='left', padx=0)
+            _marcar_area_cinza_clara(btn)
             # Cria tooltip
             _criar_tooltip(btn, tooltip)
             return btn
@@ -4127,21 +4202,20 @@ class AppInterface:
         _criar_botao_pill(pill_frame, "⏭", "Próximo", self.tocar_proximo)
 
         # Espaçador flexível
-        tk.Frame(controls_frame, bg='#161b22').pack(side='left', fill='x', expand=True)
+        _espacador = tk.Frame(controls_frame, bg='#161b22')
+        _marcar_area_cinza_clara(_espacador, '#161b22')
+        _espacador.pack(side='left', fill='x', expand=True)
 
-        # Botão Sorteio (parte inferior direita do painel)
-        btn_sorteio = tk.Button(
-            controls_frame, text="🎲 Sorteio", font=("Arial", 12, "bold"),
-            bg='#6e40c9', fg='#ffffff', activebackground='#f0c040',
-            activeforeground='#161b22', command=self.abrir_sorteio,
-            cursor='hand2', bd=0, highlightthickness=0, padx=14, pady=6
-        )
-        btn_sorteio.pack(side='right', padx=5)
-        _criar_tooltip(btn_sorteio, "Sorteio Profissional")
+        # Botão Sorteio (canto inferior direito, mesmo estilo pílula dos demais)
+        sorteio_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
+        sorteio_frame.pack(side='right', padx=5)
+        _marcar_area_cinza_clara(sorteio_frame)
+        _criar_botao_pill(sorteio_frame, "🎲", "Sorteio Profissional", self.abrir_sorteio)
 
         # Botões dos novos módulos (frame separado à direita)
         modulos_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
         modulos_frame.pack(side='right', padx=5)
+        _marcar_area_cinza_clara(modulos_frame)
         _criar_botao_pill(modulos_frame, "📖", "Hinos / Letras", self.janela_hinos)
         _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia)
         _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico)
@@ -4157,6 +4231,7 @@ class AppInterface:
         args_gerenciar.update(text="📦", font=("Arial", 16))
         btn_gerenciar = tk.Button(controls_frame, **args_gerenciar)
         btn_gerenciar.pack(side='right', padx=5)
+        _marcar_area_cinza_clara(btn_gerenciar)
         _criar_tooltip(btn_gerenciar, "Gerenciar Banco")
 
         # Botão Configurações (barra de controles)
@@ -4167,7 +4242,9 @@ class AppInterface:
             bd=0, highlightthickness=0, padx=14, pady=6
         )
         btn_config_relogio.pack(side='right', padx=5)
+        _marcar_area_cinza_clara(btn_config_relogio)
         _criar_tooltip(btn_config_relogio, "Configurações")
+        _criar_faixa_secao(controls_frame, topo=False)
 
     # ── Lista de resultados (com cache para evitar redesenho e centralização) ────
 

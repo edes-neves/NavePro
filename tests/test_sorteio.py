@@ -108,6 +108,51 @@ assert not issubclass(ctk.CTkEntry, tk.Entry), "CTkEntry não deve ser tk.Entry"
 assert hasattr(ctk.CTkEntry, "_redraw"), "CTkEntry sem desenho arredondado"
 assert hasattr(ctk, "_round_rect"), "shim sem helper de canto arredondado"
 
+# --- CTkButton arredondado (herda do BotaoArredondado do NavePro) ---
+from navepro.core.widgets_arredondados import (  # noqa: E402
+    BotaoArredondado,
+    CampoArredondado,
+    TkArredondado,
+)
+
+assert issubclass(ctk.CTkButton, BotaoArredondado), "CTkButton sem cantos arredondados"
+assert issubclass(ctk.CTkButton, tk.Frame), "CTkButton deve ser um Frame"
+assert not issubclass(ctk.CTkButton, tk.Button), "CTkButton não deve ser tk.Button"
+for _cls in (BotaoArredondado, CampoArredondado):
+    assert issubclass(_cls, tk.Frame), f"{_cls.__name__} deve ser um Frame"
+    assert hasattr(_cls, "_redraw"), f"{_cls.__name__} sem _redraw"
+assert CampoArredondado.get and CampoArredondado.insert and CampoArredondado.bind, (
+    "CampoArredondado sem repasse ao Entry interno"
+)
+
+# --- Alinhamento do texto: "center" não pode virar alinhamento à direita ---
+# O teste antigo por substring ("e" in "center") alinhava todo botão
+# centralizado à direita (bug reportado no nome do hino na lista).
+class _FakeBotao:
+    _padx = 8
+
+    def __init__(self, anchor):
+        self._anchor = anchor
+
+
+for _anc, _esperado in (("center", "center"), ("n", "center"), ("s", "center"),
+                        ("w", "w"), ("nw", "w"), ("sw", "w"),
+                        ("e", "e"), ("ne", "e"), ("se", "e")):
+    _x, _saida = BotaoArredondado._posicao_texto(_FakeBotao(_anc), 200)
+    assert _saida == _esperado, f"anchor {_anc!r} -> {_saida!r}"
+assert BotaoArredondado._posicao_texto(_FakeBotao("center"), 200)[0] == 100, (
+    "texto centralizado não ficou no meio"
+)
+
+# --- NavePro usa a fachada tk: Button/Entry arredondados no app inteiro ---
+with open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8") as _f_np:
+    _fonte_np = _f_np.read()
+assert "tk = TkArredondado(tk)" in _fonte_np, "NavePro.py não usa a fachada tk"
+assert TkArredondado(tk).Button is BotaoArredondado, "fachada não troca Button"
+assert TkArredondado(tk).Entry is CampoArredondado, "fachada não troca Entry"
+assert TkArredondado(tk).Label is tk.Label, "fachada deve repassar o resto ao tkinter"
+
+
 # --- Largura da janela do operador (1200px) ---
 from navepro.sorteio import integracao  # noqa: E402
 
@@ -125,5 +170,46 @@ assert len(App._TELAO_CORES_FUNDO) >= 1, "sem opções de cor de fundo"
 _assinatura = inspect.signature(MainWindow.__init__).parameters
 assert "on_telao" in _assinatura, "MainWindow sem callback on_telao"
 assert hasattr(MainWindow, "_on_telao_click"), "MainWindow sem handler do telão"
+
+# --- Nomes: seletor "Nomes por vez" espelhando os números ---
+assert hasattr(MainWindow, "_names_per_draw"), "MainWindow sem _names_per_draw"
+assert hasattr(MainWindow, "_on_names_count_toggle"), "MainWindow sem toggle de nomes"
+
+with open(
+    os.path.join(_DIR_SORTEIO, "main_window.py"), encoding="utf-8"
+) as _f:
+    _fonte_mw = _f.read()
+assert "self._names_per_draw()" in _fonte_mw, "sorteio de nomes não usa o seletor"
+
+# --- Layout: caixas de texto não devem inflar a largura pedida ---
+assert _fonte_mw.count("width=40") >= 2, (
+    "CTkTextbox sem largura contida (quebra o layout da janela)"
+)
+assert "target_w" in _fonte_mw, "_fit_window_to_content não ajusta a largura"
+assert "height=72" in _fonte_mw, "faixa de status baixa demais (corta os números)"
+
+# --- Sem menu superior (Arquivos/Editar/Exibir/Sobre) e sem a tira clara ---
+assert "_build_menu" not in _fonte_mw, "janela com menu superior"
+assert "configure(menu=" not in _fonte_mw, "menubar ainda configurado"
+
+# --- Fonte dos nomes: não usa a "Digital-7" dos números ---
+from navepro.sorteio.animation_engine import AnimationEngine  # noqa: E402
+
+assert hasattr(AnimationEngine, "_resolve_name_font"), "sem fonte para nomes"
+assert hasattr(AnimationEngine, "_get_name_measure_font"), "sem medição de nomes"
+
+with open(
+    os.path.join(_DIR_SORTEIO, "animation_engine.py"), encoding="utf-8"
+) as _f:
+    _fonte_an = _f.read()
+
+for _no in ast.walk(ast.parse(_fonte_an)):
+    if isinstance(_no, ast.FunctionDef) and _no.name == "_draw_gold_text":
+        _corpo = ast.get_source_segment(_fonte_an, _no)
+        assert "_name_font" in _corpo, "_draw_gold_text não usa a fonte de nomes"
+        assert "_number_font" not in _corpo, "_draw_gold_text usa Digital-7"
+        break
+else:
+    raise AssertionError("animation_engine sem _draw_gold_text")
 
 print("OK test_sorteio")

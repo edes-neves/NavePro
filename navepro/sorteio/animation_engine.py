@@ -4,6 +4,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from collections.abc import Callable
 
+from .font_manager import ui_font
 from .settings_manager import SettingsManager
 from .theme_manager import ThemeManager
 
@@ -59,7 +60,9 @@ class AnimationEngine:
         self._rolling_names: list[str] = []
         self._after_id: int | None = None
         self._number_font: str = self._resolve_number_font()
+        self._name_font: str = self._resolve_name_font()
         self._measure_font = None
+        self._name_measure_font = None
         self._winner_showing = False
         self._base_font_size: int = 72
         self._winner_phase: float = 0.0
@@ -110,6 +113,15 @@ class AnimationEngine:
                 return candidate
 
         return "Courier"
+
+    def _resolve_name_font(self) -> str:
+        """Resolves the font used to display names.
+
+        Names are not digits, so the seven-segment "Digital-7" family is a
+        poor fit. Prefer a clean, readable sans-serif (the same family used by
+        the operator UI, resolved against the runtime font set).
+        """
+        return ui_font()
 
     # ── Scheduling helpers ──
 
@@ -309,7 +321,7 @@ class AnimationEngine:
                 canvas.create_text(
                     w // 2, h // 2,
                     text=txt,
-                    font=(self._number_font, font_size + 12, "normal"),
+                    font=(self._name_font, font_size + 12, "normal"),
                     fill=WINNER_GLOW_SOFT,
                     tags="glow",
                 )
@@ -321,7 +333,7 @@ class AnimationEngine:
                 canvas.create_text(
                     w // 2, h // 2,
                     text=txt,
-                    font=(self._number_font, font_size, "normal"),
+                    font=(self._name_font, font_size, "normal"),
                     fill=self._theme.public("text"),
                     tags="number_display",
                 )
@@ -339,7 +351,7 @@ class AnimationEngine:
                 canvas.create_text(
                     cx, cy,
                     text=txt,
-                    font=(self._number_font, font_size, "normal"),
+                    font=(self._name_font, font_size, "normal"),
                     fill=WINNER_GOLD_MAIN,
                     tags="number_display",
                 )
@@ -352,21 +364,21 @@ class AnimationEngine:
         canvas.create_text(
             cx + 5, cy + 7,
             text=text,
-            font=(self._number_font, font_size, "normal"),
+            font=(self._name_font, font_size, "normal"),
             fill="#2E2500",
             tags=tag,
         )
         canvas.create_text(
             cx - 3, cy - 3,
             text=text,
-            font=(self._number_font, font_size, "normal"),
+            font=(self._name_font, font_size, "normal"),
             fill="#FFF6C9",
             tags=tag,
         )
         canvas.create_text(
             cx, cy,
             text=text,
-            font=(self._number_font, font_size, "normal"),
+            font=(self._name_font, font_size, "normal"),
             fill=WINNER_GOLD_MAIN,
             tags=tag,
         )
@@ -394,7 +406,7 @@ class AnimationEngine:
         w, h = self._canvas_size()
 
         try:
-            ref = self._get_measure_font()
+            ref = self._get_name_measure_font()
             widths = [
                 int(ref.measure(str(n)) * font_size / 12) for n in names
             ]
@@ -527,6 +539,16 @@ class AnimationEngine:
                 size=12,
             )
         return self._measure_font
+
+    def _get_name_measure_font(self):
+        """Returns a cached reference font used to measure names."""
+        if self._name_measure_font is None:
+            self._name_measure_font = tkfont.Font(
+                root=self._canvas,
+                family=self._name_font,
+                size=12,
+            )
+        return self._name_measure_font
 
     def _grid_centers(
         self, numbers: list[int], font_size: int

@@ -16,6 +16,8 @@ lugar de ``import customtkinter as ctk``), de modo que nenhum pacote externo
 import tkinter as tk
 from tkinter import ttk
 
+from ..core.widgets_arredondados import BotaoArredondado
+
 # ──────────────────────────────────────────────────────────────────────
 # Estado global (parte da API do customtkinter, sem efeito prático aqui)
 # ──────────────────────────────────────────────────────────────────────
@@ -229,63 +231,61 @@ class CTkLabel(CTkBaseClass, tk.Label):
             tk.Label.configure(self, **kwargs)
 
 
-class CTkButton(CTkBaseClass, tk.Button):
+class CTkButton(CTkBaseClass, BotaoArredondado):
+    """Botão arredondado com a API do ``customtkinter``.
+
+    Herda de :class:`BotaoArredondado` (que desenha os cantos num ``Canvas``)
+    e traduz ``fg_color``/``hover_color``/``text_color`` para as cores do
+    botão, mantendo a atualização dinâmica de tema usada pelo sorteio.
+    """
+
     def __init__(self, master=None, text="", command=None, font=None,
                  fg_color=None, hover_color=None, text_color=None,
-                 corner_radius=0, width=0, height=0, state="normal",
+                 corner_radius=8, width=0, height=0, state="normal",
                  anchor=None, **kwargs):
         master = _resolve_master(master)
-        self._fg_color = fg_color or _TEMA_ESCURO["primary"]
-        self._hover_color = hover_color or self._fg_color
+        self._fg_color = _resolve_color(master, fg_color or _TEMA_ESCURO["primary"])
+        self._hover_color = _resolve_color(master, hover_color or self._fg_color)
         self._text_color = text_color or _TEMA_ESCURO["btn_text"]
-        self._hovered = False
-        opts = {
-            "text": text,
-            "command": command,
-            "bg": self._fg_color,
-            "fg": self._text_color,
-            "activebackground": self._hover_color,
-            "activeforeground": self._text_color,
-            "relief": "flat",
-            "bd": 0,
-            "highlightthickness": 0,
-            "cursor": "hand2",
-            "state": state,
-            "padx": 8,
-            "pady": 4,
-        }
-        if font is not None:
-            opts["font"] = font
-        if anchor is not None:
-            opts["anchor"] = anchor
-        tk.Button.__init__(self, master, **opts)
-        self.bind("<Enter>", self._on_enter, add="+")
-        self.bind("<Leave>", self._on_leave, add="+")
-
-    def _on_enter(self, _event=None):
-        self._hovered = True
-        self._paint(self._hover_color)
-
-    def _on_leave(self, _event=None):
-        self._hovered = False
-        self._paint(self._fg_color)
-
-    def _paint(self, color):
-        _safe_configure(self, {"bg": color, "activebackground": color})
+        super().__init__(
+            master,
+            text=text,
+            command=command,
+            font=font,
+            bg=self._fg_color,
+            fg=self._text_color,
+            activebackground=self._hover_color,
+            activeforeground=self._text_color,
+            disabledforeground=_TEMA_ESCURO["text_secondary"],
+            state=state,
+            cursor="hand2",
+            padx=10,
+            pady=5,
+            corner_radius=corner_radius,
+            width=width,
+            height=height,
+            anchor=anchor or "center",
+        )
 
     def configure(self, **kwargs):
         if "fg_color" in kwargs:
-            self._fg_color = kwargs.pop("fg_color") or self._fg_color
+            nova = _resolve_color(self.master, kwargs.pop("fg_color"))
+            if nova:
+                self._fg_color = nova
+            kwargs["bg"] = self._fg_color
         if "hover_color" in kwargs:
-            self._hover_color = kwargs.pop("hover_color") or self._hover_color
+            nova = _resolve_color(self.master, kwargs.pop("hover_color"))
+            if nova:
+                self._hover_color = nova
+            kwargs["activebackground"] = self._hover_color
         if "text_color" in kwargs:
-            self._text_color = kwargs.pop("text_color")
+            self._text_color = kwargs.pop("text_color") or self._text_color
             kwargs["fg"] = self._text_color
             kwargs["activeforeground"] = self._text_color
         kwargs.pop("corner_radius", None)
-        kwargs["bg"] = self._hover_color if self._hovered else self._fg_color
-        kwargs["activebackground"] = self._hover_color
-        tk.Button.configure(self, **kwargs)
+        BotaoArredondado.configure(self, **kwargs)
+
+    config = configure
 
 
 class CTkEntry(CTkBaseClass, tk.Frame):
