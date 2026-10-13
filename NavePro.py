@@ -7820,23 +7820,22 @@ class AppInterface:
                                     font=("Arial", 11))
         combo_livro.pack(side='left', padx=5)
 
-        # Capítulo
+        # Capítulo (digite ou escolha na lista, como versão/livro)
         tk.Label(ref_frame, text="Cap:", fg='#c9d1d9', bg='#161b22',
                  font=("Arial", 10)).pack(side='left', padx=(5, 2))
         cap_var = tk.StringVar(value="3")
-        entry_cap = tk.Entry(ref_frame, textvariable=cap_var, width=4,
-                             font=("Arial", 11), bg='#21262d', fg='#f0c040',
-                             insertbackground='#f0c040', bd=0, highlightthickness=0)
-        entry_cap.pack(side='left', padx=2, ipady=2)
+        combo_cap = ttk.Combobox(ref_frame, textvariable=cap_var, values=[],
+                                 width=4, font=("Arial", 11))
+        combo_cap.pack(side='left', padx=2)
 
         # Versículo (número = deste até o fim, "1-7" = faixa, vazio = capítulo)
+        # Também aceita escolher na lista; continua editável para faixas.
         tk.Label(ref_frame, text="V:", fg='#c9d1d9', bg='#161b22',
                  font=("Arial", 10)).pack(side='left', padx=(5, 2))
         vers_var = tk.StringVar(value="16")
-        entry_vers = tk.Entry(ref_frame, textvariable=vers_var, width=7,
-                              font=("Arial", 11), bg='#21262d', fg='#f0c040',
-                              insertbackground='#f0c040', bd=0, highlightthickness=0)
-        entry_vers.pack(side='left', padx=2, ipady=2)
+        combo_vers = ttk.Combobox(ref_frame, textvariable=vers_var, values=[],
+                                  width=7, font=("Arial", 11))
+        combo_vers.pack(side='left', padx=2)
 
         # ── Área de texto da Bíblia ──
         biblia_text = tk.Text(main, font=("Arial", 13), bg='#21262d', fg='#c9d1d9',
@@ -8036,6 +8035,41 @@ class AppInterface:
 
         def _ao_alterar_referencia(*_args) -> None:
             _agendar_recarga()
+
+        # ── Opções dos combos de capítulo e versículo ──
+        # "Cap:" e "V:" funcionam como versão/livro: o operador pode digitar ou
+        # escolher na lista. As listas são recalculadas conforme a
+        # versão/livro/capítulo escolhidos. Atualizar só os `values` não altera
+        # as variáveis, então não dispara a recarga automática.
+        def _atualizar_opcoes_versiculos(*_args) -> None:
+            """Preenche o combo "V:" com os versículos do capítulo atual."""
+            versao = versao_var.get()
+            livro = livro_var.get()
+            cap = cap_var.get().strip()
+            valores: list[str] = []
+            if cap.isdigit():
+                linhas = db_query(
+                    "SELECT DISTINCT versiculo FROM versiculos "
+                    "WHERE versao = ? AND livro = ? AND capitulo = ? "
+                    "ORDER BY versiculo", (versao, livro, int(cap)))
+                valores = [str(r['versiculo']) for r in linhas]
+            combo_vers.config(values=valores)
+
+        def _atualizar_opcoes_capitulos(*_args) -> None:
+            """Preenche o combo "Cap:" com os capítulos do livro/versão."""
+            versao = versao_var.get()
+            livro = livro_var.get()
+            linhas = db_query(
+                "SELECT DISTINCT capitulo FROM versiculos "
+                "WHERE versao = ? AND livro = ? ORDER BY capitulo",
+                (versao, livro))
+            combo_cap.config(values=[str(r['capitulo']) for r in linhas])
+            _atualizar_opcoes_versiculos()
+
+        versao_var.trace_add('write', _atualizar_opcoes_capitulos)
+        livro_var.trace_add('write', _atualizar_opcoes_capitulos)
+        cap_var.trace_add('write', _atualizar_opcoes_versiculos)
+        _atualizar_opcoes_capitulos()
 
         for _var_ref in (versao_var, livro_var, cap_var, vers_var):
             _var_ref.trace_add('write', _ao_alterar_referencia)

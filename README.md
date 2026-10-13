@@ -214,6 +214,46 @@ sozinho (Flatpak > Windows > AppImage; sem sinal de instalação, vale o AppImag
 - A execução do serviço começa no item selecionado e avança item a item
   (Executar Serviço); item com **Sermão** abre o PDF no visualizador em tela cheia.
 
+### ▶️ Reproduzir vídeos do YouTube (yt-dlp)
+
+Para tocar um vídeo do **YouTube** dentro do app (itens **YouTube** da Ordem de
+Serviço) é preciso ter o **yt-dlp** instalado no sistema: ele baixa o stream que
+o **mpv** exibe no telão. O NavePro **não** instala nem atualiza o yt-dlp sozinho
+(é pacote do sistema) e avisa na tela quando ele está ausente ou desatualizado.
+
+**Debian / Ubuntu e derivados** (recomendado usar o binário oficial, sempre o
+mais recente — o pacote do repositório costuma ficar para trás e falhar no YouTube):
+
+```bash
+sudo apt remove yt-dlp
+sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
+sudo chmod a+rx /usr/local/bin/yt-dlp
+```
+
+**Fedora e derivados:**
+
+```bash
+sudo dnf install yt-dlp
+```
+
+**Arch Linux / Manjaro / BigLinux e derivados:**
+
+```bash
+sudo pacman -S yt-dlp
+```
+
+**Windows** — abra o **Prompt de Comando (CMD)** e digite o comando abaixo,
+seguido da tecla **Enter**:
+
+```bat
+winget install yt-dlp.yt-dlp
+```
+
+> O yt-dlp muda com frequência para acompanhar as mudanças do YouTube. Se o vídeo
+> parar de tocar, **atualize o yt-dlp** primeiro (`sudo yt-dlp -U` no binário
+> oficial, `sudo dnf upgrade yt-dlp` no Fedora, `sudo pacman -Syu yt-dlp` no Arch
+> e `winget upgrade yt-dlp.yt-dlp` no Windows).
+
 ### 🔄 Transferir anúncios e Ordem de Serviço
 
 O botão **🔄 Transferir** (em Anúncios e na Ordem de Serviço) usa o mesmo seletor
