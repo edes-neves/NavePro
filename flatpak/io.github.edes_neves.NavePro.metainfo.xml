@@ -40,6 +40,16 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.6" date="2026-10-13">
+      <description>
+        <ul>
+          <li>Sorteio Profissional integrado ao NavePro: sorteio de números e de nomes (modo Nomes), com janela pública para o telão, animação, histórico, atalhos e temas</li>
+          <li>Botões e campos de digitação com cantos arredondados em todo o app (painel e Sorteio)</li>
+          <li>Painel do administrador com tema claro em cinza, deixando clara apenas a barra de menu superior</li>
+          <li>Som do Sorteio reproduzido por players nativos (sem depender do pygame) e arquivos de áudio embutidos nos pacotes .exe e AppImage</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.5" date="2026-10-12">
       <description>
         <ul>

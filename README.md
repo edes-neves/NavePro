@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.1.5.AppImage
-   ./NavePro-2.1.5.AppImage
+   chmod +x NavePro-2.1.6.AppImage
+   ./NavePro-2.1.6.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.5          # gera NavePro-2.1.5.AppImage
+./build.sh 2.1.6          # gera NavePro-2.1.6.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.1.5
+   ./build.sh 2.1.6
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.1.5: ..."
-   git tag v2.1.5
-   git push origin main v2.1.5
+   git add -A && git commit -m "NavePro 2.1.6: ..."
+   git tag v2.1.6
+   git push origin main v2.1.6
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.1.5 NavePro-2.1.5.AppImage \
-     --title "NavePro 2.1.5" --notes "O que mudou nesta versão..."
+   gh release create v2.1.6 NavePro-2.1.6.AppImage \
+     --title "NavePro 2.1.6" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -536,6 +536,20 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.1.6
+
+- **Sorteio Profissional integrado ao NavePro**: sorteio de **números** e de
+  **nomes** (modo Nomes), com **janela pública** para o telão, animação,
+  **histórico**, atalhos de teclado e temas próprios.
+- **Botões e campos de digitação com cantos arredondados** em todo o app
+  (painel e Sorteio).
+- **Tema claro do painel em cinza**, deixando clara apenas a barra de menu
+  superior (`Arquivo`, `Configurações`, `Editar`, `Exibir`…).
+- **Som do Sorteio** reproduzido por **players nativos** (sem depender do
+  `pygame`): `winsound` no Windows e `paplay`/`aplay`/`ffplay`/`mpv`/`vlc` no
+  Linux/Flatpak. Os arquivos de áudio agora vão embutidos no `.exe` e no
+  AppImage.
 
 ### 2.1.5
 
