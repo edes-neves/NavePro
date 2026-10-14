@@ -3378,6 +3378,13 @@ class AppInterface:
         self._aplicar_tema_ttk()
         self._aplicar_tema_menu()
         try:
+            # No claro, a captura das cores escuras de origem precisa rodar
+            # ANTES de qualquer pintura: alguns pais (CampoArredondado)
+            # empurram bg/fg para o filho ao serem recoloridos e, se a cor
+            # clara chegasse primeiro, ela seria gravada como se fosse a
+            # escura (campos Cidade/UF/busca voltavam claros no escuro).
+            if self.tema == 'claro':
+                self._recolorir_arvore(self.root, capturar=True)
             self._recolorir_arvore(self.root)
         except tk.TclError:
             pass
@@ -3446,12 +3453,17 @@ class AppInterface:
             except (Exception, tk.TclError):
                 pass
 
-    def _recolorir_arvore(self, base) -> None:
-        """Aplica a recoloração de tema a `base` e a todos os seus filhos."""
-        self._aplicar_tema_widget(base)
+    def _recolorir_arvore(self, base, capturar: bool = False) -> None:
+        """Aplica a recoloração de tema a `base` e a todos os seus filhos.
+
+        Com `capturar=True` faz só a passada de captura das cores de origem
+        (sem pintar), que precisa ocorrer para toda a árvore antes de
+        qualquer `configure` (ver `_aplicar_tema`).
+        """
+        self._aplicar_tema_widget(base, capturar=capturar)
         try:
             for filho in base.winfo_children():
-                self._recolorir_arvore(filho)
+                self._recolorir_arvore(filho, capturar=capturar)
         except tk.TclError:
             pass
 
@@ -3466,17 +3478,19 @@ class AppInterface:
             self._aplicar_tema_ttk()
             if self.tema != 'claro':
                 return
+            self._recolorir_arvore(self.root, capturar=True)
             self._recolorir_arvore(self.root)
             for filho in self.root.winfo_children():
                 try:
                     if filho.winfo_class() == 'Toplevel':
+                        self._recolorir_arvore(filho, capturar=True)
                         self._recolorir_arvore(filho)
                 except tk.TclError:
                     pass
         except tk.TclError:
             pass
 
-    def _aplicar_tema_widget(self, widget) -> None:
+    def _aplicar_tema_widget(self, widget, capturar: bool = False) -> None:
         """Ajusta as cores de um único widget conforme o tema ativo.
 
         No tema ESCURO restaura as cores escura originais (gravadas na
@@ -3484,6 +3498,10 @@ class AppInterface:
         origem e aplica a equivalência clara. Pergunta valores sobrescritos
         dinamicamente (ex.: linha tocando na lista) como nova origem, para
         a troca de tema nunca perder o estado visual.
+
+        Com `capturar=True` faz apenas o registro das cores de origem (sem
+        pintar): é a passada que roda para toda a árvore antes de qualquer
+        `configure`, para não gravar cores já empurradas por um pai.
         """
         try:
             if not widget.winfo_exists():
@@ -3491,22 +3509,25 @@ class AppInterface:
             # Faixas que delimitam as seções do painel: cor própria por tema
             # (carvão no claro; igual ao cartão no escuro, isto é, invisível).
             if getattr(widget, '_navepro_faixa_secao', False):
-                try:
-                    widget.configure(
-                        bg='#30363d' if self.tema == 'claro' else '#161b22'
-                    )
-                except tk.TclError:
-                    pass
+                if not capturar:
+                    try:
+                        widget.configure(
+                            bg='#30363d' if self.tema == 'claro' else '#161b22'
+                        )
+                    except tk.TclError:
+                        pass
                 return
             # Área de controles do operador: bloco cinza só no tema claro.
             if getattr(widget, '_navepro_area_cinza_clara', False):
-                escuro = getattr(widget, '_navepro_area_cinza_escuro', '#161b22')
-                try:
-                    widget.configure(
-                        bg='#8b949e' if self.tema == 'claro' else escuro
-                    )
-                except tk.TclError:
-                    pass
+                if not capturar:
+                    escuro = getattr(
+                        widget, '_navepro_area_cinza_escuro', '#161b22')
+                    try:
+                        widget.configure(
+                            bg='#8b949e' if self.tema == 'claro' else escuro
+                        )
+                    except tk.TclError:
+                        pass
                 return
             if isinstance(widget, ttk.Widget):
                 return
@@ -3558,10 +3579,31 @@ class AppInterface:
             return
 
         # ── Tema CLARO ──
+        # Se já houve a passada de captura, a origem está correta e não deve
+        # ser tocada aqui (o valor atual pode ter sido empurrado por um pai).
+        pre_capturado = origem is not None
         if origem is None:
             origem = {}
         if aplicado is None:
             aplicado = {}
+
+        if capturar:
+            # Passada só de captura, sem pintar: grava as cores escuras
+            # atuais como origem. Roda para toda a árvore antes de qualquer
+            # `configure`, pois um pai (CampoArredondado) empurra bg/fg ao
+            # filho e ler depois gravaria a cor clara como se fosse a escura.
+            for o in ops:
+                atual = _ler(o)
+                if atual is None:
+                    continue
+                if aplicado.get(o) != atual:
+                    origem[o] = atual
+            try:
+                widget._navepro_tema_origem = origem
+                widget._navepro_tema_aplicado = aplicado
+            except Exception:
+                pass
+            return
 
         # Passo 1: mapeia as opções que funcionam como FUNDO e guarda o
         # resultado para decidir as cores de texto em passo 2.
@@ -3577,7 +3619,7 @@ class AppInterface:
                 clara = _cor_clara(atual)
                 if o == 'background':
                     bg_final = clara
-                if aplicado.get(o) != atual:
+                if not pre_capturado and aplicado.get(o) != atual:
                     origem[o] = atual
                 base[o] = clara
                 aplicado[o] = clara
@@ -3598,7 +3640,7 @@ class AppInterface:
             atual = _ler(o)
             if atual is None:
                 continue
-            if aplicado.get(o) != atual:
+            if not pre_capturado and aplicado.get(o) != atual:
                 origem[o] = atual
             escura = origem.get(o)
             if not escura:
