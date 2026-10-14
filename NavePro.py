@@ -92,6 +92,7 @@ from navepro.core.fontes_pil import (
     _calcular_texto_em_caixa,
     _fonte_familia_do_pil,
 )
+from navepro.core.icones import _carregar_emoji, _carregar_icone
 from navepro.core.inicializacao import (
     _sincronizar_uploads_midia,
     garantir_pasta_uploads,
@@ -119,7 +120,6 @@ from navepro.core.rede import _ip_da_rede
 from navepro.core.servicos import (
     _SERVICO_PROXIMO_ITEM,
     _analisar_faixa_versiculos,
-    _carregar_icone,
     _carregar_servicos_json,
     _extrair_texto_pdf,
     _faixa_versiculo_item,
@@ -4146,9 +4146,17 @@ class AppInterface:
         pill_frame.pack(side='left', padx=5)
         _marcar_area_cinza_clara(pill_frame)
 
-        def _criar_botao_pill(parent, icone, tooltip, comando, icone_png=None):
-            """Botão-pílula: usa o PNG `icone_png` (ícone fixo) quando existe;
-            senão cai para o caractere `icone` (emoji/texto do sistema)."""
+        def _criar_botao_pill(parent, icone, tooltip, comando, icone_png=None,
+                              lado='left', pack_padx=0, fonte_texto=("Arial", 18)):
+            """Botão-pílula com um ícone que sai igual em qualquer sistema.
+
+            Ordem de preferência: emoji colorido renderizado pela Pillow (o
+            botão recebe a imagem, não depende do Tk resolver o glifo), o PNG
+            fixo de `icone_png` em icones/ e, por último, o próprio caractere
+            no rótulo. O Tk 8.6 não tem fonte de emoji própria e o fallback de
+            fonte muda entre Ubuntu, Debian e Windows — por isso o caractere
+            cru não é confiável.
+            """
             args = dict(
                 bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
                 activeforeground='#f0c040',
@@ -4156,17 +4164,18 @@ class AppInterface:
                 bd=0, highlightthickness=0,
                 padx=14, pady=6
             )
-            imagem = _carregar_icone(icone_png) if icone_png else None
+            imagem = _carregar_emoji(icone, 40)
+            if imagem is None and icone_png:
+                imagem = _carregar_icone(icone_png)
             if imagem is not None:
-                # Botão com ícone PNG (não depende de fontes do sistema)
                 args.update(text="", image=imagem, width=40, height=40,
                             compound="center")
                 btn = tk.Button(parent, **args)
                 btn._navepro_imagem = imagem  # mantém ref para não sumir
             else:
-                args.update(text=icone, font=("Arial", 18))
+                args.update(text=icone, font=fonte_texto)
                 btn = tk.Button(parent, **args)
-            btn.pack(side='left', padx=0)
+            btn.pack(side=lado, padx=pack_padx)
             _marcar_area_cinza_clara(btn)
             # Cria tooltip
             _criar_tooltip(btn, tooltip)
@@ -4196,10 +4205,14 @@ class AppInterface:
             widget.bind("<Enter>", mostrar)
             widget.bind("<Leave>", esconder)
 
-        _criar_botao_pill(pill_frame, "⏮", "Anterior", self.tocar_anterior)
-        _criar_botao_pill(pill_frame, "⏯", "Play / Pause", self.player.play_pause)
-        _criar_botao_pill(pill_frame, "⏹", "Parar", self.parar)
-        _criar_botao_pill(pill_frame, "⏭", "Próximo", self.tocar_proximo)
+        _criar_botao_pill(pill_frame, "⏮", "Anterior", self.tocar_anterior,
+                          icone_png="anterior")
+        _criar_botao_pill(pill_frame, "⏯", "Play / Pause", self.player.play_pause,
+                          icone_png="playpause")
+        _criar_botao_pill(pill_frame, "⏹", "Parar", self.parar,
+                          icone_png="parar")
+        _criar_botao_pill(pill_frame, "⏭", "Próximo", self.tocar_proximo,
+                          icone_png="proximo")
 
         # Espaçador flexível
         _espacador = tk.Frame(controls_frame, bg='#161b22')
@@ -4210,40 +4223,30 @@ class AppInterface:
         sorteio_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
         sorteio_frame.pack(side='right', padx=5)
         _marcar_area_cinza_clara(sorteio_frame)
-        _criar_botao_pill(sorteio_frame, "🎲", "Sorteio Profissional", self.abrir_sorteio)
+        _criar_botao_pill(sorteio_frame, "🎲", "Sorteio Profissional",
+                          self.abrir_sorteio, icone_png="sorteio")
 
         # Botões dos novos módulos (frame separado à direita)
         modulos_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
         modulos_frame.pack(side='right', padx=5)
         _marcar_area_cinza_clara(modulos_frame)
-        _criar_botao_pill(modulos_frame, "📖", "Hinos / Letras", self.janela_hinos)
-        _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia)
-        _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico)
-        _criar_botao_pill(modulos_frame, "📢", "Anúncios", self.janela_anuncios)
+        _criar_botao_pill(modulos_frame, "📖", "Hinos / Letras", self.janela_hinos,
+                          icone_png="hinos")
+        _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia,
+                          icone_png="biblia")
+        _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico,
+                          icone_png="ordem")
+        _criar_botao_pill(modulos_frame, "📢", "Anúncios", self.janela_anuncios,
+                          icone_png="anuncios")
 
-        # Botão Gerenciar Banco (também em estilo pill)
-        args_gerenciar = dict(
-            bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
-            command=self.abrir_gerenciador, cursor='hand2',
-            bd=0, highlightthickness=0,
-            padx=14, pady=6
-        )
-        args_gerenciar.update(text="📦", font=("Arial", 16))
-        btn_gerenciar = tk.Button(controls_frame, **args_gerenciar)
-        btn_gerenciar.pack(side='right', padx=5)
-        _marcar_area_cinza_clara(btn_gerenciar)
-        _criar_tooltip(btn_gerenciar, "Gerenciar Banco")
-
-        # Botão Configurações (barra de controles)
-        btn_config_relogio = tk.Button(
-            controls_frame, text="⚙️", font=("Arial", 16),
-            bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
-            command=self.abrir_config_relogio_dialogo, cursor='hand2',
-            bd=0, highlightthickness=0, padx=14, pady=6
-        )
-        btn_config_relogio.pack(side='right', padx=5)
-        _marcar_area_cinza_clara(btn_config_relogio)
-        _criar_tooltip(btn_config_relogio, "Configurações")
+        # Botões Gerenciar Banco e Configurações (mesma pílula, montados por
+        # último: o pack side='right' define a posição da direita p/ a esquerda)
+        _criar_botao_pill(controls_frame, "📦", "Gerenciar Banco",
+                          self.abrir_gerenciador, icone_png="banco",
+                          lado='right', pack_padx=5, fonte_texto=("Arial", 16))
+        _criar_botao_pill(controls_frame, "⚙️", "Configurações",
+                          self.abrir_config_relogio_dialogo, icone_png="config",
+                          lado='right', pack_padx=5, fonte_texto=("Arial", 16))
         _criar_faixa_secao(controls_frame, topo=False)
 
     # ── Lista de resultados (com cache para evitar redesenho e centralização) ────

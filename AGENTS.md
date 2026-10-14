@@ -76,6 +76,7 @@ navepro/
   core/banco.py     # DatabaseManager (SQLite + cache), db_query/db_execute, reuso de IDs
   core/clima.py     # geolocalização (Nominatim) e temperatura
   core/fontes_pil.py  # localização de fonte, caixas de texto e medição PIL (anúncios)
+  core/icones.py    # emoji→PNG dos botões (fonte colorida + fallback icones/*.png)
   core/inicializacao.py  # init_db, inicializar_banco/config, uploads, _sincronizar_uploads_midia
   core/log.py       # logging central (nível por NAVEPRO_LOG), usado por NavePro.py e navepro/
   core/mediaplayer.py  # MediaPlayer: mpv IPC, VLC/SMPlayer, pausa, MPRIS
@@ -93,6 +94,7 @@ assets/
 tests/                     # suítes headless (ver acima)
 flatpak/                   # manifests (local + flathub/) e metainfo
 img/                       # ícones (Icon.png, Icon.xbm, Icon.ico)
+icones/                    # PNGs dos botões (fallback; gerados por gerar_icones.py)
 .github/workflows/         # testes.yml, exe.yml, flatpak.yml
 ```
 
@@ -123,6 +125,13 @@ img/                       # ícones (Icon.png, Icon.xbm, Icon.ico)
   reage ao A−/A+. `_localizar_fonte_ttf()` procura DejaVu/Liberation/FreeSans e, se
   nada existir, aceita **qualquer** `.ttf/.otf` do sistema (caso de distros sem
   DejaVu, ex. BigLinux) — evite voltar ao `load_default()` sem `size`.
+- **Ícones dos botões (emoji):** o Tk 8.6 **não** desenha emoji sozinho (depende do
+  fallback do sistema, que varia demais). Por isso o emoji é renderizado para PNG
+  pela Pillow (`navepro/core/icones.py`) e vira imagem do botão; sem fonte de emoji
+  **colorida** no sistema, cai nos PNGs de `icones/`. Todo botão-pílula passa
+  `icone_png="..."` e o nome precisa existir em `icones/` **e** em `gerar_icones.py`
+  (`tests/test_icones.py` cobre esse invariante). Fonte monocromática é recusada de
+  propósito: desenharia preto sobre o botão escuro.
 - **Players no Windows:** o **VLC não pode** ser reposicionado/redimensionado por
   código (`direct3d11` faz a janela crescer sem parar); usar `--fullscreen --qt-fullscreen-screennumber=<n>`.
   mpv/SMPlayer abrem sem `--fullscreen` e são posicionados via Win32.

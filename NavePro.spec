@@ -47,14 +47,17 @@ _icone = os.environ.get("NAVEPRO_ICON", "")
 # faz o PyInstaller procurar um arquivo de nome vazio e falhar.
 _EXE_EXTRA = {"icon": _icone} if _icone else {}
 
-# Só os ícones entram: são a única coisa que o app abre por nome dentro do
-# pacote (_caminho_recurso em navepro/core/paths.py). icones/, NHA/ e HASD/
-# NÃO são necessários — o app nunca os abre por nome, o usuário é quem escolhe
-# o que importar (o seletor sempre começa em ~, não na pasta do app).
+# Ícones entram porque são a única coisa que o app abre por nome dentro do
+# pacote (_caminho_recurso em navepro/core/paths.py): são o fallback dos
+# botões quando não há fonte de emoji no sistema (navepro/core/icones.py).
+# NHA/ e HASD/ NÃO são necessários — o app nunca os abre por nome, o usuário
+# é quem escolhe o que importar (o seletor sempre começa em ~, não na pasta
+# do app).
 _DATAS = [
     ("img/Icon.ico", "img"),
     ("img/Icon.xbm", "img"),
     ("img/Icon.png", "img"),
+    ("icones", "icones"),
 ]
 
 # ── Sons do sorteio (.wav) ───────────────────────────────────────────

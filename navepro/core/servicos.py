@@ -2,9 +2,8 @@
 
 Lê/grava ~/.navepro/servicos.json, migra UMA vez as ordens do banco legado,
 reaproveita o menor id livre e reúne helpers de itens (faixa de versículos,
-slides de versículo por faixa, reordenação, extração de texto de PDF e
-carregamento de ícones PNG). Extraído de NavePro.py sem alteração de
-comportamento.
+slides de versículo por faixa, reordenação e extração de texto de PDF).
+Extraído de NavePro.py sem alteração de comportamento.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import subprocess
 
 from navepro.core.banco import db_query
 from navepro.core.log import get_logger
-from navepro.core.paths import SERVICOS_FILE, _caminho_recurso
+from navepro.core.paths import SERVICOS_FILE
 
 log = get_logger("servicos")
 
@@ -284,21 +283,3 @@ def _extrair_texto_pdf(caminho: str) -> str | None:
         log.warning(f"⚠️ pdftotext falhou ao ler {caminho}: {e}")
     return None
 
-
-def _carregar_icone(nome: str):
-    """Carrega um PNG de icones/ como PhotoImage do Tk para usar em botões.
-
-    Retorna None se o arquivo não existir ou o Tk falhar (fallback: o botão
-    usa o caractere emoji/texto). Ícones PNG não dependem de fontes emoji do
-    sistema — em qualquer Linux aparecem iguais (em vez de "sombra"/tofu).
-    """
-    try:
-        from PIL import Image, ImageTk
-        caminho = _caminho_recurso(os.path.join("icones", f"{nome}.png"))
-        if not os.path.exists(caminho):
-            return None
-        with Image.open(caminho) as img:
-            return ImageTk.PhotoImage(img)
-    except Exception as e:
-        log.warning(f"⚠️ Ícone '{nome}' indisponível: {e}")
-        return None
