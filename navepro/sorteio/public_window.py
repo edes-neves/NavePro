@@ -176,7 +176,7 @@ class PublicWindow:
 
         c.create_text(
             w // 2, int(h // 2 + 95 * s),
-            text="VOCÊ VAI GANHAR!",
+            text="ALGUÉM VAI GANHAR!",
             font=(ui_font(), max(1, int(30 * s))),
             fill=self._theme.public("text_secondary"),
         )

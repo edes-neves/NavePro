@@ -77,6 +77,26 @@ assert sound_manager.SOUNDS_DIR.endswith(
     os.path.join("sorteio", "assets", "sounds")
 ), sound_manager.SOUNDS_DIR
 
+# --- Reprodução sem pygame: players nativos (Windows/winsound; Linux/players) ---
+assert not hasattr(sound_manager, "HAS_PYGAME"), "pygame não deve ser dependência"
+
+_cmd_paplay = sound_manager._montar_comando(
+    "paplay", "/usr/bin/paplay", "/tmp/x.wav", 0.5
+)
+assert _cmd_paplay[0] == "/usr/bin/paplay", _cmd_paplay
+assert _cmd_paplay[-1] == "/tmp/x.wav", _cmd_paplay
+assert "--volume=" in " ".join(_cmd_paplay), _cmd_paplay
+
+_cmd_mpv = sound_manager._montar_comando("mpv", "/usr/bin/mpv", "/tmp/x.wav", 0.5)
+assert _cmd_mpv[0] == "/usr/bin/mpv", _cmd_mpv
+assert "--no-video" in _cmd_mpv, _cmd_mpv
+assert "--volume=50" in _cmd_mpv, _cmd_mpv
+
+_cmd_aplay = sound_manager._montar_comando("aplay", "/usr/bin/aplay", "/tmp/x.wav", 0.5)
+assert _cmd_aplay == ["/usr/bin/aplay", "-q", "/tmp/x.wav"], _cmd_aplay
+
+assert sound_manager.SoundManager().volume == 0.5
+
 # --- Lógica pura do motor de sorteio ---
 from navepro.sorteio.lottery_engine import LotteryEngine  # noqa: E402
 

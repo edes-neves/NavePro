@@ -1,25 +1,66 @@
 import math
 import os
 import random
+import shutil
 import struct
+import subprocess
 import wave
 from typing import Any
 
+from navepro.core.ambiente import _ambiente_sem_appimage, _eh_windows
 from navepro.core.log import get_logger
 
 log = get_logger()
-
-try:
-    import pygame
-    HAS_PYGAME = True
-except ImportError:
-    HAS_PYGAME = False
-    pygame = None
 
 SOUNDS_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "assets", "sounds"
 )
+
+# Ordem de preferência no Linux: reprodutores leves primeiro (baixa latência
+# para o clique), depois os que o NavePro já exige para vídeo (ffplay/mpv/vlc).
+# Cada item é (binário procurado, estilo do comando).
+_CANDIDATOS_LINUX: tuple[tuple[str, str], ...] = (
+    ("paplay", "paplay"),
+    ("aplay", "aplay"),
+    ("ffplay", "ffplay"),
+    ("mpv", "mpv"),
+    ("cvlc", "vlc"),
+    ("vlc", "vlc"),
+)
+
+
+def _localizar_binario(nome: str) -> str | None:
+    """Caminho de um programa no PATH ou nos diretórios padrão.
+
+    Inclui /run/host/usr/bin, usado pelo Flatpak/AppImage para alcançar os
+    programas instalados no sistema hospedeiro.
+    """
+    caminho = shutil.which(nome)
+    if caminho:
+        return caminho
+    for pasta in ("/run/host/usr/bin", "/usr/bin", "/usr/local/bin"):
+        completo = os.path.join(pasta, nome)
+        if os.path.exists(completo) and os.access(completo, os.X_OK):
+            return completo
+    return None
+
+
+def _montar_comando(estilo: str, exe: str, caminho: str, volume: float) -> list[str]:
+    """Comando para tocar um WAV com o reprodutor escolhido."""
+    if estilo == "paplay":
+        return [exe, f"--volume={int(max(0.0, min(1.0, volume)) * 65536)}", caminho]
+    if estilo == "aplay":
+        return [exe, "-q", caminho]
+    if estilo == "ffplay":
+        return [exe, "-nodisp", "-autoexit", "-loglevel", "quiet", caminho]
+    if estilo == "mpv":
+        return [
+            exe, "--no-video", "--really-quiet", "--no-terminal", "--no-config",
+            f"--volume={int(max(0.0, min(1.0, volume)) * 100)}", caminho,
+        ]
+    # vlc/cvlc
+    return [exe, "--intf", "dummy", "--play-and-exit", "--quiet", caminho]
 
 
 class SoundManager:
@@ -37,22 +78,40 @@ class SoundManager:
         self._initialized = True
         self._enabled = True
         self._volume = 0.5
-        self._sounds: dict[str, Any] = {}
+        self._sounds: dict[str, str] = {}
         self._ready = False
-        self._init_pygame()
+        self._windows = _eh_windows()
+        self._exe = ""
+        self._estilo = ""
+        self._procs: list[Any] = []
+        self._init_backend()
         self._generate_sounds()
 
-    def _init_pygame(self) -> None:
-        if not HAS_PYGAME:
-            log.debug("pygame not available. Sound disabled.")
-            self._ready = False
+    def _init_backend(self) -> None:
+        """Descobre como tocar os WAV: winsound (Windows) ou um player (Linux)."""
+        if self._windows:
+            try:
+                import winsound  # noqa: F401
+                self._ready = True
+            except ImportError:
+                log.warning("Áudio do sorteio indisponível: winsound ausente.")
+                self._ready = False
             return
-        try:
-            pygame.mixer.init(frequency=44100, size=-16, channels=1)
-            self._ready = True
-        except Exception as e:
-            log.warning("Sound init error: %s", e)
-            self._ready = False
+
+        for nome, estilo in _CANDIDATOS_LINUX:
+            exe = _localizar_binario(nome)
+            if exe:
+                self._exe = exe
+                self._estilo = estilo
+                self._ready = True
+                log.debug("Áudio do sorteio via %s", exe)
+                return
+
+        log.warning(
+            "⚠️ Nenhum reprodutor de áudio encontrado (paplay/aplay/ffplay/"
+            "mpv/vlc). O sorteio ficará sem som."
+        )
+        self._ready = False
 
     def _generate_wav(
         self,
@@ -113,10 +172,7 @@ class SoundManager:
                 wf.writeframes(struct.pack("<h", sample))
 
     def _load_sound(self, name: str, filepath: str) -> None:
-        try:
-            self._sounds[name] = pygame.mixer.Sound(filepath)
-        except Exception as e:
-            log.warning("Sound load error for %s: %s", name, e)
+        self._sounds[name] = filepath
 
     def _generate_sounds(self) -> None:
         if not self._ready:
@@ -165,28 +221,57 @@ class SoundManager:
     def volume(self, value: float) -> None:
         self._volume = max(0.0, min(1.0, value))
 
+    def _limpar_procs(self) -> None:
+        """Descarta os processos já terminados (evita acumular zumbis)."""
+        self._procs = [p for p in self._procs if p.poll() is None]
+
     def play(self, name: str) -> None:
         if not self._enabled or not self._ready:
             return
-        if name in self._sounds:
+        caminho = self._sounds.get(name)
+        if not caminho or not os.path.exists(caminho):
+            return
+
+        if self._windows:
             try:
-                self._sounds[name].set_volume(self._volume)
-                self._sounds[name].play()
+                import winsound
+                winsound.PlaySound(
+                    caminho,
+                    winsound.SND_FILENAME | winsound.SND_ASYNC
+                    | winsound.SND_NODEFAULT,
+                )
+            except Exception as e:
+                log.debug("Falha ao tocar som %s: %s", name, e)
+            return
+
+        try:
+            self._limpar_procs()
+            cmd = _montar_comando(self._estilo, self._exe, caminho, self._volume)
+            self._procs.append(subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                env=_ambiente_sem_appimage(),
+            ))
+        except Exception as e:
+            log.debug("Falha ao tocar som %s: %s", name, e)
+
+    def stop_all(self) -> None:
+        for proc in self._procs:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception:
+                pass
+        self._procs = []
+        if self._windows:
+            try:
+                import winsound
+                winsound.PlaySound(None, winsound.SND_PURGE)
             except Exception:
                 pass
 
-    def stop_all(self) -> None:
-        if not self._ready:
-            return
-        try:
-            pygame.mixer.stop()
-        except Exception:
-            pass
-
     def cleanup(self) -> None:
-        if not HAS_PYGAME:
-            return
-        try:
-            pygame.mixer.quit()
-        except Exception:
-            pass
+        self.stop_all()

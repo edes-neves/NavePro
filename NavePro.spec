@@ -34,6 +34,7 @@
 # ele gravava "player": "smplayer", que sobrescreve o PLAYER_PADRAO ("mpv" no
 # Windows). Toda instalação nova nascia no player que não aceita pausar, e o
 # operador ganhava o aviso "pausar/continuar não funciona" no primeiro uso.
+import glob
 import os
 import sys
 
@@ -52,9 +53,20 @@ _EXE_EXTRA = {"icon": _icone} if _icone else {}
 # o que importar (o seletor sempre começa em ~, não na pasta do app).
 _DATAS = [
     ("img/Icon.ico", "img"),
-    ("img/Icon.png", "img"),
     ("img/Icon.xbm", "img"),
+    ("img/Icon.png", "img"),
 ]
+
+# ── Sons do sorteio (.wav) ───────────────────────────────────────────
+# O SoundManager procura os WAV ao lado do próprio módulo
+# (navepro/sorteio/assets/sounds). Sem embuti-los, ele os regenera dentro do
+# _MEIPASS no primeiro uso — funciona em onefile (o temp é gravável), mas é
+# frágil (instalações onedir/somente-leitura falhariam) e adiciona atraso no
+# primeiro clique. Embutir garante que existam no .exe e no AppImage. No
+# Flatpak não é necessário: o manifest já copia a pasta `navepro` inteira.
+_SONS = os.path.join("navepro", "sorteio", "assets", "sounds")
+for _wav in glob.glob(os.path.join(_SONS, "*.wav")):
+    _DATAS.append((_wav, _SONS))
 
 # screeninfo é o método primário de detecção de monitores (e no Windows é o
 # que ativa o DPI-awareness); sem ele o app cai na heurística do Tk. pypdf é a
