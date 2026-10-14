@@ -4143,11 +4143,12 @@ class AppInterface:
 
         # Botões de controle em estilo "pill" (ícones grandes, sem texto)
         pill_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
-        pill_frame.pack(side='left', padx=5)
+        pill_frame.pack(side='left', padx=15)
         _marcar_area_cinza_clara(pill_frame)
 
         def _criar_botao_pill(parent, icone, tooltip, comando, icone_png=None,
-                              lado='left', pack_padx=0, fonte_texto=("Arial", 18)):
+                              lado='left', pack_padx=0, fonte_texto=("Arial", 18),
+                              tamanho=40):
             """Botão-pílula com um ícone que sai igual em qualquer sistema.
 
             Ordem de preferência: emoji colorido renderizado pela Pillow (o
@@ -4156,15 +4157,18 @@ class AppInterface:
             no rótulo. O Tk 8.6 não tem fonte de emoji própria e o fallback de
             fonte muda entre Ubuntu, Debian e Windows — por isso o caractere
             cru não é confiável.
+
+            `tamanho` é o lado do emoji em pixels (a pílula continua 40x40:
+            menor que isso e o PNG de fallback, que tem 40px, sairia cortado).
             """
             args = dict(
                 bg='#21262d', fg='#f0c040', activebackground='#6e40c9',
                 activeforeground='#f0c040',
                 command=comando, cursor='hand2',
                 bd=0, highlightthickness=0,
-                padx=14, pady=6
+                padx=16, pady=10
             )
-            imagem = _carregar_emoji(icone, 40)
+            imagem = _carregar_emoji(icone, tamanho)
             if imagem is None and icone_png:
                 imagem = _carregar_icone(icone_png)
             if imagem is not None:
@@ -4206,13 +4210,13 @@ class AppInterface:
             widget.bind("<Leave>", esconder)
 
         _criar_botao_pill(pill_frame, "⏮", "Anterior", self.tocar_anterior,
-                          icone_png="anterior")
+                          icone_png="anterior", pack_padx=10)
         _criar_botao_pill(pill_frame, "⏯", "Play / Pause", self.player.play_pause,
-                          icone_png="playpause")
+                          icone_png="playpause", pack_padx=10)
         _criar_botao_pill(pill_frame, "⏹", "Parar", self.parar,
-                          icone_png="parar")
+                          icone_png="parar", pack_padx=10)
         _criar_botao_pill(pill_frame, "⏭", "Próximo", self.tocar_proximo,
-                          icone_png="proximo")
+                          icone_png="proximo", pack_padx=10)
 
         # Espaçador flexível
         _espacador = tk.Frame(controls_frame, bg='#161b22')
@@ -4221,32 +4225,35 @@ class AppInterface:
 
         # Botão Sorteio (canto inferior direito, mesmo estilo pílula dos demais)
         sorteio_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
-        sorteio_frame.pack(side='right', padx=5)
+        sorteio_frame.pack(side='right', padx=0)
         _marcar_area_cinza_clara(sorteio_frame)
         _criar_botao_pill(sorteio_frame, "🎲", "Sorteio Profissional",
-                          self.abrir_sorteio, icone_png="sorteio")
+                          self.abrir_sorteio, icone_png="sorteio", tamanho=30,
+                          pack_padx=8)
 
         # Botões dos novos módulos (frame separado à direita)
         modulos_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
-        modulos_frame.pack(side='right', padx=5)
+        modulos_frame.pack(side='right', padx=0)
         _marcar_area_cinza_clara(modulos_frame)
         _criar_botao_pill(modulos_frame, "📖", "Hinos / Letras", self.janela_hinos,
-                          icone_png="hinos")
+                          icone_png="hinos", tamanho=30, pack_padx=8)
         _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia,
-                          icone_png="biblia")
+                          icone_png="biblia", tamanho=30, pack_padx=8)
         _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico,
-                          icone_png="ordem")
+                          icone_png="ordem", tamanho=30, pack_padx=8)
         _criar_botao_pill(modulos_frame, "📢", "Anúncios", self.janela_anuncios,
-                          icone_png="anuncios")
+                          icone_png="anuncios", tamanho=30, pack_padx=8)
 
         # Botões Gerenciar Banco e Configurações (mesma pílula, montados por
         # último: o pack side='right' define a posição da direita p/ a esquerda)
         _criar_botao_pill(controls_frame, "📦", "Gerenciar Banco",
                           self.abrir_gerenciador, icone_png="banco",
-                          lado='right', pack_padx=5, fonte_texto=("Arial", 16))
+                          lado='right', pack_padx=8, fonte_texto=("Arial", 16),
+                          tamanho=30)
         _criar_botao_pill(controls_frame, "⚙️", "Configurações",
                           self.abrir_config_relogio_dialogo, icone_png="config",
-                          lado='right', pack_padx=5, fonte_texto=("Arial", 16))
+                          lado='right', pack_padx=8, fonte_texto=("Arial", 16),
+                          tamanho=30)
         _criar_faixa_secao(controls_frame, topo=False)
 
     # ── Lista de resultados (com cache para evitar redesenho e centralização) ────
