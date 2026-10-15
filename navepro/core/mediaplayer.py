@@ -37,12 +37,27 @@ from navepro.core.player import (
     esconder_janelas_auxiliares,
     localizar_executavel,
     mpris_ativo,
+    mpris_definir_volume,
+    mpris_obter_volume,
     mpris_status,
     nome_pipe_mpv,
     posicionar_janela_player,
 )
 
 log = get_logger("mediaplayer")
+
+# ── Fade de áudio (Play/Pausar/Parar) ────────────────────────────────
+# Ao começar/retomar, o som sobe de 0 até o volume devagar; ao pausar/parar,
+# desce de volta a 0. É "best-effort": só age onde já controlamos o player
+# (IPC do mpv no Windows, D-Bus/MPRIS no Linux fora do Flatpak). Sem esse
+# controle, nada muda — o comportamento antigo (parar/pausar na hora) segue.
+_FADE_AUDIO_SEGUNDOS = 1.2
+_FADE_AUDIO_PASSOS = 30
+# Ao iniciar uma faixa, o player leva um instante para aparecer no barramento
+# (ou abrir o pipe), então o fade-in tenta algumas vezes, sem prender a tela.
+_FADE_ENTRADA_ESPERA_MS = 120
+_FADE_ENTRADA_TENTATIVAS = 10
+_FADE_VOLUME_PADRAO = 0.9
 
 
 def _eh_url(arquivo: str) -> bool:
@@ -195,6 +210,13 @@ class MediaPlayer:
         self._ja_avisou_ytdlp: bool = False
         # Referência para o root da janela principal (setado externamente)
         self._root_after: tk.Misc | None = None
+        # ── Fade de áudio ────────────────────────────────────────────
+        # `_volume_alvo` é o volume "de referência" (o que se restaura ao
+        # retomar); `_fade_geracao`/`_fade_timer` controlam o fade em
+        # andamento — só o mais recente age (os antigos se invalidam).
+        self._volume_alvo: float | None = None
+        self._fade_geracao: int = 0
+        self._fade_timer = None
         # Garante existência do telão antes de monitorar
         self._garantir_telao()
         # Inicia monitoramento assíncrono
@@ -517,6 +539,7 @@ class MediaPlayer:
             self.is_paused = False
             if _eh_windows():
                 self._preparar_controle_windows(proc.pid, arquivo, mx, my, mw, mh)
+            self._iniciar_fade_entrada()
             return True
         except Exception as e:
             log.exception(f"❌ Erro ao iniciar player: {e}")
@@ -852,6 +875,192 @@ class MediaPlayer:
             proc = self._process
         return proc is not None and proc.poll() is None
 
+    # ── Volume e fade (Play/Pausar/Parar) ────────────────────────────
+    def _candidatos_mpris(self) -> list[str]:
+        """Nomes MPRIS dos players que o NavePro sabe controlar, sem repetir."""
+        candidatos: list[str] = []
+        for nome in (self._player_em_uso, self.player_cmd):
+            dest = destino_mpris(nome or "")
+            if dest and dest not in candidatos:
+                candidatos.append(dest)
+        for dest in MPRIS_DESTS.values():
+            if dest not in candidatos:
+                candidatos.append(dest)
+        return candidatos
+
+    def _canal_volume(self) -> tuple[str, str | None] | None:
+        """(tipo, destino) para controlar o volume do player em uso, ou None.
+
+        Só onde já controlamos o player: IPC do mpv no Windows e D-Bus/MPRIS
+        no Linux fora do Flatpak. Dentro do Flatpak, não: o player roda no
+        host e, pausado, fica congelado (SIGSTOP) — mexer no volume ali só
+        travaria a interface à espera de um D-Bus que não responde.
+        """
+        if _eh_windows():
+            return ("mpv", None) if self._ipc_mpv_disponivel() else None
+        if _eh_linux() and not _eh_flatpak():
+            dest = mpris_ativo(self._candidatos_mpris())
+            return ("mpris", dest) if dest else None
+        return None
+
+    def _ler_volume(self, canal) -> float | None:
+        """Volume atual do canal (0.0-1.0), ou None se não deu para ler."""
+        tipo, dest = canal
+        if tipo == "mpv":
+            try:
+                valor = self._ipc.propriedade("volume", timeout=0.6)
+            except Exception:
+                return None
+            if isinstance(valor, (int, float)):
+                return max(0.0, min(1.0, float(valor) / 100.0))
+            return None
+        return mpris_obter_volume(dest, timeout=0.6)
+
+    def _escrever_volume(self, canal, valor: float) -> bool:
+        """Aplica o volume (0.0-1.0) no canal. False se não deu."""
+        tipo, dest = canal
+        valor = max(0.0, min(1.0, float(valor)))
+        if tipo == "mpv":
+            try:
+                ok, _ = self._ipc.comandar(
+                    ["set_property", "volume", round(valor * 100)], timeout=0.6)
+                return bool(ok)
+            except Exception:
+                return False
+        return mpris_definir_volume(dest, valor, timeout=0.6)
+
+    def obter_volume(self) -> float | None:
+        """Volume atual do player (0.0-1.0); None se não dá para saber."""
+        canal = self._canal_volume()
+        return None if canal is None else self._ler_volume(canal)
+
+    def definir_volume(self, valor: float) -> bool:
+        """Define o volume do player (0.0-1.0). True se conseguiu aplicar."""
+        canal = self._canal_volume()
+        return False if canal is None else self._escrever_volume(canal, valor)
+
+    def _agendar_ui(self, ms: int, func):
+        """Agenda `func` na thread do Tk (root do painel, senão o do telão)."""
+        alvo = self._root_after
+        if alvo is None:
+            telao = self._garantir_telao()
+            alvo = getattr(telao, "root", None) if telao is not None else None
+        if alvo is None:
+            return None
+        try:
+            return alvo.after(ms, func)
+        except tk.TclError:
+            return None
+
+    def _cancelar_agendamento(self, timer) -> None:
+        """Cancela um `after` agendado (silencioso se a janela já morreu)."""
+        alvo = self._root_after
+        if alvo is None:
+            telao = self._garantir_telao()
+            alvo = getattr(telao, "root", None) if telao is not None else None
+        if alvo is None:
+            return
+        try:
+            alvo.after_cancel(timer)
+        except (tk.TclError, ValueError):
+            pass
+
+    def _cancelar_fade(self) -> int:
+        """Invalida qualquer fade agendado e devolve a nova geração."""
+        self._fade_geracao += 1
+        if self._fade_timer is not None:
+            self._cancelar_agendamento(self._fade_timer)
+            self._fade_timer = None
+        return self._fade_geracao
+
+    def _fade_audio(self, alvo: float,
+                    depois: Callable[[], None] | None = None,
+                    duracao: float | None = None,
+                    inicio: float | None = None, canal=None) -> None:
+        """Anima o volume até `alvo` (0.0-1.0) sem travar a interface.
+
+        Cada passo roda na thread do Tk (via `after`), então `depois` também
+        roda nela. Um fade novo cancela o anterior — só o mais recente age.
+        Sem controle de volume, apenas chama `depois` (comportamento antigo,
+        sem qualquer atraso).
+        """
+        geracao = self._cancelar_fade()
+        if canal is None:
+            canal = self._canal_volume()
+        if canal is None:
+            if depois:
+                depois()
+            return
+        if inicio is None:
+            inicio = self._ler_volume(canal)
+        if inicio is None:
+            if depois:
+                depois()
+            return
+        alvo = max(0.0, min(1.0, float(alvo)))
+        passos = max(1, _FADE_AUDIO_PASSOS)
+        duracao = _FADE_AUDIO_SEGUNDOS if duracao is None else max(0.0, duracao)
+        intervalo_ms = max(1, int(duracao * 1000 / passos))
+        estado = {"i": 0, "falhas": 0}
+
+        def _passo() -> None:
+            if geracao != self._fade_geracao:
+                return
+            estado["i"] += 1
+            i = estado["i"]
+            t0 = time.monotonic()
+            ok = self._escrever_volume(
+                canal, inicio + (alvo - inicio) * (i / passos))
+            estado["falhas"] = 0 if ok else estado["falhas"] + 1
+            if estado["falhas"] >= 3:
+                # Player sumiu/parou de responder: não insiste (evita travar
+                # a interface em uma sequência de timeouts).
+                self._fade_timer = None
+                if depois:
+                    depois()
+                return
+            if i < passos:
+                gasto = time.monotonic() - t0
+                self._fade_timer = self._agendar_ui(
+                    max(1, intervalo_ms - int(gasto * 1000)), _passo)
+            else:
+                self._fade_timer = None
+                if depois:
+                    depois()
+
+        self._fade_timer = self._agendar_ui(intervalo_ms, _passo)
+
+    def _iniciar_fade_entrada(self) -> None:
+        """Fade-in ao começar uma faixa nova (só onde há controle de volume).
+
+        O player leva um instante para aparecer no barramento/pipe, então
+        tenta algumas vezes, sem prender a interface. Se não houver canal de
+        volume, desiste em silêncio (o som segue no volume normal).
+        """
+        geracao = self._cancelar_fade()
+        tentativas = {"n": 0}
+
+        def _tentar() -> None:
+            if geracao != self._fade_geracao:
+                return
+            if not self.is_playing or self.is_paused:
+                return
+            canal = self._canal_volume()
+            if canal is None:
+                tentativas["n"] += 1
+                if tentativas["n"] <= _FADE_ENTRADA_TENTATIVAS:
+                    self._fade_timer = self._agendar_ui(
+                        _FADE_ENTRADA_ESPERA_MS, _tentar)
+                return
+            atual = self._ler_volume(canal)
+            alvo = (atual if (atual and atual > 0.05)
+                    else (self._volume_alvo or _FADE_VOLUME_PADRAO))
+            self._volume_alvo = alvo
+            self._escrever_volume(canal, 0.0)
+            self._fade_audio(alvo, inicio=0.0, canal=canal)
+
+        self._fade_timer = self._agendar_ui(_FADE_ENTRADA_ESPERA_MS, _tentar)
+
     def _avisar(self, mensagem: str) -> None:
         """Manda um aviso para o painel (sem travar a interface)."""
         log.warning(f"⚠️ {mensagem}")
@@ -1151,21 +1360,47 @@ class MediaPlayer:
     def play_pause(self) -> None:
         """Alterna entre play e pause (sem busy waiting)."""
         if self.is_playing and not self.is_paused:
-            if self._pausar_player():
-                self.is_paused = True
-                if self.tempo_inicio is not None:
-                    self.tempo_acumulado += time.time() - self.tempo_inicio
-                    self.tempo_inicio = None
+            # Fade-out antes de pausar: o som desce até 0 e só então pausa.
+            atual = self.obter_volume()
+
+            def _pausar_depois() -> None:
+                if self._pausar_player():
+                    self.is_paused = True
+                    if self.tempo_inicio is not None:
+                        self.tempo_acumulado += time.time() - self.tempo_inicio
+                        self.tempo_inicio = None
+                else:
+                    # O player não aceitou o comando: o estado interno não muda
+                    # (senão o painel mentiria) e o operador é avisado do porquê.
+                    self._avisar_sem_controle_se_precisar()
+                # Devolve o volume: pausado já é silêncio, e assim o player
+                # não fica salvo mudo (o smplayer grava o volume ao sair).
+                self.definir_volume(self._volume_alvo or _FADE_VOLUME_PADRAO)
+
+            if atual is None:
+                _pausar_depois()
             else:
-                # O player não aceitou o comando: o estado interno não muda
-                # (senão o painel mentiria), e o operador é avisado de por quê.
-                self._avisar_sem_controle_se_precisar()
+                # Não rebaixa o alvo quando o volume lido é de um fade em curso.
+                if atual > 0 and self._fade_timer is None:
+                    self._volume_alvo = atual
+                self._fade_audio(0.0, depois=_pausar_depois, inicio=atual)
         elif self.is_paused:
+            # Zera o volume, retoma e sobe até o alvo (fade-in ao continuar).
+            alvo = (self._volume_alvo or self.obter_volume()
+                    or _FADE_VOLUME_PADRAO)
+            canal = self._canal_volume()
+            if canal is not None:
+                self._escrever_volume(canal, 0.0)
             if self._pausar_player():
                 self.is_paused = False
                 self.is_playing = True
                 self.tempo_inicio = time.time()
+                if canal is not None:
+                    self._volume_alvo = alvo
+                    self._fade_audio(alvo, inicio=0.0, canal=canal)
             else:
+                if canal is not None:
+                    self._escrever_volume(canal, alvo)
                 self._avisar_sem_controle_se_precisar()
         else:
             if self.playlist and self.index < len(self.playlist):
@@ -1175,7 +1410,34 @@ class MediaPlayer:
                         self.on_track_change(self.index, arquivo)
 
     def stop(self) -> None:
-        """Para o player completamente."""
+        """Para o player com fade-out (o processo só morre após o fade)."""
+        canal = self._canal_volume()
+        if canal is None:
+            self._parar_agora()
+            return
+        atual = self._ler_volume(canal)
+        if atual and atual > 0:
+            self._volume_alvo = atual
+        # Marca o estado como parado JÁ: o painel e um novo play reagem na
+        # hora; o processo segue tocando só até o fade terminar.
+        self.is_playing = False
+        self.is_paused = False
+        self.tempo_inicio = None
+        self.tempo_acumulado = 0.0
+        self.duracao_total = None
+        self._fade_audio(0.0, depois=self._parar_agora, canal=canal)
+
+    def parar_agora(self) -> None:
+        """Para o player IMEDIATAMENTE, sem fade (usado ao fechar o app).
+
+        O fade é agendado na thread do Tk: no encerramento a janela é destruída
+        logo em seguida e o agendamento não rodaria, deixando o player vivo.
+        """
+        self._cancelar_fade()
+        self._parar_agora()
+
+    def _parar_agora(self) -> None:
+        """Encerra o player sem fade (IPC no Windows ou _matar_processo)."""
         # Pedir educadamente primeiro: o mpv sai pelo IPC, fechando o vídeo e
         # o áudio sem o piscar do /F. Se o IPC não responder, _matar_processo
         # cai no taskkill /T.

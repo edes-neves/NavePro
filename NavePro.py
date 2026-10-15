@@ -291,6 +291,48 @@ log = get_logger("app")
 # (movido para navepro/core/servicos.py — ver "IMPORTS INTERNOS" no topo)
 
 
+# ────────────────────────────────────────────────────────────────────
+# CAMPO DE TEXTO — MENU DE CLIQUE DIREITO (copiar/colar)
+# ────────────────────────────────────────────────────────────────────
+
+def _menu_contexto_campo(campo, acoes) -> tk.Menu:
+    """Liga um menu de clique direito a um campo de texto.
+
+    `acoes` é uma lista de pares (rótulo, função) e o menu abre junto ao
+    ponteiro. O `bind` cai no Entry interno dos campos arredondados, de
+    modo que a mesma chamada serve para `tk.Entry` e `CampoArredondado`.
+    """
+    menu = tk.Menu(campo, tearoff=0, bg='#21262d', fg='#c9d1d9',
+                   activebackground='#6e40c9', activeforeground='#ffffff',
+                   font=("Arial", 10))
+
+    def _abrir(event) -> str:
+        try:
+            menu.tk_popup(event.x_root, event.y_root, 0)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    for rotulo, comando in acoes:
+        menu.add_command(label=rotulo, command=comando)
+    campo.bind("<Button-3>", _abrir)
+    return menu
+
+
+def _colar_texto_campo(campo) -> None:
+    """Cola a área de transferência no campo (substitui a seleção)."""
+    try:
+        texto = campo.clipboard_get()
+    except tk.TclError:
+        return
+    try:
+        if campo.selection_present():
+            campo.delete('sel.first', 'sel.last')
+    except tk.TclError:
+        pass
+    campo.insert('insert', texto)
+
+
 def _listar_pastas_arquivos_usuario(
         caminho: str,
         sufixos: tuple[str, ...] = (".xml", ".txt", ".json")
@@ -1118,6 +1160,8 @@ class AppInterface:
             bg='#21262d', fg='#c9d1d9', activebackground='#30363d',
             font=("Arial", 10), cursor='hand2', padx=10, pady=3
         ).pack(side='left')
+
+        _menu_contexto_campo(entry_url, [("📋 Copiar", _copiar)])
 
         tk.Label(
             parent, justify='left', bg='#0d1117', fg='#8b949e',
@@ -9913,10 +9957,15 @@ class AppInterface:
             tk.Label(youtube_url_row, text="URL do vídeo:",
                      fg='#c9d1d9', bg='#0d1117',
                      font=("Arial", 10)).pack(side='left')
-            tk.Entry(youtube_url_row, textvariable=youtube_url_var,
-                     font=("Arial", 10), bg='#21262d', fg='#c9d1d9',
-                     insertbackground='#f0c040').pack(
-                side='left', fill='x', expand=True, padx=(4, 0), ipady=2)
+            youtube_url_entry = tk.Entry(
+                youtube_url_row, textvariable=youtube_url_var,
+                font=("Arial", 10), bg='#21262d', fg='#c9d1d9',
+                insertbackground='#f0c040')
+            youtube_url_entry.pack(side='left', fill='x', expand=True,
+                                   padx=(4, 0), ipady=2)
+            _menu_contexto_campo(
+                youtube_url_entry,
+                [("📋 Colar", lambda: _colar_texto_campo(youtube_url_entry))])
 
             def _atualizar_youtube():
                 if youtube_var.get():
@@ -10692,9 +10741,10 @@ class AppInterface:
         self._shutting_down = True
         log.info("🛑 Encerrando NavePro...")
         try:
-            # 1. Para a reprodução
+            # 1. Para a reprodução (imediato: o fade ficaria agendado e a
+            #    janela é destruída logo abaixo, deixando o player vivo)
             if self.player:
-                self.player.stop()
+                self.player.parar_agora()
                 self.player.telao.fechar()
             # 2. Para o worker de busca
             if hasattr(self, 'search_worker'):

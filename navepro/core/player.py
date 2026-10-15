@@ -714,3 +714,51 @@ def mpris_ativo(destinos: list, timeout: float = 1.0) -> str | None:
     except Exception:
         pass
     return None
+
+
+def mpris_obter_volume(dest: str, timeout: float = 1.0) -> float | None:
+    """Volume de um destino MPRIS em 0.0-1.0, ou None se não responde.
+
+    A leitura de propriedade funciona inclusive de dentro do Flatpak (só os
+    MÉTODOS é que são pouco confiáveis lá). É o que permite ao fade saber de
+    onde partir, em vez de assumir um valor fixo.
+    """
+    try:
+        resp = subprocess.run(
+            ['dbus-send', '--session', '--print-reply',
+             f'--dest={dest}', '/org/mpris/MediaPlayer2',
+             'org.freedesktop.DBus.Properties.Get',
+             'string:org.mpris.MediaPlayer2.Player', 'string:Volume'],
+            timeout=timeout, capture_output=True, text=True,
+            env=_ambiente_sem_appimage())
+    except Exception:
+        return None
+    m = re.search(r'double\s+([0-9.]+)', resp.stdout or '')
+    if not m:
+        return None
+    try:
+        return max(0.0, min(1.0, float(m.group(1))))
+    except ValueError:
+        return None
+
+
+def mpris_definir_volume(dest: str, valor: float, timeout: float = 1.0) -> bool:
+    """Define o Volume (0.0-1.0) de um destino MPRIS. True se aplicado.
+
+    Volume é propriedade padrão do MPRIS: o Set costuma valer mesmo em
+    players que ignoram os métodos PlayPause. Ainda assim é best-effort — o
+    chamador trata False como "não deu para controlar o volume".
+    """
+    valor = max(0.0, min(1.0, float(valor)))
+    try:
+        resp = subprocess.run(
+            ['dbus-send', '--session', '--type=method_call',
+             f'--dest={dest}', '/org/mpris/MediaPlayer2',
+             'org.freedesktop.DBus.Properties.Set',
+             'string:org.mpris.MediaPlayer2.Player', 'string:Volume',
+             f'variant:double:{valor:.3f}'],
+            timeout=timeout, capture_output=True, text=True,
+            env=_ambiente_sem_appimage())
+    except Exception:
+        return False
+    return resp.returncode == 0
