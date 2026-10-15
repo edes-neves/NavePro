@@ -499,6 +499,13 @@ def _marcar_area_cinza_clara(widget, escuro: str = '#21262d'):
     """
     widget._navepro_area_cinza_clara = True
     widget._navepro_area_cinza_escuro = escuro
+    # Campos arredondados desenham um Entry interno por cima: ele precisa
+    # acompanhar a mesma cor, senão o miolo do campo fica com outra cor no
+    # tema claro (o frame vira cinza e o Entry interno permanece).
+    interno = getattr(widget, '_entry', None)
+    if interno is not None:
+        interno._navepro_area_cinza_clara = True
+        interno._navepro_area_cinza_escuro = escuro
     return widget
 
 
@@ -3386,8 +3393,47 @@ class AppInterface:
             if self.tema == 'claro':
                 self._recolorir_arvore(self.root, capturar=True)
             self._recolorir_arvore(self.root)
+            # O campo de resultados é recolorido à parte (fica fora do passe
+            # genérico para o cinza claro não distorcer a cada visita).
+            self._pintar_lista_cores()
         except tk.TclError:
             pass
+        # Rede de segurança: garante o fundo correto de Cidade/UF/busca em
+        # cada tema, mesmo que o passe genérico tenha deixado para trás.
+        self._garantir_campos_tema()
+
+    def _garantir_campos_tema(self) -> None:
+        """Reafirma, por tema, a cor de fundo dos campos Cidade/UF/busca.
+
+        Independente do passe genérico de recoloração (que depende das cores
+        de origem gravadas). As cores reafirmadas são exatamente as corretas
+        de cada tema, então nada muda quando o passe genérico já acertou —
+        só corrige o caso em que um campo tivesse ficado com a cor do outro
+        tema (ex.: Cidade/UF/busca claros no tema escuro).
+        """
+        claro = self.tema == 'claro'
+        # Cidade/UF: CampoArredondado (área cinza); no escuro usa o próprio
+        # fundo escuro gravado ao marcar o campo.
+        for campo in (getattr(self, 'entry_cidade', None),
+                      getattr(self, 'entry_estado', None)):
+            if campo is None:
+                continue
+            if claro:
+                alvo = '#8b949e'
+            else:
+                alvo = getattr(
+                    campo, '_navepro_area_cinza_escuro', '#eaeef2')
+            try:
+                campo.configure(bg=alvo)
+            except tk.TclError:
+                pass
+        # Busca: fundo escuro próprio (#21262d) e o mesmo cinza claro.
+        busca = getattr(self, 'entry_busca', None)
+        if busca is not None:
+            try:
+                busca.configure(bg='#8b949e' if claro else '#21262d')
+            except tk.TclError:
+                pass
 
     def _aplicar_tema_ttk(self) -> None:
         """Ajusta os estilos globais ttk (Treeview/Scrollbar) ao tema."""
@@ -3506,6 +3552,11 @@ class AppInterface:
         try:
             if not widget.winfo_exists():
                 return
+            # Widgets do campo de resultados têm cores próprias por tema
+            # (ver _pintar_lista_cores): fora da recolorização genérica para
+            # o cinza claro da lista não "escorregar" a cada visita.
+            if getattr(widget, '_navepro_tema_ignorar', False):
+                return
             # Faixas que delimitam as seções do painel: cor própria por tema
             # (carvão no claro; igual ao cartão no escuro, isto é, invisível).
             if getattr(widget, '_navepro_faixa_secao', False):
@@ -3616,11 +3667,14 @@ class AppInterface:
                 continue
             if o in ('background', 'activebackground', 'selectbackground',
                      'troughcolor'):
-                clara = _cor_clara(atual)
-                if o == 'background':
-                    bg_final = clara
                 if not pre_capturado and aplicado.get(o) != atual:
                     origem[o] = atual
+                # Mapeia sempre a partir da cor ESCURA de origem: reler a cor
+                # atual faz o cinza claro (#8b949e) "escorregar" para #656d76
+                # a cada visita, pois #8b949e também é chave do mapa claro.
+                clara = _cor_clara(origem.get(o) or atual)
+                if o == 'background':
+                    bg_final = clara
                 base[o] = clara
                 aplicado[o] = clara
                 cfg[o] = clara
@@ -4155,6 +4209,16 @@ class AppInterface:
         )
         self.scroll_frame = tk.Frame(self.canvas_lista, bg='#161b22')
 
+        # O campo de resultados tem cor própria por tema (_pintar_lista_cores):
+        # fica fora da recolorização genérica para o cinza claro não distorcer.
+        self.list_container = list_container
+        self.scrollbar_lista = scrollbar
+        for _w in (list_container, self.canvas_lista, scrollbar, self.scroll_frame):
+            try:
+                _w._navepro_tema_ignorar = True
+            except Exception:
+                pass
+
         self.scroll_frame.bind(
             "<Configure>",
             lambda e: self.canvas_lista.configure(
@@ -4182,6 +4246,9 @@ class AppInterface:
         controls_frame.pack(fill='x', pady=(10, 0), ipady=8)
         _marcar_area_cinza_clara(controls_frame, '#161b22')
         _criar_faixa_secao(controls_frame, topo=True)
+        # Guardado para o campo de resultados usar a mesma cor "por baixo dos
+        # botões" no tema claro (ver _pintar_lista_cores).
+        self.controls_frame = controls_frame
 
         # Botões de controle em estilo "pill" (ícones grandes, sem texto)
         pill_frame = tk.Frame(controls_frame, bg='#21262d', highlightthickness=0)
@@ -4353,6 +4420,102 @@ class AppInterface:
 
         self._pulse_timer = self.root.after(800, self._animar_pulse)
 
+    def _pintar_lista_cores(self) -> None:
+        """Recolore o campo de resultados (lista de hinos/músicas) no tema atual.
+
+        No tema claro o campo usa o mesmo cinza da faixa de botões do rodapé
+        (``#8b949e``). As cores claras saem sempre das cores ESCURAS originais
+        (via ``_cor_clara``), sem reler a cor já clareada — reler fazia o cinza
+        "escorregar" para ``#656d76`` a cada visita do tema.
+        """
+        claro = self.tema == 'claro'
+
+        # No tema claro o campo usa a mesma cor da faixa de botões do rodapé
+        # ("por baixo dos botões"), lida direto do frame dos controles.
+        face_clara = '#8b949e'
+        if claro:
+            barra = getattr(self, 'controls_frame', None)
+            if barra is not None:
+                try:
+                    face_clara = barra.cget('background')
+                except tk.TclError:
+                    pass
+
+        def _neutro(escura: str) -> str:
+            # Superfícies cinza do campo (container, linha, fundo do rótulo).
+            return face_clara if claro else escura
+
+        def _acc(escura: str) -> str:
+            # Cores de destaque (verde da linha atual, roxo do hover/progresso).
+            return _cor_clara(escura) if claro else escura
+
+        def _fg(escura: str, bg_escura: str) -> str:
+            if not claro:
+                return escura
+            return _cor_clara(escura, _cor_clara(bg_escura))
+
+        superficies = [
+            (getattr(self, 'list_container', None), '#161b22'),
+            (getattr(self, 'canvas_lista', None), '#161b22'),
+            (getattr(self, 'scroll_frame', None), '#161b22'),
+        ]
+        for w, escura in superficies:
+            if w is None:
+                continue
+            try:
+                w.configure(bg=_neutro(escura))
+            except tk.TclError:
+                pass
+
+        sb = getattr(self, 'scrollbar_lista', None)
+        if sb is not None:
+            try:
+                sb.configure(bg=_neutro('#21262d'), troughcolor=_neutro('#161b22'),
+                             activebackground=_acc('#6e40c9'))
+            except tk.TclError:
+                pass
+
+        if not hasattr(self, '_pool_frames'):
+            return
+
+        for lbl in (getattr(self, '_pool_label_count', None),
+                    getattr(self, '_pool_label_vazio', None)):
+            if lbl is None:
+                continue
+            try:
+                lbl.configure(bg=_neutro('#161b22'), fg=_fg('#8b949e', '#161b22'))
+            except tk.TclError:
+                pass
+
+        for i in range(len(self._pool_frames)):
+            escura = '#1c2128' if i % 2 == 0 else '#21262d'
+            frame = self._pool_frames[i]
+            btn = self._pool_botoes[i]
+            atual = (self.arquivo_atual is not None
+                     and self._pool_caminhos[i] == self.arquivo_atual)
+            try:
+                frame.configure(bg=_neutro(escura))
+            except tk.TclError:
+                pass
+            try:
+                if atual:
+                    btn.configure(bg=_acc('#238636'),
+                                  fg=_fg('#f0c040', '#238636'),
+                                  activebackground=_acc('#6e40c9'),
+                                  activeforeground=_fg('#c9d1d9', '#6e40c9'))
+                else:
+                    btn.configure(bg=_neutro(escura), fg=_fg('#c9d1d9', escura),
+                                  activebackground=_acc('#6e40c9'),
+                                  activeforeground=_fg('#c9d1d9', '#6e40c9'))
+            except tk.TclError:
+                pass
+            progress_frame, progress_bar = self._pool_progress_bars[i]
+            try:
+                progress_frame.configure(bg=_neutro('#161b22'))
+                progress_bar.configure(bg=_acc('#6e40c9'))
+            except tk.TclError:
+                pass
+
     def _criar_pool_botoes(self) -> None:
         """Cria o pool de itens recicláveis (cabeçalho + 80 linhas)."""
         self._pool_botoes = []
@@ -4401,6 +4564,21 @@ class AppInterface:
         self._pulse_state: int = 0
         # Timer que segura um aviso no rodapé (ver mostrar_aviso)
         self._aviso_timer: str | None = None
+
+        # O campo tem cor própria por tema; fora da recolorização genérica.
+        for w in (self._pool_label_count, self._pool_label_vazio,
+                  *self._pool_frames, *self._pool_botoes):
+            try:
+                w._navepro_tema_ignorar = True
+            except Exception:
+                pass
+        for progress_frame, progress_bar in self._pool_progress_bars:
+            try:
+                progress_frame._navepro_tema_ignorar = True
+                progress_bar._navepro_tema_ignorar = True
+            except Exception:
+                pass
+        self._pintar_lista_cores()
 
     def atualizar_lista(self) -> None:
         """Atualiza a lista reciclando itens do pool (cores alternadas, barra de progresso)."""
@@ -4453,15 +4631,7 @@ class AppInterface:
                 frame = self._pool_frames[i]
                 btn = self._pool_botoes[i]
 
-                # Cor de fundo: verde se tocando, alternado caso contrário
-                if is_current:
-                    bg_cor = '#238636'
-                    fg_cor = '#f0c040'
-                else:
-                    bg_cor = '#1c2128' if i % 2 == 0 else '#21262d'
-                    fg_cor = '#c9d1d9'
-
-                btn.config(text=texto, bg=bg_cor, fg=fg_cor)
+                btn.config(text=texto)
                 self._pool_caminhos[i] = caminho
                 btn.config(command=lambda c=caminho: self.tocar_arquivo(c))
 
@@ -4485,6 +4655,10 @@ class AppInterface:
                     progress_frame.pack_forget()
             else:
                 self._pool_frames[i].pack_forget()
+
+        # Aplica as cores do tema ao campo (verde na linha atual, cinza claro
+        # no tema claro etc.) sempre a partir das cores escuras originais.
+        self._pintar_lista_cores()
 
         # Inicia animação do ícone pulsante se há música tocando
         if self.arquivo_atual and self.player and self.player.is_playing:

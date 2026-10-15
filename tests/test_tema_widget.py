@@ -190,5 +190,50 @@ check(
     str(_area2.cfg),
 )
 
+# --- Rede de segurança dos campos Cidade/UF/busca por tema ---
+_CORPO_GARANTIR = textwrap.dedent(
+    ast.get_source_segment(_SRC, _NOS["_garantir_campos_tema"]))
+_ns_garantir = {"tk": tk}
+exec(compile(_CORPO_GARANTIR, "<garantir_campos_tema>", "exec"), _ns_garantir)
+_GARANTIR = _ns_garantir["_garantir_campos_tema"]
+
+
+class _FakeCampo:
+    def __init__(self, escuro="#eaeef2"):
+        self._navepro_area_cinza_escuro = escuro
+        self.cfg = {}
+
+    def configure(self, **kw):
+        self.cfg.update(kw)
+
+
+class _FakeHostCampos:
+    def __init__(self, tema):
+        self.tema = tema
+        self.entry_cidade = _FakeCampo("#eaeef2")
+        self.entry_estado = _FakeCampo("#eaeef2")
+        self.entry_busca = _FakeCampo()
+
+
+# Escuro: mesmo se os campos tiverem ficado claros, volta ao fundo escuro.
+_h = _FakeHostCampos("escuro")
+_h.entry_cidade.configure(bg="#8b949e")  # simula o bug relatado
+_h.entry_busca.configure(bg="#8b949e")
+_GARANTIR(_h)
+check("garantir: Cidade volta a #eaeef2 no escuro",
+      _h.entry_cidade.cfg.get("bg") == "#eaeef2", str(_h.entry_cidade.cfg))
+check("garantir: UF volta a #eaeef2 no escuro",
+      _h.entry_estado.cfg.get("bg") == "#eaeef2", str(_h.entry_estado.cfg))
+check("garantir: busca volta a #21262d no escuro",
+      _h.entry_busca.cfg.get("bg") == "#21262d", str(_h.entry_busca.cfg))
+
+# Claro: campos usam o cinza da faixa de botões.
+_h2 = _FakeHostCampos("claro")
+_GARANTIR(_h2)
+check("garantir: Cidade #8b949e no claro",
+      _h2.entry_cidade.cfg.get("bg") == "#8b949e", str(_h2.entry_cidade.cfg))
+check("garantir: busca #8b949e no claro",
+      _h2.entry_busca.cfg.get("bg") == "#8b949e", str(_h2.entry_busca.cfg))
+
 print("\n" + ("TODOS OS CASOS PASSARAM" if not falhas else f"FALHAS: {falhas}"))
 sys.exit(1 if falhas else 0)
