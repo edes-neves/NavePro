@@ -197,5 +197,21 @@ checar("Flatpak enxerga o /usr/local/bin do host (yt-dlp oficial)",
 checar("sandbox também cobre /run/host/usr/bin (mpv do apt)",
        "/run/host/usr/bin" in player_mod._CAMINHOS_LINUX)
 
+# ── 7. Título do item YouTube não é trocado pela URL ──────────────────
+# No editor "Ad. Item", o título de cada tipo é resolvido a partir de uma
+# busca. Para o YouTube não há busca (a caixa "Buscar" fica vazia), então o
+# título digitado pelo operador precisa ser preservado — a URL é só a mídia,
+# quem executa o vídeo. Antes, com a busca vazia, `_usou_titulo_como_busca`
+# virava True e o título era sobreescrito pela URL.
+_fonte_app = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+_bloco_youtube = _fonte_app.split('elif tipo == "youtube":', 1)[1]
+_bloco_youtube = _bloco_youtube.split("elif ", 1)[0]
+checar("título do YouTube só cai para a URL quando está vazio",
+       "if not titulo:" in _bloco_youtube)
+checar("título do YouTube não usa mais a regra de busca (_usou_titulo_como_busca)",
+       "_usou_titulo_como_busca" not in _bloco_youtube)
+checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
+       "item.get('youtube_url')" in _fonte_app)
+
 print("OK" if not falhas else f"\n{falhas} falha(s)")
 sys.exit(1 if falhas else 0)

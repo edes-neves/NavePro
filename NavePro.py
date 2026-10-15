@@ -10165,7 +10165,11 @@ class AppInterface:
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_display
                 elif tipo == "youtube":
-                    if not titulo or _usou_titulo_como_busca:
+                    # A URL é a mídia do item, não o título: a caixa "Buscar"
+                    # não tem como ser preenchida aqui (não há busca), então
+                    # o título digitado nunca deve ser trocado pela URL. Só
+                    # quando não há título nenhum é que a URL vira o rótulo.
+                    if not titulo:
                         titulo = youtube_url or f"Item ({tipo.title()})"
                 elif termo.isdigit():
                     ref_id = int(termo)
