@@ -39,6 +39,11 @@ _ACOES_POST_REMOTO: dict = {
     '/api/remoto/tamanho': 'tamanho',
 }
 
+# Limites do parser HTTP: evitam memória ilimitada com cabeçalho/corpo
+# gigantes. O corpo comporta uploads de mídia (vídeo) com folga.
+_LIMITE_CABECALHO = 64 * 1024
+_LIMITE_CORPO = 200 * 1024 * 1024
+
 
 class ServidorAsyncHTTP:
     """Servidor HTTP assíncrono usando asyncio.
@@ -137,45 +142,69 @@ class ServidorAsyncHTTP:
             raise RuntimeError("Interface não conectada ao servidor")
         return self.ui(fn, timeout)
 
+    async def _ler_requisicao(self, reader: asyncio.StreamReader,
+                              ) -> tuple | bytes | None:
+        """Lê cabeçalhos + corpo (Content-Length) de uma requisição HTTP.
+
+        Devolve `(method, path, headers, body)` em requisição válida, a
+        resposta de erro pronta (413/431) se passar dos limites, ou None se
+        a conexão fechar antes. O corpo nunca é decodificado como texto
+        (é binário nos uploads) e é lido em blocos até Content-Length — a
+        leitura única de 64 KB truncava qualquer arquivo maior.
+        """
+        dados = b''
+        while b'\r\n\r\n' not in dados:
+            bloco = await reader.read(65536)
+            if not bloco:
+                return None
+            dados += bloco
+            if len(dados) > _LIMITE_CABECALHO:
+                return self._responder_erro_bytes("Cabeçalhos muito grandes", 431)
+
+        cabecalho, _, corpo = dados.partition(b'\r\n\r\n')
+        linhas = cabecalho.decode('utf-8', errors='replace').split('\r\n')
+        partes = linhas[0].split() if linhas else []
+        if len(partes) < 2:
+            return None
+        method, path_line = partes[0], partes[1]
+
+        headers: dict[str, str] = {}
+        for linha in linhas[1:]:
+            if ':' in linha:
+                chave, valor = linha.split(':', 1)
+                headers[chave.strip().lower()] = valor.strip()
+
+        try:
+            tamanho = int(headers.get('content-length') or 0)
+        except ValueError:
+            tamanho = 0
+        if tamanho < 0 or tamanho > _LIMITE_CORPO:
+            return self._responder_erro_bytes("Corpo muito grande", 413)
+
+        while len(corpo) < tamanho:
+            bloco = await reader.read(min(65536, tamanho - len(corpo)))
+            if not bloco:
+                break
+            corpo += bloco
+
+        # Descarta bytes além do corpo declarado (Content-Length inválido
+        # ou requisições pipelined — o servidor responde e fecha).
+        return method, path_line, headers, corpo[:tamanho]
+
     async def _handle_connection(self, reader: asyncio.StreamReader, 
                                   writer: asyncio.StreamWriter) -> None:
         """Handler de conexão HTTP assíncrono."""
         try:
-            request_data = await reader.read(65536)
-            if not request_data:
+            requisicao = await self._ler_requisicao(reader)
+            if requisicao is None:
                 writer.close()
                 return
-            
-            request_text = request_data.decode('utf-8', errors='replace')
-            
-            # Parse da requisição HTTP
-            lines_req = request_text.split('\r\n')
-            if not lines_req:
-                writer.close()
+            if isinstance(requisicao, bytes):
+                writer.write(requisicao)
+                await writer.drain()
                 return
-            
-            first_line = lines_req[0].split()
-            if len(first_line) < 2:
-                writer.close()
-                return
-            
-            method = first_line[0]
-            path_line = first_line[1]
-            
-            # Parse headers
-            headers: dict[str, str] = {}
-            body_start = request_text.find('\r\n\r\n')
-            for line in lines_req[1:]:
-                if ':' in line:
-                    key, val = line.split(':', 1)
-                    headers[key.strip().lower()] = val.strip()
-                if line == '':
-                    break
-            
-            # Extrair body
-            body_bytes = b''
-            if body_start != -1:
-                body_bytes = request_data[body_start + 4:]
+
+            method, path_line, headers, body_bytes = requisicao
 
             # Endereço do cliente (para restringir API de mídia ao loopback)
             peer = writer.get_extra_info('peername')
@@ -583,7 +612,10 @@ class ServidorAsyncHTTP:
         """Gera resposta HTTP JSON como bytes."""
         body = json.dumps(dados, ensure_ascii=False, default=str).encode('utf-8')
         status_text = {200: "OK", 201: "Created", 400: "Bad Request",
-                       404: "Not Found", 405: "Method Not Allowed", 500: "Internal Server Error"}
+                       404: "Not Found", 405: "Method Not Allowed",
+                       413: "Payload Too Large",
+                       431: "Request Header Fields Too Large",
+                       500: "Internal Server Error"}
         header = (
             f"HTTP/1.1 {status} {status_text.get(status, 'OK')}\r\n"
             f"Content-Type: application/json; charset=utf-8\r\n"
