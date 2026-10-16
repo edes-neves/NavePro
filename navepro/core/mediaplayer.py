@@ -844,7 +844,7 @@ class MediaPlayer:
 
     def _eh_arquivo_de_video(self, arquivo: str) -> bool:
         """True para extensão de vídeo — só vídeo tem janela para posicionar."""
-        return os.path.splitext(arquivo or "")[1].lower() in EXTENSOES_VIDEO, PLAYER_PADRAO
+        return os.path.splitext(arquivo or "")[1].lower() in EXTENSOES_VIDEO
 
     @staticmethod
     def _player_existe(player: str) -> bool:
