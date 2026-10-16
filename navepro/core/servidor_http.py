@@ -5,6 +5,7 @@ Extraído de NavePro.py sem alterar o comportamento (ver AGENTS.md).
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import mimetypes
 import os
@@ -251,7 +252,10 @@ class ServidorAsyncHTTP:
         enviado = (headers.get('x-token')
                    or params.get('t')
                    or '').strip()
-        return enviado == self.token
+        # Tempo constante: comparação com == em str curto vaza o token por
+        # medição de timing pela rede. Bytes evita TypeError com não-ASCII.
+        return hmac.compare_digest(
+            enviado.encode('utf-8'), self.token.encode('utf-8'))
 
     def _remoto(self, acao: str, dados: dict) -> Any:
         """Despacha uma ação remota para o app (na thread do Tk)."""
@@ -510,6 +514,13 @@ class ServidorAsyncHTTP:
 
         if not arquivo_dados or not nome_arquivo:
             return self._responder_erro_bytes("Nenhum arquivo enviado")
+
+        # O filename vem do cliente e pode trazer caminho absoluto ou ".."
+        # (escape de UPLOAD_FOLDER). No POSIX "\" não é separador, por isso
+        # o replace antes do basename — resultado igual em Linux e Windows.
+        nome_arquivo = os.path.basename(nome_arquivo.replace('\\', '/'))
+        if not nome_arquivo or nome_arquivo in ('.', '..'):
+            return self._responder_erro_bytes("Nome de arquivo inválido")
 
         tipo = detectar_tipo_arquivo(nome_arquivo)
         if not tipo:
