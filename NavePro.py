@@ -154,7 +154,11 @@ from navepro.core.transferencia import (
 from navepro.core.transferencia import (
     _nome_arquivo as _nome_arquivo_transferencia,
 )
-from navepro.core.util_tk import _centralizar_sobre, _normalizar_escala_tk
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _limitar_ao_monitor,
+    _normalizar_escala_tk,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 
 # Botões e campos de digitação de todo o app desenham cantos arredondados.
@@ -592,8 +596,11 @@ class AppInterface:
         self.root.title("NAVE PRO - PRO")
         _aplicar_icone_janela(self.root)
         self.root.configure(bg='#0d1117')
-        # Tamanho mínimo e estado inicial maximizado
-        self.root.minsize(900, 800)
+        # Tamanho mínimo e estado inicial maximizado.
+        # O app precisa funcionar de 1024x768 até resoluções maiores: o mínimo
+        # fica abaixo da altura útil de 768 (descontando barra de tarefas) para
+        # a janela sempre caber na menor resolução suportada.
+        self.root.minsize(900, 620)
         self._maximizado = True
         try:
             monitors = get_monitors_config()
@@ -2603,7 +2610,7 @@ class AppInterface:
 
         cfg_win = tk.Toplevel(self.root)
         cfg_win.title("⚙️ Configura Relógio / Cronômetro / Contagem")
-        cfg_win.geometry("680x980")
+        _limitar_ao_monitor(cfg_win, 680, 980)
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(self.root)
         _centralizar_sobre(cfg_win, self.root)
@@ -3445,6 +3452,13 @@ class AppInterface:
         # Rede de segurança: garante o fundo correto de Cidade/UF/busca em
         # cada tema, mesmo que o passe genérico tenha deixado para trás.
         self._garantir_campos_tema()
+        # Mantém o Sorteio Profissional (quando aberto) no mesmo tema.
+        sync_sorteio = getattr(self, '_sorteio_sync_tema', None)
+        if sync_sorteio is not None:
+            try:
+                sync_sorteio()
+            except Exception as e:
+                log.debug("Falha ao sincronizar o tema do sorteio: %s", e)
 
     def _garantir_campos_tema(self) -> None:
         """Reafirma, por tema, a cor de fundo dos campos Cidade/UF/busca.
@@ -3463,7 +3477,7 @@ class AppInterface:
             if campo is None:
                 continue
             if claro:
-                alvo = '#8b949e'
+                alvo = _cor_clara('#eaeef2')
             else:
                 alvo = getattr(
                     campo, '_navepro_area_cinza_escuro', '#eaeef2')
@@ -3475,7 +3489,7 @@ class AppInterface:
         busca = getattr(self, 'entry_busca', None)
         if busca is not None:
             try:
-                busca.configure(bg='#8b949e' if claro else '#21262d')
+                busca.configure(bg=_cor_clara('#21262d') if claro else '#21262d')
             except tk.TclError:
                 pass
 
@@ -3486,19 +3500,19 @@ class AppInterface:
             if self.tema == 'claro':
                 style.configure(
                     "Treeview",
-                    background="#8b949e", foreground="#1f2328",
-                    fieldbackground="#8b949e", font=("Arial", 10))
+                    background=_cor_clara('#21262d'), foreground='#1f2328',
+                    fieldbackground=_cor_clara('#21262d'), font=("Arial", 10))
                 style.configure(
                     "Treeview.Heading",
-                    background="#6e7681", foreground="#ffffff",
+                    background=_cor_clara('#161b22'), foreground='#1f2328',
                     font=("Arial", 10, "bold"))
                 style.map('Treeview',
                           background=[('selected', '#0969da')],
                           foreground=[('selected', '#ffffff')])
                 style.configure(
                     "Vertical.TScrollbar",
-                    background="#8b949e", troughcolor="#6e7681",
-                    arrowcolor="#1f2328")
+                    background=_cor_clara('#21262d'), troughcolor=_cor_clara('#161b22'),
+                    arrowcolor='#1f2328')
             else:
                 style.configure(
                     "Treeview",
@@ -3550,6 +3564,10 @@ class AppInterface:
         (sem pintar), que precisa ocorrer para toda a árvore antes de
         qualquer `configure` (ver `_aplicar_tema`).
         """
+        # Janelas que gerenciam o próprio tema (ex.: Sorteio Profissional):
+        # a subárvore inteira fica de fora do passe genérico.
+        if getattr(base, '_navepro_tema_proprio', False):
+            return
         self._aplicar_tema_widget(base, capturar=capturar)
         try:
             for filho in base.winfo_children():
@@ -3619,7 +3637,7 @@ class AppInterface:
                         widget, '_navepro_area_cinza_escuro', '#161b22')
                     try:
                         widget.configure(
-                            bg='#8b949e' if self.tema == 'claro' else escuro
+                            bg=(_cor_clara(escuro) if self.tema == 'claro' else escuro)
                         )
                     except tk.TclError:
                         pass
@@ -4045,18 +4063,23 @@ class AppInterface:
             pass
 
     def _alternar_maximizar(self) -> None:
-        """Alterna entre maximizado (tela cheia) e minimizado (900x800 centralizado)."""
+        """Alterna entre maximizado (tela cheia) e restaurado (centralizado).
+
+        O tamanho restaurado é derivado do monitor (≈78% da área útil), com
+        limites que garantem caber de 1024x768 até resoluções maiores, em vez
+        de um 900x800 fixo que estourava a altura de telas pequenas.
+        """
         if self._maximizado:
-            # Minimizar para 900x800 centralizado
             self.root.state('normal')
             if hasattr(self, '_monitor_geo') and self._monitor_geo:
                 mw, mh, mx, my = self._monitor_geo
-                w, h = 900, 800
-                x = mx + (mw - w) // 2
-                y = my + (mh - h) // 2
+                w = max(900, min(1180, int(mw * 0.78)))
+                h = max(620, min(880, int(mh * 0.78)))
+                x = mx + max(0, (mw - w) // 2)
+                y = my + max(0, (mh - h) // 2)
                 self.root.geometry(f"{w}x{h}+{x}+{y}")
             else:
-                self.root.geometry("900x800+200+100")
+                self.root.geometry("900x620+200+100")
             self._maximizado = False
         else:
             # Maximizar para ocupar todo o monitor (respeitando barra de tarefas)
@@ -4476,7 +4499,7 @@ class AppInterface:
 
         # No tema claro o campo usa a mesma cor da faixa de botões do rodapé
         # ("por baixo dos botões"), lida direto do frame dos controles.
-        face_clara = '#8b949e'
+        face_clara = _cor_clara('#161b22')
         if claro:
             barra = getattr(self, 'controls_frame', None)
             if barra is not None:
@@ -5237,7 +5260,7 @@ class AppInterface:
         """Janela completa para gerenciar as mídias do banco."""
         janela = tk.Toplevel(self.root)
         janela.title("📦 Gerenciar Banco de Mídia")
-        janela.geometry("800x900")
+        _limitar_ao_monitor(janela, 800, 900)
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)
@@ -6986,7 +7009,7 @@ class AppInterface:
         def _abrir_editor_anuncio(anuncio_id: int | None = None):
             editar_win = tk.Toplevel(janela)
             editar_win.title("Editar Anúncio" if anuncio_id else "Novo Anúncio")
-            editar_win.geometry("680x860")
+            _limitar_ao_monitor(editar_win, 680, 860)
             editar_win.configure(bg='#0d1117')
             editar_win.transient(janela)
             _centralizar_sobre(editar_win, janela)
@@ -9201,7 +9224,7 @@ class AppInterface:
         dados = _carregar_servicos_json()
         janela = tk.Toplevel(self.root)
         janela.title("📋 Ordem de Serviço")
-        janela.geometry("1100x750")
+        _limitar_ao_monitor(janela, 1100, 750)
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)

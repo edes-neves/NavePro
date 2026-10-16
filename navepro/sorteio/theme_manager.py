@@ -6,72 +6,82 @@ from .settings_manager import SettingsManager
 class ThemeManager:
     _instance = None
 
+    # Paletas alinhadas ao NavePro: o sorteio passa a usar as MESMAS cores do
+    # painel do operador (dourado #f0c040, roxo #6e40c9, azul #1f6feb). No
+    # escuro, superfícies #0d1117/#161b22/#21262d; no claro, a hierarquia
+    # #eaeef2 (janela) / #f6f8fa (cartões) / #ffffff (entradas). Os nomes dos
+    # tokens são mantidos para não tocar nos widgets.
     NEON_DARK = {
-        "bg": "#050816",
-        "bg_secondary": "#0a0e27",
-        "bg_card": "#0d1233",
-        "primary": "#00d4ff",
-        "secondary": "#ff00ff",
-        "accent": "#00fff7",
-        "text": "#ffffff",
-        "text_secondary": "#8892b0",
-        "btn_text": "#0a0e27",
-        "success": "#00ff88",
-        "warning": "#ffaa00",
-        "error": "#ff3355",
-        "border": "#1a1f4e",
-        "border_active": "#00d4ff",
-        "glow_primary": "#005577",
-        "glow_secondary": "#550055",
-        # Tokens específicos de componentes. No Dark Mode os valores são
-        # idênticos aos que já eram renderizados, então nada muda ali.
-        "btn_primary": "#00d4ff",
-        "btn_primary_hover": "#8892b0",
-        "btn_neutral": "#8892b0",
-        "btn_neutral_hover": "#00d4ff",
-        "btn_start": "#00fff7",
-        "btn_start_hover": "#8892b0",
-        "btn_success": "#00ff88",
-        "btn_success_hover": "#8892b0",
-        "btn_warning": "#ffaa00",
-        "btn_warning_hover": "#8892b0",
-        "btn_error": "#ff3355",
-        "btn_error_hover": "#8892b0",
-        "input_bg": "#050816",
-        "input_border": "#1a1f4e",
+        "bg": "#0d1117",
+        "bg_secondary": "#161b22",
+        "bg_card": "#21262d",
+        "primary": "#f0c040",
+        "secondary": "#6e40c9",
+        "accent": "#58a6ff",
+        "text": "#c9d1d9",
+        "text_secondary": "#8b949e",
+        # Texto claro nos botões: no escuro os botões são superfícies
+        # escuras/médias (roxo, azul, verde), onde o branco contrasta bem.
+        "btn_text": "#ffffff",
+        "success": "#2ea043",
+        "warning": "#d29922",
+        "error": "#f85149",
+        "border": "#30363d",
+        "border_active": "#f0c040",
+        "glow_primary": "#30363d",
+        "glow_secondary": "#2d2438",
+        # Tokens específicos de componentes.
+        "btn_primary": "#6e40c9",
+        "btn_primary_hover": "#8250df",
+        "btn_neutral": "#21262d",
+        "btn_neutral_hover": "#30363d",
+        "btn_start": "#1f6feb",
+        "btn_start_hover": "#388bfd",
+        "btn_success": "#238636",
+        "btn_success_hover": "#2ea043",
+        "btn_warning": "#9a6700",
+        "btn_warning_hover": "#bb8009",
+        "btn_error": "#da3633",
+        "btn_error_hover": "#b62324",
+        "input_bg": "#0d1117",
+        "input_border": "#30363d",
     }
 
     NEON_LIGHT = {
-        "bg": "#e8ecf5",
-        "bg_secondary": "#f2f4fa",
+        # Tema claro com a MESMA hierarquia do escuro, só que em tons claros:
+        # a janela é o tom base (cinza-claro), os cartões sobem para o branco
+        # e os campos/entradas ficam no tom da janela com borda (como no
+        # escuro, em que as entradas usam a cor de fundo da janela).
+        "bg": "#eaeef2",
+        "bg_secondary": "#f6f8fa",
         "bg_card": "#ffffff",
-        "primary": "#0066ff",
-        "secondary": "#cc00cc",
-        "accent": "#00a896",
-        "text": "#0f172a",
-        "text_secondary": "#5b6478",
-        "btn_text": "#0f172a",
-        "success": "#00aa55",
-        "warning": "#cc8800",
-        "error": "#cc2244",
-        "border": "#c4cde0",
-        "border_active": "#7b8cff",
-        "glow_primary": "#b9cefb",
-        "glow_secondary": "#f6cdf2",
-        "btn_primary": "#2563eb",
-        "btn_primary_hover": "#1d4ed8",
-        "btn_neutral": "#e3e9f4",
-        "btn_neutral_hover": "#ccd6e8",
-        "btn_start": "#0e9488",
-        "btn_start_hover": "#0f766e",
-        "btn_success": "#059669",
-        "btn_success_hover": "#047857",
-        "btn_warning": "#d97706",
-        "btn_warning_hover": "#b45309",
-        "btn_error": "#dc2626",
-        "btn_error_hover": "#b91c1c",
-        "input_bg": "#f6f8fc",
-        "input_border": "#cdd7e6",
+        "primary": "#8250df",
+        "secondary": "#0969da",
+        "accent": "#0969da",
+        "text": "#1f2328",
+        "text_secondary": "#656d76",
+        "btn_text": "#ffffff",
+        "success": "#1a7f37",
+        "warning": "#9a6700",
+        "error": "#cf222e",
+        "border": "#d0d7de",
+        "border_active": "#0969da",
+        "glow_primary": "#d0d7de",
+        "glow_secondary": "#eaeef2",
+        "btn_primary": "#8250df",
+        "btn_primary_hover": "#6e40c9",
+        "btn_neutral": "#6e7681",
+        "btn_neutral_hover": "#57606a",
+        "btn_start": "#0969da",
+        "btn_start_hover": "#0a5bc4",
+        "btn_success": "#1a7f37",
+        "btn_success_hover": "#166b2e",
+        "btn_warning": "#9a6700",
+        "btn_warning_hover": "#7d5300",
+        "btn_error": "#cf222e",
+        "btn_error_hover": "#a40e26",
+        "input_bg": "#eaeef2",
+        "input_border": "#d0d7de",
     }
 
     def __init__(self, settings: SettingsManager | None = None) -> None:
@@ -100,9 +110,19 @@ class ThemeManager:
 
     def toggle_theme(self) -> str:
         new_theme = "light" if self._current_theme == "dark" else "dark"
-        self._current_theme = new_theme
-        self._apply_theme()
-        return new_theme
+        return self.definir_tema(new_theme)
+
+    def definir_tema(self, nome: str) -> str:
+        """Seleciona o tema ("dark"/"light") sem alternar.
+
+        Usado pela integração com o NavePro para acompanhar o tema ativo do
+        painel do operador. Aceita também "claro"/"escuro".
+        """
+        nome = "light" if nome in ("light", "claro") else "dark"
+        if nome != self._current_theme:
+            self._current_theme = nome
+            self._apply_theme()
+        return self._current_theme
 
     @property
     def colors(self) -> dict[str, str]:
@@ -118,12 +138,12 @@ class ThemeManager:
     def public(self, name: str) -> str:
         """Cor do telão (monitor público).
 
-        O telão usa sempre a paleta escura/neon, independente do tema do
-        operador, para manter a aparência translúcida (transparência
-        visível) também quando o app está no tema claro. As cores de
-        fundo/títulos/textos podem ser personalizadas pelo operador via
-        "Configurações → Tela Pública"; quando existe um override salvo,
-        ele vence a paleta neon padrão.
+        O telão usa sempre a paleta escura do NavePro (``NEON_DARK``),
+        independente do tema do operador, para manter a aparência translúcida
+        (transparência visível) também quando o app está no tema claro. As cores
+        de fundo/títulos/textos podem ser personalizadas pelo operador via
+        "Configurações → Tela Pública"; quando existe um override salvo, ele
+        vence a paleta escura padrão.
         """
         overrides = {
             "bg": "public_bg",

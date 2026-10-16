@@ -28,14 +28,15 @@ _window_scaling = 1.0
 _default_theme = "dark-blue"
 
 _TEMA_ESCURO = {
-    "bg": "#050816",
-    "bg_card": "#0d1233",
-    "input_bg": "#050816",
-    "text": "#ffffff",
-    "text_secondary": "#8892b0",
-    "btn_text": "#0a0e27",
-    "primary": "#00d4ff",
-    "border": "#1a1f4e",
+    "bg": "#0d1117",
+    "bg_card": "#21262d",
+    "input_bg": "#0d1117",
+    "text": "#c9d1d9",
+    "text_secondary": "#8b949e",
+    "btn_text": "#ffffff",
+    "btn_primary": "#6e40c9",
+    "primary": "#f0c040",
+    "border": "#30363d",
 }
 
 
@@ -244,7 +245,8 @@ class CTkButton(CTkBaseClass, BotaoArredondado):
                  corner_radius=8, width=0, height=0, state="normal",
                  anchor=None, **kwargs):
         master = _resolve_master(master)
-        self._fg_color = _resolve_color(master, fg_color or _TEMA_ESCURO["primary"])
+        self._fg_color = _resolve_color(
+            master, fg_color or _TEMA_ESCURO["btn_primary"])
         self._hover_color = _resolve_color(master, hover_color or self._fg_color)
         self._text_color = text_color or _TEMA_ESCURO["btn_text"]
         super().__init__(
@@ -501,7 +503,7 @@ class CTkCheckBox(CTkBaseClass, tk.Checkbutton):
             "fg": text_color or _TEMA_ESCURO["text"],
             "activebackground": bg,
             "activeforeground": text_color or _TEMA_ESCURO["text"],
-            "selectcolor": fg_color or _TEMA_ESCURO["primary"],
+            "selectcolor": fg_color or _TEMA_ESCURO["btn_primary"],
             "relief": "flat",
             "bd": 0,
             "highlightthickness": 0,
@@ -530,7 +532,7 @@ class CTkSegmentedButton(CTkBaseClass, tk.Frame):
         self._command = command
         self._variable = variable
         self._font = font or ("Arial", 12)
-        self._selected_color = selected_color or _TEMA_ESCURO["primary"]
+        self._selected_color = selected_color or _TEMA_ESCURO["btn_primary"]
         self._value = None
         self._buttons: dict = {}
         for value in self._values:

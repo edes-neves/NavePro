@@ -179,7 +179,7 @@ class _FakeArea:
 _area = _FakeArea()
 _host.tema = "claro"
 _APLICAR(_host, _area)
-check("área de controles fica cinza no tema claro", _area.cfg.get("bg") == "#8b949e", str(_area.cfg))
+check("área de controles fica cinza no tema claro", _area.cfg.get("bg") == _cor_clara(_area._navepro_area_cinza_escuro), str(_area.cfg))
 
 _area2 = _FakeArea()
 _host.tema = "escuro"
@@ -193,7 +193,7 @@ check(
 # --- Rede de segurança dos campos Cidade/UF/busca por tema ---
 _CORPO_GARANTIR = textwrap.dedent(
     ast.get_source_segment(_SRC, _NOS["_garantir_campos_tema"]))
-_ns_garantir = {"tk": tk}
+_ns_garantir = {"tk": tk, "_cor_clara": _cor_clara}
 exec(compile(_CORPO_GARANTIR, "<garantir_campos_tema>", "exec"), _ns_garantir)
 _GARANTIR = _ns_garantir["_garantir_campos_tema"]
 
@@ -231,9 +231,54 @@ check("garantir: busca volta a #21262d no escuro",
 _h2 = _FakeHostCampos("claro")
 _GARANTIR(_h2)
 check("garantir: Cidade #8b949e no claro",
-      _h2.entry_cidade.cfg.get("bg") == "#8b949e", str(_h2.entry_cidade.cfg))
+      _h2.entry_cidade.cfg.get("bg") == _cor_clara('#eaeef2'), str(_h2.entry_cidade.cfg))
 check("garantir: busca #8b949e no claro",
-      _h2.entry_busca.cfg.get("bg") == "#8b949e", str(_h2.entry_busca.cfg))
+      _h2.entry_busca.cfg.get("bg") == _cor_clara('#21262d'), str(_h2.entry_busca.cfg))
+
+# --- Subárvore com tema próprio (ex.: Sorteio) fica fora do passe ---
+_CORPO_ARVORE = textwrap.dedent(
+    ast.get_source_segment(_SRC, _NOS["_recolorir_arvore"]))
+_ns_arvore = {"tk": tk}
+exec(compile(_CORPO_ARVORE, "<recolorir_arvore>", "exec"), _ns_arvore)
+_recolorir_arvore = _ns_arvore["_recolorir_arvore"]
+
+
+class _FakeNo:
+    def __init__(self, marca=False, filhos=None):
+        self._navepro_tema_proprio = marca
+        self._filhos = filhos or []
+
+    def winfo_children(self):
+        return self._filhos
+
+
+class _HostArvore:
+    def __init__(self):
+        self.visitados = []
+
+    def _aplicar_tema_widget(self, widget, capturar=False):
+        self.visitados.append(widget)
+
+    def _recolorir_arvore(self, base, capturar=False):
+        _recolorir_arvore(self, base, capturar)
+
+
+_host_a = _HostArvore()
+_filho_proprio = _FakeNo()
+_proprio = _FakeNo(marca=True, filhos=[_filho_proprio])
+_filho_normal = _FakeNo()
+_raiz = _FakeNo(filhos=[_proprio, _filho_normal])
+
+_recolorir_arvore(_host_a, _raiz)
+check("nó com tema próprio não é repintado", _proprio not in _host_a.visitados)
+check(
+    "subárvore do tema próprio é ignorada",
+    _filho_proprio not in _host_a.visitados,
+)
+check(
+    "irmão normal continua sendo repintado",
+    _raiz in _host_a.visitados and _filho_normal in _host_a.visitados,
+)
 
 print("\n" + ("TODOS OS CASOS PASSARAM" if not falhas else f"FALHAS: {falhas}"))
 sys.exit(1 if falhas else 0)

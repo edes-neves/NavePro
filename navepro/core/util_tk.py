@@ -60,6 +60,38 @@ def _centralizar_sobre(janela, pai=None) -> None:
 
 
 # ────────────────────────────────────────────────────────────────────
+# JANELAS QUE PRECISAM CABER EM 1024x768
+# ────────────────────────────────────────────────────────────────────
+
+
+def _limitar_ao_monitor(janela, w: int, h: int, margem: int = 48) -> tuple[int, int]:
+    """Define a geometria `w`x`h` de `janela`, limitada ao monitor.
+
+    O NavePro precisa funcionar de 1024x768 até as resoluções mais altas.
+    Janelas com tamanho fixo maior que a tela (ex.: 680x980 num monitor de
+    1024x768) ficariam cortadas. Aqui o tamanho pedido é limitado à tela
+    com uma margem de segurança (para decoração/barra de tarefas) e
+    centralizado. Nunca aumenta além do pedido nem diminui abaixo de um
+    mínimo utilizável.
+
+    Devolve o tamanho realmente aplicado `(w, h)`.
+    """
+    try:
+        aw = janela.winfo_screenwidth()
+        ah = janela.winfo_screenheight()
+        max_w = max(320, aw - margem)
+        max_h = max(240, ah - margem)
+        w = max(320, min(w, max_w))
+        h = max(240, min(h, max_h))
+        x = max(0, (aw - w) // 2)
+        y = max(0, (ah - h) // 2)
+        janela.geometry(f"{w}x{h}+{x}+{y}")
+        return w, h
+    except tk.TclError:
+        return w, h
+
+
+# ────────────────────────────────────────────────────────────────────
 # TELÃO - JANELA DE PROJEÇÃO (mantido)
 # ────────────────────────────────────────────────────────────────────
 

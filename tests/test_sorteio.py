@@ -232,4 +232,64 @@ for _no in ast.walk(ast.parse(_fonte_an)):
 else:
     raise AssertionError("animation_engine sem _draw_gold_text")
 
+# --- Paletas do sorteio alinhadas ao NavePro ---
+from navepro.sorteio.theme_manager import ThemeManager  # noqa: E402
+
+# Escuro = cores do NavePro (dourado/roxo/superfícies escuras).
+assert ThemeManager.NEON_DARK["bg"] == "#0d1117"
+assert ThemeManager.NEON_DARK["bg_card"] == "#21262d"
+assert ThemeManager.NEON_DARK["primary"] == "#f0c040"
+assert ThemeManager.NEON_DARK["btn_primary"] == "#6e40c9"
+assert ThemeManager.NEON_DARK["btn_text"] == "#ffffff"
+# Claro = hierarquia de claros (janela cinza-clara, cartões brancos).
+assert ThemeManager.NEON_LIGHT["bg"] == "#eaeef2"
+assert ThemeManager.NEON_LIGHT["bg_card"] == "#ffffff"
+assert ThemeManager.NEON_LIGHT["primary"] == "#8250df"
+assert ThemeManager.NEON_LIGHT["btn_neutral"] == "#6e7681"
+# A janela e os cartões NÃO podem ser a mesma cor (hierarquia, como no escuro).
+assert ThemeManager.NEON_LIGHT["bg"] != ThemeManager.NEON_LIGHT["bg_card"]
+assert ThemeManager.NEON_DARK["bg"] != ThemeManager.NEON_DARK["bg_card"]
+# Mesmos tokens nos dois temas (widgets não podem quebrar na troca).
+assert set(ThemeManager.NEON_DARK) == set(ThemeManager.NEON_LIGHT)
+# O telão continua sempre na paleta escura.
+assert "return self.NEON_DARK[name]" in open(
+    os.path.join(_DIR_SORTEIO, "theme_manager.py"), encoding="utf-8"
+).read()
+assert hasattr(ThemeManager, "definir_tema"), "ThemeManager sem definir_tema"
+
+# --- Sincronização do tema com o NavePro ---
+assert hasattr(integracao, "sincronizar_tema"), "integracao sem sincronizar_tema"
+assert hasattr(integracao, "_tema_navepro"), "integracao sem _tema_navepro"
+
+
+class _FakeNavePro:
+    def __init__(self, tema):
+        self.tema = tema
+
+
+assert integracao._tema_navepro(_FakeNavePro("claro")) == "light"
+assert integracao._tema_navepro(_FakeNavePro("escuro")) == "dark"
+assert integracao._tema_navepro(_FakeNavePro(None)) == "dark"
+
+# --- App sabe trocar/reconstruir a interface por tema ---
+assert hasattr(App, "definir_tema"), "App sem definir_tema"
+assert hasattr(App, "_criar_main_window"), "App sem _criar_main_window"
+assert hasattr(App, "_reconstruir_janela"), "App sem _reconstruir_janela"
+
+# --- A janela do sorteio é marcada com tema próprio (fora do passe genérico) ---
+with open(
+    os.path.join(_DIR_SORTEIO, "integracao.py"), encoding="utf-8"
+) as _f_integ:
+    _fonte_integ = _f_integ.read()
+assert "_navepro_tema_proprio = True" in _fonte_integ, "janela sem marca de tema"
+
+# --- O NavePro sincroniza o tema e respeita a marca de tema próprio ---
+_fonte_navepro = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+assert "_sorteio_sync_tema" in _fonte_navepro, (
+    "NavePro não sincroniza o tema do sorteio"
+)
+assert "_navepro_tema_proprio" in _fonte_navepro, (
+    "NavePro ignora a marca de tema próprio"
+)
+
 print("OK test_sorteio")

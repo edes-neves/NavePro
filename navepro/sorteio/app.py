@@ -68,7 +68,6 @@ class App:
     def run(self) -> None:
         window_w, window_h = 900, 850
         self._root = ctk.CTk(className="SorteioProfissional")
-        self._root.minsize(900, 850)
         self._root.configure(fg_color=self._theme.c("bg"))
         self._load_window_icon()
 
@@ -76,40 +75,30 @@ class App:
             ctk.set_widget_scaling(1.5)
             ctk.set_window_scaling(1.2)
 
+        # Precisa caber de 1024x768 até resoluções maiores: limita o tamanho
+        # inicial (o 900x850 estourava a altura de telas 768) e permite
+        # reduzir até um mínimo utilizável.
         primary = self._monitor_mgr.primary
         if primary is not None:
+            window_w = min(window_w, max(320, primary.width - 48))
+            window_h = min(window_h, max(240, primary.height - 48))
             x = primary.x + max((primary.width - window_w) // 2, 0)
             y = primary.y + max((primary.height - window_h) // 2, 0)
         else:
             sw = self._root.winfo_screenwidth()
             sh = self._root.winfo_screenheight()
+            window_w = min(window_w, max(320, sw - 48))
+            window_h = min(window_h, max(240, sh - 48))
             x = (sw - window_w) // 2
             y = (sh - window_h) // 2
         self._root.geometry(f"{window_w}x{window_h}+{x}+{y}")
+        self._root.minsize(880, 620)
 
         splash = SplashScreen(self._root, self._theme, self._monitor_mgr.primary)
         splash.grab_set()
         self._root.wait_window(splash)
 
-        self._main_window = MainWindow(
-            master=self._root,
-            theme=self._theme,
-            settings=self._settings,
-            engine=self._engine,
-            history=self._history,
-            sound=self._sound,
-            on_start_draw=self._on_start_draw,
-            on_new_draw=self._on_new_draw,
-            on_reset=self._on_reset,
-            on_clear=self._on_clear,
-            on_settings=self._on_settings,
-            on_export=self._on_export,
-            on_telao=self._show_telao_dialog,
-            on_fullscreen=self._on_fullscreen,
-            on_quit=self._on_quit,
-            on_toggle_theme=self._toggle_theme,
-            on_toggle_minimize=self._on_toggle_minimize,
-        )
+        self._main_window = self._criar_main_window(self._root)
 
         self._sound.enabled = bool(self._settings.get("sound", "enabled"))
 
@@ -148,7 +137,21 @@ class App:
         self._root = master
         master.configure(fg_color=self._theme.c("bg"))
 
-        self._main_window = MainWindow(
+        self._main_window = self._criar_main_window(master)
+
+        self._sound.enabled = bool(self._settings.get("sound", "enabled"))
+
+        self._setup_public_display_embedded()
+        self._setup_keyboard_shortcuts()
+
+        try:
+            master.protocol("WM_DELETE_WINDOW", self._on_quit)
+        except Exception:
+            pass
+
+    def _criar_main_window(self, master) -> MainWindow:
+        """Monta a janela do operador com os callbacks do app."""
+        return MainWindow(
             master=master,
             theme=self._theme,
             settings=self._settings,
@@ -168,15 +171,40 @@ class App:
             on_toggle_minimize=self._on_toggle_minimize,
         )
 
-        self._sound.enabled = bool(self._settings.get("sound", "enabled"))
+    def definir_tema(self, nome: str) -> None:
+        """Acompanha o tema do NavePro (``"claro"``/``"escuro"``).
 
-        self._setup_public_display_embedded()
-        self._setup_keyboard_shortcuts()
+        Troca a paleta e reconstrói a janela do operador, porque a maior parte
+        dos rótulos do sorteio é criada com a cor capturada no momento da
+        montagem — só o ``refresh_theme`` não bastaria para repintar tudo.
+        O telão (tela pública) permanece sempre na paleta escura.
+        """
+        alvo = "light" if nome in ("light", "claro") else "dark"
+        if alvo == self._theme.theme_name:
+            return
+        self._theme.definir_tema(alvo)
+        self._reconstruir_janela()
 
+    def _reconstruir_janela(self) -> None:
+        """Recria a interface do operador após uma troca de tema."""
+        if self._root is None or self._main_window is None:
+            return
+        master = self._main_window._master
+        container = getattr(self._main_window, "_container", None)
         try:
-            master.protocol("WM_DELETE_WINDOW", self._on_quit)
-        except Exception:
-            pass
+            if not master.winfo_exists():
+                return
+            if container is not None and container.winfo_exists():
+                # Destrói apenas o corpo da janela do operador (mantém
+                # eventuais diálogos abertos, que são Toplevels à parte).
+                container.destroy()
+            else:
+                for filho in master.winfo_children():
+                    filho.destroy()
+            master.configure(fg_color=self._theme.c("bg"))
+        except tk.TclError:
+            return
+        self._main_window = self._criar_main_window(master)
 
     def _setup_public_display_embedded(self) -> None:
         """Abre a tela pública do sorteio na geometria do telão do NavePro.
@@ -554,9 +582,8 @@ class App:
             self._main_window._on_new_click()
 
     def _toggle_theme(self) -> None:
-        self._theme.toggle_theme()
-        if self._main_window:
-            self._main_window.refresh_theme()
+        novo = "light" if self._theme.theme_name == "dark" else "dark"
+        self.definir_tema(novo)
 
     def _check_completed(self) -> None:
         if self._engine.is_completed():
@@ -653,10 +680,10 @@ class App:
                     ).pack(side="left")
 
                     COLOR_DEFAULTS = {
-                        "Cor do Fundo": "#050816",
-                        "Cor dos Títulos": "#00d4ff",
-                        "Cor dos Textos": "#ffffff",
-                        "Cor dos Textos Secundários": "#8892b0",
+                        "Cor do Fundo": "#0d1117",
+                        "Cor dos Títulos": "#f0c040",
+                        "Cor dos Textos": "#c9d1d9",
+                        "Cor dos Textos Secundários": "#8b949e",
                     }
 
                     is_color = field_name.startswith("Cor ")
@@ -1057,9 +1084,9 @@ class App:
 
         ctk.CTkLabel(
             container,
-            text=("Os valores vazios usam a cor padrão (neon). O fundo "
-                  "transparente deixa o relógio/desktop aparecer atrás do "
-                  "sorteio no telão."),
+            text=("Os valores vazios usam a cor padrão (a mesma do NavePro). O "
+                  "fundo transparente deixa o relógio/desktop aparecer atrás "
+                  "do sorteio no telão."),
             font=(ui_font(), 12), text_color=texto_sec,
             wraplength=540, justify="left",
         ).pack(anchor="w", pady=(0, 10))

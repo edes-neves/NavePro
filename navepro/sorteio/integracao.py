@@ -13,7 +13,7 @@ import tkinter as tk
 
 from navepro.core.log import get_logger
 from navepro.core.monitores import get_monitors_config
-from navepro.core.util_tk import _centralizar_sobre
+from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
 
 from . import ctk
 
@@ -57,6 +57,11 @@ def _geometria_telao(app_interface):
     return rect, master
 
 
+def _tema_navepro(app_interface) -> str:
+    """Tema do NavePro no formato do sorteio ("light"/"dark")."""
+    return "light" if getattr(app_interface, "tema", "escuro") == "claro" else "dark"
+
+
 def abrir_sorteio(app_interface) -> None:
     """Abre (ou traz para frente) a janela do Sorteio Profissional."""
     root = getattr(app_interface, "root", None)
@@ -82,13 +87,21 @@ def abrir_sorteio(app_interface) -> None:
     width, height = _TAMANHO_JANELA
     janela = ctk.CTkToplevel(root)
     janela.title("🎲 Sorteio Profissional")
-    janela.minsize(width, height)
-    janela.geometry(f"{width}x{height}")
+    # A árvore do sorteio tem tema próprio (cores do NavePro, mas com regras
+    # de cartão/faixa do sorteio). A marca impede que a recoloração genérica
+    # de tema do NavePro repinte esta janela no tema claro.
+    janela._navepro_tema_proprio = True
+    # Precisa caber de 1024x768 até resoluções maiores: limita o tamanho
+    # inicial ao monitor e permite reduzir até um mínimo que caiba em 768.
+    _limitar_ao_monitor(janela, width, height)
+    janela.minsize(880, 620)
     _centralizar_sobre(janela, root)
 
     public_rect, public_master = _geometria_telao(app_interface)
 
     app = App()
+    # Inicia o sorteio já no tema atual do NavePro.
+    app._theme.definir_tema(_tema_navepro(app_interface))
 
     def _fechar() -> None:
         try:
@@ -102,6 +115,7 @@ def abrir_sorteio(app_interface) -> None:
                 janela.destroy()
         except tk.TclError:
             pass
+        app_interface._sorteio_sync_tema = None
         estado_atual = _aberto.get(chave)
         if estado_atual is not None and estado_atual.get("janela") is janela:
             _aberto.pop(chave, None)
@@ -115,8 +129,29 @@ def abrir_sorteio(app_interface) -> None:
 
     _aberto[chave] = {"janela": janela, "app": app}
 
+    # O NavePro dispara este callback sempre que o tema ativo muda (ver
+    # _aplicar_tema), mantendo o sorteio em sincronia enquanto estiver aberto.
+    app_interface._sorteio_sync_tema = lambda: sincronizar_tema(app_interface)
+
     try:
         janela.lift()
         janela.focus_force()
     except tk.TclError:
         pass
+
+
+def sincronizar_tema(app_interface) -> None:
+    """Aplica ao sorteio aberto o tema ativo do NavePro (chamado no toggle)."""
+    root = getattr(app_interface, "root", None)
+    if root is None:
+        return
+    estado = _aberto.get(id(root))
+    if not estado:
+        return
+    app = estado.get("app")
+    if app is None:
+        return
+    try:
+        app.definir_tema(_tema_navepro(app_interface))
+    except Exception as e:  # pragma: no cover - defensivo
+        log.warning("Não foi possível sincronizar o tema do sorteio: %s", e)

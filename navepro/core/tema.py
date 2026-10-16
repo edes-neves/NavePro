@@ -9,12 +9,14 @@ existente. As cores de projeção/relógio do TELÃO NÃO são tocadas.
 
 # Mapa: cor ESCURA atual -> cor equivalente no tema CLARO.
 MAPA_COR_CLARA: dict[str, str] = {
-    # Fundos (tema claro cinza; só a barra de menu fica clara)
-    '#0d1117': '#8b949e',   # fundo principal da janela
-    '#161b22': '#8b949e',   # cards/containers
-    '#21262d': '#8b949e',   # entradas/botões neutros/lista
-    '#1c2128': '#8b949e',   # linha alternada (par) da lista
-    '#30363d': '#6e7681',   # bordas/separadores/hover neutro (cinza mais escuro)
+    # Superfícies: mesma hierarquia do tema ESCURO (janela < cartões <
+    # entradas), só que em tons CLAROS — a janela é a base cinza-clara, os
+    # cartões sobem para o quase-branco e as entradas/lista viram branco.
+    '#0d1117': '#eaeef2',   # fundo principal da janela (base)
+    '#161b22': '#f6f8fa',   # cards/containers (um pouco mais claro)
+    '#1c2128': '#f6f8fa',   # linha alternada (par) da lista
+    '#21262d': '#ffffff',   # entradas/botões neutros/lista (mais claro)
+    '#30363d': '#d0d7de',   # bordas/separadores/hover (mais escuro que a base)
     # Roxos (accent)
     '#6e40c9': '#8250df',
     '#8b5cf6': '#8250df',
@@ -49,11 +51,12 @@ _CORES_FORTES_CLARO: frozenset = frozenset({
     '#cf222e', '#da3633', '#f85149',                                   # vermelhos
 })
 
-# Fundos claros (texto branco fica ilegível em cima). No tema claro cinza as
-# superfícies são '#8b949e'/'#6e7681', então também entram aqui para o texto
-# branco virar escuro e continuar legível.
+# Fundos claros (texto branco fica ilegível em cima). No tema claro agora as
+# superfícies usam a hierarquia '#eaeef2', '#f6f8fa', '#ffffff' com
+# '#d0d7de' para bordas; também mantém cores legadas (#8b949e/#6e7681) por
+# compatibilidade.
 _FUNDOS_CLAROS: frozenset = frozenset({
-    '#ffffff', '#f6f8fa', '#eaeef2', '#8b949e', '#6e7681',
+    '#ffffff', '#f6f8fa', '#eaeef2', '#d0d7de', '#8b949e', '#6e7681',
 })
 
 # Opções de cor do Tk que o tema pode recolorir por widget
