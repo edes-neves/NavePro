@@ -25,6 +25,8 @@ RAIZ = os.path.dirname(_AQUI)
 if RAIZ not in sys.path:
     sys.path.insert(0, RAIZ)
 
+from fixture_log import log  # noqa: E402
+
 # Referência que as suítes usam; o texto é de prova — os testes conferem
 # números e rótulos ("João 3:9"), nunca o conteúdo dos versículos.
 VERSAO = 'Almeida Revista e Corrigida'
@@ -53,9 +55,18 @@ def _criar_schema(db: str, uploads: str) -> None:
     """Executa o `init_db` real do NavePro.py apontando para o banco temporário."""
     mod_path = os.path.join(RAIZ, 'navepro', 'core', 'inicializacao.py')
     src = open(mod_path, encoding='utf-8').read()
-    no = [n for n in ast.walk(ast.parse(src))
+    tree = ast.parse(src)
+    no = [n for n in ast.walk(tree)
           if isinstance(n, ast.FunctionDef) and n.name == 'init_db'][0]
-    ns = {'os': os, 'sqlite3': sqlite3, 'DB_PATH': db, 'UPLOAD_FOLDER': uploads}
+    # `init_db` referencia a constante de versão do esquema (e, se precisar
+    # migrar, o logger): extrai a constante do módulo para o namespace.
+    ns = {'os': os, 'sqlite3': sqlite3, 'DB_PATH': db,
+          'UPLOAD_FOLDER': uploads, 'log': log}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) \
+                and isinstance(stmt.targets[0], ast.Name) \
+                and stmt.targets[0].id == 'SCHEMA_VERSION':
+            exec(ast.get_source_segment(src, stmt), ns)
     # as mensagens de migração do init_db poluem a saída da suíte
     with contextlib.redirect_stdout(io.StringIO()):
         exec(ast.get_source_segment(src, no), ns)

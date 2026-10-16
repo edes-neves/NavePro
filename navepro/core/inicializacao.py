@@ -27,6 +27,13 @@ from navepro.core.textos import detectar_tipo_arquivo
 
 log = get_logger("inicializacao")
 
+# Versão do esquema do banco, gravada em `PRAGMA user_version`. Suba este
+# número ao adicionar um novo degrau de migração em `init_db` (e some o
+# degrau correspondente lá embaixo, numerado). Bancos anteriores a este
+# controle ficam na versão 0 e recebem todos os degraus de uma vez — cada
+# degrau confere o estado real antes de agir, então reaplicar é inócuo.
+SCHEMA_VERSION = 2
+
 
 def init_db() -> None:
     """Cria a estrutura do banco de dados se não existir."""
@@ -140,58 +147,83 @@ def init_db() -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_anuncios_titulo ON anuncios(titulo)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_anuncios_ativo ON anuncios(ativo)")
 
-    # ── Migração: remover AUTOINCREMENT de bancos existentes ──
-    # Sem AUTOINCREMENT, o SQLite reaproveita o menor ID livre ao inserir.
-    try:
-        info = cursor.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='anuncios'"
-        ).fetchone()
-        if info and info[0] and "AUTOINCREMENT" in info[0]:
-            dados_existentes = cursor.execute(
-                "SELECT * FROM anuncios"
-            ).fetchall()
-            colunas = [desc[0] for desc in cursor.description]
-            cursor.execute("DROP TABLE anuncios")
-            cursor.execute("""
-                CREATE TABLE anuncios (
-                    id INTEGER PRIMARY KEY,
-                    titulo TEXT NOT NULL,
-                    categoria TEXT DEFAULT '',
-                    texto TEXT DEFAULT '',
-                    tipo_midia TEXT NOT NULL DEFAULT 'slide',
-                    arquivo_midia TEXT DEFAULT '',
-                    nome_arquivo_midia TEXT DEFAULT '',
-                    config_midia TEXT DEFAULT '',
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    ativo INTEGER DEFAULT 1
-                )
-            """)
-            for row in dados_existentes:
-                vals = dict(zip(colunas, row, strict=False))
-                placeholders = ", ".join("?" for _ in vals)
-                cols = ", ".join(vals.keys())
-                cursor.execute(
-                    f"INSERT INTO anuncios ({cols}) VALUES ({placeholders})",
-                    tuple(vals.values()),
-                )
-            cursor.execute("DROP TABLE IF EXISTS _anuncios_backup_old_ai")
-            log.info("✅ Migração anuncios: AUTOINCREMENT removido (IDs passam a reaproveitar).")
-    except Exception as e:
-        log.warning(f"⚠️ Migração AUTOINCREMENT ignorada (nova tabela ou já migrada): {e}")
-
-    # ── Migração: garantir a coluna config_midia em bancos já existentes ──
-    # Aditiva e idempotente: se a coluna já existe (banco novo ou já migrado),
-    # não faz nada.
-    try:
-        colunas_existentes = {desc[1] for desc in cursor.execute(
-            "PRAGMA table_info(anuncios)").fetchall()}
-        if colunas_existentes and 'config_midia' not in colunas_existentes:
-            cursor.execute("ALTER TABLE anuncios ADD COLUMN config_midia TEXT DEFAULT ''")
-            log.info("✅ Migração anuncios: coluna 'config_midia' adicionada.")
-    except Exception as e:
-        log.warning(f"⚠️ Migração config_midia ignorada: {e}")
-
+    # Garante o esquema base ANTES de migrar: se uma migração falhar, o
+    # rollback dela não desfaz a criação das tabelas.
     conn.commit()
+
+    # ── Migrações versionadas (PRAGMA user_version) ────────────────
+    # Cada degrau só roda se a versão gravada for menor que a dele, e
+    # ainda confere o estado real do banco antes de agir (idempotente):
+    # reaplicar num banco já migrado não faz nada.
+    versao = cursor.execute("PRAGMA user_version").fetchone()[0]
+    migracao_ok = True
+
+    # Transação explícita: o driver sqlite3 roda DDL em autocommit, então sem
+    # este BEGIN um DROP/CREATE ficaria gravado mesmo se o INSERT seguinte
+    # falhasse. Assim, uma migração ou aplica tudo, ou é desfeita inteira.
+    cursor.execute("BEGIN")
+
+    # v1 — anuncios: remover AUTOINCREMENT (IDs passam a reaproveitar).
+    if versao < 1:
+        try:
+            info = cursor.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='anuncios'"
+            ).fetchone()
+            if info and info[0] and "AUTOINCREMENT" in info[0]:
+                dados_existentes = cursor.execute(
+                    "SELECT * FROM anuncios"
+                ).fetchall()
+                colunas = [desc[0] for desc in cursor.description]
+                cursor.execute("DROP TABLE anuncios")
+                cursor.execute("""
+                    CREATE TABLE anuncios (
+                        id INTEGER PRIMARY KEY,
+                        titulo TEXT NOT NULL,
+                        categoria TEXT DEFAULT '',
+                        texto TEXT DEFAULT '',
+                        tipo_midia TEXT NOT NULL DEFAULT 'slide',
+                        arquivo_midia TEXT DEFAULT '',
+                        nome_arquivo_midia TEXT DEFAULT '',
+                        config_midia TEXT DEFAULT '',
+                        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ativo INTEGER DEFAULT 1
+                    )
+                """)
+                for row in dados_existentes:
+                    vals = dict(zip(colunas, row, strict=False))
+                    placeholders = ", ".join("?" for _ in vals)
+                    cols = ", ".join(vals.keys())
+                    cursor.execute(
+                        f"INSERT INTO anuncios ({cols}) VALUES ({placeholders})",
+                        tuple(vals.values()),
+                    )
+                cursor.execute("DROP TABLE IF EXISTS _anuncios_backup_old_ai")
+                log.info("✅ Migração v1: anuncios sem AUTOINCREMENT (IDs reaproveitam).")
+        except Exception as e:
+            migracao_ok = False
+            log.warning(f"⚠️ Migração v1 (AUTOINCREMENT) falhou, será retentada: {e}")
+
+    # v2 — anuncios: garantir a coluna config_midia (aditiva e idempotente).
+    if versao < 2:
+        try:
+            colunas_existentes = {desc[1] for desc in cursor.execute(
+                "PRAGMA table_info(anuncios)").fetchall()}
+            if colunas_existentes and 'config_midia' not in colunas_existentes:
+                cursor.execute("ALTER TABLE anuncios ADD COLUMN config_midia TEXT DEFAULT ''")
+                log.info("✅ Migração v2: coluna 'config_midia' adicionada.")
+        except Exception as e:
+            migracao_ok = False
+            log.warning(f"⚠️ Migração v2 (config_midia) falhou, será retentada: {e}")
+
+    # Só marca como migrado se nenhum degrau falhou; senão, desfaz o que a
+    # migração mexeu (inclusive um DROP parcial) e tenta de novo no próximo
+    # início — os degraus são idempotentes, então repetir é seguro.
+    if migracao_ok:
+        if versao < SCHEMA_VERSION:
+            cursor.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
+        conn.commit()
+    else:
+        conn.rollback()
     conn.close()
 
 

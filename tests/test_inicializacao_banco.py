@@ -38,6 +38,15 @@ def _extrair(nome: str):
     raise AssertionError(f"função {nome} não encontrada em inicializacao.py")
 
 
+def _schema_version() -> int:
+    for no in _TREE.body:
+        if isinstance(no, ast.Assign) \
+                and isinstance(no.targets[0], ast.Name) \
+                and no.targets[0].id == "SCHEMA_VERSION":
+            return ast.literal_eval(no.value)
+    raise AssertionError("SCHEMA_VERSION não encontrada em inicializacao.py")
+
+
 def _ns(db: str, uploads: str) -> dict:
     return {
         "os": os,
@@ -46,6 +55,7 @@ def _ns(db: str, uploads: str) -> dict:
         "log": log,
         "DB_PATH": db,
         "UPLOAD_FOLDER": uploads,
+        "SCHEMA_VERSION": _schema_version(),
         "detectar_tipo_arquivo": detectar_tipo_arquivo,
     }
 
@@ -84,6 +94,14 @@ def _colunas(db: str, tabela: str) -> set[str]:
         conn.close()
 
 
+def _user_version(db: str) -> int:
+    conn = sqlite3.connect(db)
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def _rodar() -> int:
     falhas = 0
 
@@ -97,6 +115,8 @@ def _rodar() -> int:
         raiz = tempfile.mkdtemp(prefix="navepro-init-")
         return raiz, os.path.join(raiz, "midia.db"), os.path.join(raiz, "uploads")
 
+    versao_atual = _schema_version()
+
     # ── 1. Criação do esquema em banco novo ─────────────────────────
     raiz, db, uploads = novo_db()
     _init_db(db, uploads)
@@ -108,6 +128,8 @@ def _rodar() -> int:
            "AUTOINCREMENT" not in _sql_da_tabela(db, "anuncios"))
     checar("anuncios tem a coluna config_midia",
            "config_midia" in _colunas(db, "anuncios"))
+    checar("grava a versão do esquema em user_version",
+           _user_version(db) == versao_atual)
 
     # índices essenciais
     conn = sqlite3.connect(db)
@@ -153,6 +175,8 @@ def _rodar() -> int:
     old_sql = _sql_da_tabela(db, "anuncios")
     checar("pré-condição: banco antigo tinha AUTOINCREMENT",
            "AUTOINCREMENT" in old_sql)
+    checar("pré-condição: banco antigo está na versão 0",
+           _user_version(db) == 0)
 
     _init_db(db, uploads)
     checar("migração remove AUTOINCREMENT",
@@ -165,6 +189,8 @@ def _rodar() -> int:
            linha == (5, "Antigo", "Cat", "texto"))
     checar("migração adiciona config_midia junto",
            "config_midia" in _colunas(db, "anuncios"))
+    checar("banco migrado passa para a versão atual",
+           _user_version(db) == versao_atual)
 
     # ── 4. Migração: adiciona config_midia a banco sem a coluna ─────
     raiz, db, uploads = novo_db()
@@ -195,6 +221,48 @@ def _rodar() -> int:
     conn.close()
     checar("coluna nova entra com default '' e dado antigo intacto",
            linha == ("Sem coluna", ""))
+    checar("banco migrado (só config_midia) passa para a versão atual",
+           _user_version(db) == versao_atual)
+
+    # ── 4b. Banco já na versão atual não é remexido ─────────────────
+    raiz, db, uploads = novo_db()
+    _init_db(db, uploads)
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO anuncios (id, titulo) VALUES (1, 'Estável')")
+    conn.execute(f"PRAGMA user_version = {versao_atual}")
+    conn.commit()
+    conn.close()
+    _init_db(db, uploads)
+    conn = sqlite3.connect(db)
+    linha = conn.execute("SELECT titulo FROM anuncios WHERE id = 1").fetchone()
+    conn.close()
+    checar("banco na versão atual é preservado numa nova passada",
+           linha == ("Estável",) and _user_version(db) == versao_atual)
+
+    # ── 4c. Migração que falha NÃO perde dados nem avança a versão ──
+    # Tabela legada com uma coluna que a v1 não conhece: o rebuild falha
+    # no INSERT; o rollback precisa devolver a tabela original intacta.
+    raiz, db, uploads = novo_db()
+    conn = sqlite3.connect(db)
+    conn.execute("""
+        CREATE TABLE anuncios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            titulo TEXT NOT NULL,
+            ativo INTEGER DEFAULT 1,
+            observacoes TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("INSERT INTO anuncios (id, titulo) VALUES (1, 'Importante')")
+    conn.commit()
+    conn.close()
+    _init_db(db, uploads)
+    conn = sqlite3.connect(db)
+    linha = conn.execute("SELECT titulo FROM anuncios WHERE id = 1").fetchone()
+    conn.close()
+    checar("migração v1 que falha preserva os dados (rollback)",
+           linha == ("Importante",))
+    checar("versão não avança quando uma migração falha",
+           _user_version(db) == 0)
 
     # ── 5. `_sincronizar_uploads_midia` ─────────────────────────────
     raiz, db, uploads = novo_db()
