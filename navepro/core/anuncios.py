@@ -224,7 +224,7 @@ def _proximo_id_anuncio_livre() -> int:
     try:
         rows = db_query("SELECT id FROM anuncios ORDER BY id")
     except Exception:
-        return None
+        return 1
     usados = {r["id"] for r in rows}
     cand = 1
     while cand in usados:

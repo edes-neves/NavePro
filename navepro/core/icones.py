@@ -215,16 +215,17 @@ def _localizar_fonte_emoji() -> str | None:
     if "path" in _cache_fonte_emoji:
         return _cache_fonte_emoji["path"]
     melhor: tuple[float, str] | None = None
-    for caminho in _candidatos_fonte_emoji():
-        if not os.path.isfile(caminho):
+    for cand in _candidatos_fonte_emoji():
+        if not os.path.isfile(cand):
             continue
-        nota = _fonte_serve_emoji(caminho)
+        nota = _fonte_serve_emoji(cand)
         if nota < 0:
             continue
         if melhor is None or nota > melhor[0]:
-            melhor = (nota, caminho)
-    caminho = melhor[1] if melhor else None
-    if caminho:
+            melhor = (nota, cand)
+    caminho: str | None = None
+    if melhor:
+        caminho = melhor[1]
         log.info(f"✅ Fonte de emoji colorida: {caminho} "
                  f"(cromia {melhor[0]:.2f})")
     else:

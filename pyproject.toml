@@ -20,3 +20,27 @@ ignore = ["E501", "E701", "E702"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = false
+warn_redundant_casts = true
+warn_return_any = false
+warn_unreachable = false
+check_untyped_defs = false
+disallow_untyped_defs = false
+no_implicit_optional = false
+show_error_codes = true
+# Tkinter/canvas/typing dinâmico geram muitos falsos positivos neste código.
+disable_error_code = ["union-attr", "attr-defined", "assignment", "arg-type", "call-overload"]
+exclude = [
+  "build",
+  "dist",
+  "AppDir",
+  ".venv",
+  "navepro/sorteio",
+  "navepro/core/telao.py",
+  "navepro/core/mediaplayer.py",
+]

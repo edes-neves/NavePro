@@ -62,9 +62,9 @@ class ServidorAsyncHTTP:
         self.host: str = '127.0.0.1'
         self.token: str | None = None
         # Injetados pelo AppInterface:
-        #   ui(fn)      → executa fn na thread do Tk e devolve o resultado
+        #   ui(fn[, timeout]) → executa fn na thread do Tk e devolve o resultado
         #   remoto(a,d) → executa a ação remota `a` com dados `d` no app
-        self.ui: Callable[[Callable], Any] | None = None
+        self.ui: Callable[..., Any] | None = None
         self.remoto: Callable[[str, dict], Any] | None = None
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -288,7 +288,10 @@ class ServidorAsyncHTTP:
 
     def _remoto(self, acao: str, dados: dict) -> Any:
         """Despacha uma ação remota para o app (na thread do Tk)."""
-        return self._na_ui(lambda: self.remoto(acao, dados))
+        remoto = self.remoto
+        if remoto is None:
+            raise RuntimeError("Controle remoto não conectado ao servidor")
+        return self._na_ui(lambda: remoto(acao, dados))
 
     def _exige_remoto(self, headers: dict, params: dict) -> bytes | None:
         """Retorna None se autorizado, ou a resposta de erro a enviar."""
