@@ -40,6 +40,16 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.7" date="2026-10-15">
+      <description>
+        <ul>
+          <li>Tema claro do Sorteio e hierarquia de cores mais clara no painel do NavePro (janelas, cartões e campos)</li>
+          <li>Janelas responsivas: diálogos grandes se ajustam à tela (resolução mínima suportada 1024x768)</li>
+          <li>Fade de áudio no play/pausar/parar e menu de clique direito na lista de mídias</li>
+          <li>Correções: campos Cidade/UF e da busca no tema escuro, título do item YouTube mantido ao salvar e detecção de vídeo/áudio</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.6" date="2026-10-13">
       <description>
         <ul>

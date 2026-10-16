@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.1.6.AppImage
-   ./NavePro-2.1.6.AppImage
+   chmod +x NavePro-2.1.7.AppImage
+   ./NavePro-2.1.7.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.6          # gera NavePro-2.1.6.AppImage
+./build.sh 2.1.7          # gera NavePro-2.1.7.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.1.6
+   ./build.sh 2.1.7
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.1.6: ..."
-   git tag v2.1.6
-   git push origin main v2.1.6
+   git add -A && git commit -m "NavePro 2.1.7: ..."
+   git tag v2.1.7
+   git push origin main v2.1.7
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.1.6 NavePro-2.1.6.AppImage \
-     --title "NavePro 2.1.6" --notes "O que mudou nesta versão..."
+   gh release create v2.1.7 NavePro-2.1.7.AppImage \
+     --title "NavePro 2.1.7" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -536,6 +536,19 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.1.7
+
+- **Tema claro do Sorteio** e hierarquia de cores mais clara no painel do
+  NavePro (janelas, cartões e campos com tons distintos).
+- **Janelas responsivas**: os diálogos grandes se ajustam à tela (resolução
+  mínima suportada `1024x768`) em vez de abrir maiores que o monitor.
+- **Fade de áudio** no play/pausar/parar e **menu de clique direito** na lista
+  de mídias.
+- Correções: campos **Cidade/UF** e da **busca** não ficavam mais claros no
+  tema escuro; o **título do item YouTube** do operador é mantido ao salvar; e
+  `_eh_arquivo_de_video` voltou a retornar `bool` (um áudio não é mais tratado
+  como vídeo).
 
 ### 2.1.6
 
