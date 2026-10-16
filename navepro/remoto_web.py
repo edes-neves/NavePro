@@ -1,9 +1,10 @@
 """Página do controle remoto do NavePro (celular na mesma rede).
 
 Servida pelo ServidorAsyncHTTP na rota `/` quando o controle remoto está
-ativo, sempre protegida pelo token (`?t=` na URL). É uma constante de
-string neste módulo — nada de arquivo estático no bundle, então o
-PyInstaller, o AppImage e o Flatpak continuam funcionando sem mudanças.
+ativo, sempre protegida pelo token (`?t=` na URL). São constantes de string
+neste módulo (o CSS e o JS ficam em `_REMOTO_CSS`/`_REMOTO_JS`, costurados em
+`PAGINA`) — nada de arquivo estático no bundle, então o PyInstaller, o
+AppImage e o Flatpak continuam funcionando sem mudanças.
 
 A API usada (tudo com o header `X-Token`):
   GET  /api/remoto/estado      → estado do telão/medidor/mídia
@@ -26,13 +27,7 @@ A API usada (tudo com o header `X-Token`):
   POST /api/remoto/medidor     → {qual, acao, seg?, titulo?}
   POST /api/remoto/tamanho     → {qual, acao}"""
 
-PAGINA = """<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>NavePro - Controle Remoto</title>
-<style>
+_REMOTO_CSS = """
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; background: #0d1117; color: #c9d1d9;
@@ -111,209 +106,9 @@ PAGINA = """<!DOCTYPE html>
     position: fixed; inset: 0; background: #0d1117; z-index: 30;
     padding: 40px 24px; display: none;
   }
-</style>
-</head>
-<body>
+"""
 
-<header>
-  <b>&#127760; NavePro</b>
-  <div id="status">conectando...</div>
-</header>
-
-<nav id="abas">
-  <button data-aba="slides" class="on">&#9654; Slides</button>
-  <button data-aba="hino">&#127925; Hino</button>
-  <button data-aba="biblia">&#128214; B&iacute;blia</button>
-  <button data-aba="anuncio">&#128227; An&uacute;ncio</button>
-  <button data-aba="servico">&#128203; Servi&ccedil;o</button>
-  <button data-aba="medidor">&#9201; Medidor</button>
-</nav>
-
-<section id="aba-slides" class="on">
-  <div class="card">
-    <h3>Tel&atilde;o</h3>
-    <div class="previa" id="previa">-</div>
-    <div class="linha" style="margin-top:10px">
-      <span class="pill" id="cont_slides">sem proje&ccedil;&atilde;o</span>
-      <span class="pill" id="med_tela"></span>
-    </div>
-  </div>
-  <div class="card">
-    <div class="linha">
-      <button class="btn" onclick="slide('ant')">&#9664; Voltar</button>
-      <button class="btn verde" onclick="slide('prox')">&#9654; Pr&oacute;ximo</button>
-    </div>
-    <div class="linha" style="margin-top:8px">
-      <button class="btn vermelho" onclick="slide('parar')">&#9209; Encerrar (rel&oacute;gio)</button>
-    </div>
-  </div>
-  <div class="card">
-    <h3>Tamanho do conte&uacute;do</h3>
-    <div class="linha">
-      <span class="pill" id="tam_texto">texto 5,0%</span>
-      <button class="btn mini" onclick="tamanho('texto','menos')">A&minus;</button>
-      <button class="btn mini" onclick="tamanho('texto','mais')">A+</button>
-      <button class="btn mini" onclick="tamanho('texto','zerar')">&#8634; Padr&atilde;o</button>
-    </div>
-    <div class="linha" style="margin-top:8px">
-      <span class="pill" id="tam_imagem">imagem 1,00&times;</span>
-      <button class="btn mini" onclick="tamanho('imagem','menos')">&#8722;</button>
-      <button class="btn mini" onclick="tamanho('imagem','mais')">+</button>
-      <button class="btn mini" onclick="tamanho('imagem','zerar')">&#8634; Padr&atilde;o</button>
-    </div>
-    <div class="linha" style="margin-top:8px">
-      <span class="pill">A&minus;/A+ muda o texto &middot; &#8722;/+ muda s&oacute; a imagem, ao vivo</span>
-    </div>
-  </div>
-  <div class="card">
-    <h3>M&uacute;sica/v&iacute;deo atual</h3>
-    <div id="midia_atual" class="vazio">nenhuma m&iacute;dia</div>
-  </div>
-</section>
-
-<section id="aba-hino">
-  <div class="card">
-    <h3>Buscar hino (letra)</h3>
-    <input id="hino_busca" placeholder="N&uacute;mero ou trecho..." enterkeyhint="search">
-    <button class="btn" onclick="buscarHino()">&#128269; Buscar</button>
-  </div>
-  <div class="card"><ul id="lista_hinos"><li class="vazio">Busque um hino.</li></ul></div>
-  <div class="card">
-    <h3>Executar m&uacute;sica/v&iacute;deo (BD)</h3>
-    <input id="midia_busca" placeholder="N&uacute;mero ou nome do arquivo..." enterkeyhint="search">
-    <button class="btn verde" onclick="buscarMidia()">&#128269; Buscar</button>
-  </div>
-  <div class="card"><ul id="lista_midias"><li class="vazio">Busque uma m&uacute;sica ou v&iacute;deo.</li></ul></div>
-  <div class="card">
-    <h3>Reprodu&ccedil;&atilde;o</h3>
-    <div class="linha">
-      <button class="btn" onclick="controlePlayer('play_pause')">&#9199; Play/Pause</button>
-      <button class="btn vermelho" onclick="controlePlayer('parar')">&#9209; Parar</button>
-    </div>
-    <div class="linha" style="margin-top:8px">
-      <span class="pill" id="player_estado">sem m&iacute;dia</span>
-    </div>
-  </div>
-</section>
-
-<section id="aba-biblia">
-  <div class="card">
-    <h3>Refer&ecirc;ncia (Cap: V:)</h3>
-    <select id="bib_versao"></select>
-    <select id="bib_livro"></select>
-    <div class="linha" style="margin-top:8px">
-      <span class="pill">Cap:</span>
-      <input id="bib_cap" inputmode="numeric" placeholder="3" style="max-width:80px">
-      <span class="pill">V:</span>
-      <input id="bib_vers" inputmode="numeric" placeholder="16 (ou 1-7; vazio = cap.)">
-    </div>
-    <div class="linha" style="margin-top:8px">
-      <button class="btn" onclick="buscarBibliaRef()">&#128269; Buscar</button>
-      <button class="btn verde" onclick="projetarBibliaRef()">&#128250; Projetar</button>
-    </div>
-  </div>
-  <div class="card">
-    <h3>Buscar vers&iacute;culo (texto)</h3>
-    <input id="bib_busca" placeholder="Texto do vers&iacute;culo..." enterkeyhint="search">
-    <button class="btn" onclick="buscarBiblia()">&#128269; Buscar</button>
-  </div>
-  <div class="card"><ul id="lista_biblia"><li class="vazio">Busque um vers&iacute;culo.</li></ul></div>
-</section>
-
-<section id="aba-anuncio">
-  <div class="card">
-    <h3>An&uacute;cios</h3>
-    <ul id="lista_anuncios"><li class="vazio">Carregando...</li></ul>
-  </div>
-</section>
-
-<section id="aba-servico">
-  <div class="card">
-    <h3>Ordem de servi&ccedil;o</h3>
-    <ul id="lista_servicos"><li class="vazio">Carregando...</li></ul>
-    <div class="linha" style="margin-top:10px">
-      <span class="pill" id="serv_status">pr&oacute;ximo item segue a ordem da lista</span>
-    </div>
-  </div>
-  <div class="card">
-    <h3>Itens do servi&ccedil;o</h3>
-    <div id="serv_cabecalho" class="vazio">Toque em "Itens" num servi&ccedil;o acima.</div>
-    <ul id="lista_itens_servico"></ul>
-    <button class="btn verde" id="btn_add_item" style="margin-top:10px;display:none"
-            onclick="abrirFormItem(null)">&#10133; Adicionar item</button>
-  </div>
-  <div class="card" id="serv_form" style="display:none">
-    <h3 id="serv_form_titulo">Adicionar item</h3>
-    <input id="item_titulo" placeholder="T&iacute;tulo (opcional)">
-    <select id="item_tipo" onchange="tipoItemMudou()"></select>
-    <input id="item_termo" placeholder="Buscar por n&uacute;mero/nome (opcional)">
-    <div id="painel_hino" style="display:none">
-      <input id="item_hino" placeholder="N&uacute;mero/nome do hino">
-    </div>
-    <div id="painel_versiculo" style="display:none">
-      <select id="item_bib_versao"></select>
-      <select id="item_bib_livro"></select>
-      <div class="linha">
-        <span class="pill">Cap:</span>
-        <input id="item_bib_cap" inputmode="numeric" placeholder="3" style="max-width:80px">
-        <span class="pill">V:</span>
-        <input id="item_bib_vers" inputmode="numeric" placeholder="16 (ou 1-7; vazio = cap.)">
-      </div>
-    </div>
-    <div id="painel_anuncio" style="display:none">
-      <select id="item_anuncio"></select>
-    </div>
-    <div id="painel_arquivo" style="display:none">
-      <input id="item_arquivo" placeholder="Caminho completo do arquivo">
-    </div>
-    <input id="item_duracao" inputmode="numeric" placeholder="Dura&ccedil;&atilde;o (segundos, opcional)">
-    <div class="linha" style="margin-top:4px">
-      <button class="btn cinza" onclick="fecharFormItem()">Cancelar</button>
-      <button class="btn verde" onclick="salvarItem()">&#128190; Salvar</button>
-    </div>
-  </div>
-</section>
-
-<section id="aba-medidor">
-  <div class="card">
-    <h3>Cron&ocirc;metro</h3>
-    <div class="grande" id="crono_tempo">00:00.00</div>
-    <div class="linha" style="margin-top:10px">
-      <button class="btn verde" onclick="medidor('cronometro','iniciar')">&#9654; Iniciar</button>
-      <button class="btn cinza" onclick="medidor('cronometro','parar')">&#9208; Parar</button>
-    </div>
-    <div class="linha" style="margin-top:8px">
-      <button class="btn cinza" onclick="medidor('cronometro','continuar')">&#9199; Continuar</button>
-      <button class="btn vermelho" onclick="medidor('cronometro','encerrar')">&#9209; Encerrar</button>
-    </div>
-  </div>
-  <div class="card">
-    <h3>Contagem regressiva</h3>
-    <input id="cont_tempo" inputmode="numeric" placeholder="Tempo (ex.: 5:00)" value="5:00">
-    <input id="cont_titulo" placeholder="Nome / frase (opcional)">
-    <div class="grande" id="cont_restante">05:00</div>
-    <div class="linha" style="margin-top:10px">
-      <button class="btn verde" onclick="iniciarContagem()">&#9654; Iniciar</button>
-      <button class="btn cinza" onclick="medidor('contagem','parar')">&#9208; Parar</button>
-    </div>
-    <div class="linha" style="margin-top:8px">
-      <button class="btn cinza" onclick="medidor('contagem','continuar')">&#9199; Continuar</button>
-      <button class="btn vermelho" onclick="medidor('contagem','encerrar')">&#9209; Encerrar</button>
-    </div>
-  </div>
-</section>
-
-<div id="toast"></div>
-
-<div id="token_tela">
-  <h2 style="color:#f0c040">&#128274; Token de acesso</h2>
-  <p style="color:#8b949e;font-size:14px">Cole o token exibido no
-  computador (Configura&ccedil;&otilde;es &gt; Controle Remoto).</p>
-  <input id="token_digito" placeholder="Token">
-  <button class="btn" onclick="salvarToken()">Entrar</button>
-</div>
-
-<script>
+_REMOTO_JS = """
 var TOKEN = new URLSearchParams(location.search).get('t') || localStorage.getItem('navepro_token') || '';
 if (TOKEN) localStorage.setItem('navepro_token', TOKEN);
 
@@ -954,7 +749,217 @@ function iniciar() {
 }
 
 iniciar();
-</script>
+"""
+
+PAGINA = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>NavePro - Controle Remoto</title>
+<style>""" + _REMOTO_CSS + """</style>
+</head>
+<body>
+
+<header>
+  <b>&#127760; NavePro</b>
+  <div id="status">conectando...</div>
+</header>
+
+<nav id="abas">
+  <button data-aba="slides" class="on">&#9654; Slides</button>
+  <button data-aba="hino">&#127925; Hino</button>
+  <button data-aba="biblia">&#128214; B&iacute;blia</button>
+  <button data-aba="anuncio">&#128227; An&uacute;ncio</button>
+  <button data-aba="servico">&#128203; Servi&ccedil;o</button>
+  <button data-aba="medidor">&#9201; Medidor</button>
+</nav>
+
+<section id="aba-slides" class="on">
+  <div class="card">
+    <h3>Tel&atilde;o</h3>
+    <div class="previa" id="previa">-</div>
+    <div class="linha" style="margin-top:10px">
+      <span class="pill" id="cont_slides">sem proje&ccedil;&atilde;o</span>
+      <span class="pill" id="med_tela"></span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="linha">
+      <button class="btn" onclick="slide('ant')">&#9664; Voltar</button>
+      <button class="btn verde" onclick="slide('prox')">&#9654; Pr&oacute;ximo</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn vermelho" onclick="slide('parar')">&#9209; Encerrar (rel&oacute;gio)</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Tamanho do conte&uacute;do</h3>
+    <div class="linha">
+      <span class="pill" id="tam_texto">texto 5,0%</span>
+      <button class="btn mini" onclick="tamanho('texto','menos')">A&minus;</button>
+      <button class="btn mini" onclick="tamanho('texto','mais')">A+</button>
+      <button class="btn mini" onclick="tamanho('texto','zerar')">&#8634; Padr&atilde;o</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <span class="pill" id="tam_imagem">imagem 1,00&times;</span>
+      <button class="btn mini" onclick="tamanho('imagem','menos')">&#8722;</button>
+      <button class="btn mini" onclick="tamanho('imagem','mais')">+</button>
+      <button class="btn mini" onclick="tamanho('imagem','zerar')">&#8634; Padr&atilde;o</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <span class="pill">A&minus;/A+ muda o texto &middot; &#8722;/+ muda s&oacute; a imagem, ao vivo</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>M&uacute;sica/v&iacute;deo atual</h3>
+    <div id="midia_atual" class="vazio">nenhuma m&iacute;dia</div>
+  </div>
+</section>
+
+<section id="aba-hino">
+  <div class="card">
+    <h3>Buscar hino (letra)</h3>
+    <input id="hino_busca" placeholder="N&uacute;mero ou trecho..." enterkeyhint="search">
+    <button class="btn" onclick="buscarHino()">&#128269; Buscar</button>
+  </div>
+  <div class="card"><ul id="lista_hinos"><li class="vazio">Busque um hino.</li></ul></div>
+  <div class="card">
+    <h3>Executar m&uacute;sica/v&iacute;deo (BD)</h3>
+    <input id="midia_busca" placeholder="N&uacute;mero ou nome do arquivo..." enterkeyhint="search">
+    <button class="btn verde" onclick="buscarMidia()">&#128269; Buscar</button>
+  </div>
+  <div class="card"><ul id="lista_midias"><li class="vazio">Busque uma m&uacute;sica ou v&iacute;deo.</li></ul></div>
+  <div class="card">
+    <h3>Reprodu&ccedil;&atilde;o</h3>
+    <div class="linha">
+      <button class="btn" onclick="controlePlayer('play_pause')">&#9199; Play/Pause</button>
+      <button class="btn vermelho" onclick="controlePlayer('parar')">&#9209; Parar</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <span class="pill" id="player_estado">sem m&iacute;dia</span>
+    </div>
+  </div>
+</section>
+
+<section id="aba-biblia">
+  <div class="card">
+    <h3>Refer&ecirc;ncia (Cap: V:)</h3>
+    <select id="bib_versao"></select>
+    <select id="bib_livro"></select>
+    <div class="linha" style="margin-top:8px">
+      <span class="pill">Cap:</span>
+      <input id="bib_cap" inputmode="numeric" placeholder="3" style="max-width:80px">
+      <span class="pill">V:</span>
+      <input id="bib_vers" inputmode="numeric" placeholder="16 (ou 1-7; vazio = cap.)">
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn" onclick="buscarBibliaRef()">&#128269; Buscar</button>
+      <button class="btn verde" onclick="projetarBibliaRef()">&#128250; Projetar</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Buscar vers&iacute;culo (texto)</h3>
+    <input id="bib_busca" placeholder="Texto do vers&iacute;culo..." enterkeyhint="search">
+    <button class="btn" onclick="buscarBiblia()">&#128269; Buscar</button>
+  </div>
+  <div class="card"><ul id="lista_biblia"><li class="vazio">Busque um vers&iacute;culo.</li></ul></div>
+</section>
+
+<section id="aba-anuncio">
+  <div class="card">
+    <h3>An&uacute;cios</h3>
+    <ul id="lista_anuncios"><li class="vazio">Carregando...</li></ul>
+  </div>
+</section>
+
+<section id="aba-servico">
+  <div class="card">
+    <h3>Ordem de servi&ccedil;o</h3>
+    <ul id="lista_servicos"><li class="vazio">Carregando...</li></ul>
+    <div class="linha" style="margin-top:10px">
+      <span class="pill" id="serv_status">pr&oacute;ximo item segue a ordem da lista</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Itens do servi&ccedil;o</h3>
+    <div id="serv_cabecalho" class="vazio">Toque em "Itens" num servi&ccedil;o acima.</div>
+    <ul id="lista_itens_servico"></ul>
+    <button class="btn verde" id="btn_add_item" style="margin-top:10px;display:none"
+            onclick="abrirFormItem(null)">&#10133; Adicionar item</button>
+  </div>
+  <div class="card" id="serv_form" style="display:none">
+    <h3 id="serv_form_titulo">Adicionar item</h3>
+    <input id="item_titulo" placeholder="T&iacute;tulo (opcional)">
+    <select id="item_tipo" onchange="tipoItemMudou()"></select>
+    <input id="item_termo" placeholder="Buscar por n&uacute;mero/nome (opcional)">
+    <div id="painel_hino" style="display:none">
+      <input id="item_hino" placeholder="N&uacute;mero/nome do hino">
+    </div>
+    <div id="painel_versiculo" style="display:none">
+      <select id="item_bib_versao"></select>
+      <select id="item_bib_livro"></select>
+      <div class="linha">
+        <span class="pill">Cap:</span>
+        <input id="item_bib_cap" inputmode="numeric" placeholder="3" style="max-width:80px">
+        <span class="pill">V:</span>
+        <input id="item_bib_vers" inputmode="numeric" placeholder="16 (ou 1-7; vazio = cap.)">
+      </div>
+    </div>
+    <div id="painel_anuncio" style="display:none">
+      <select id="item_anuncio"></select>
+    </div>
+    <div id="painel_arquivo" style="display:none">
+      <input id="item_arquivo" placeholder="Caminho completo do arquivo">
+    </div>
+    <input id="item_duracao" inputmode="numeric" placeholder="Dura&ccedil;&atilde;o (segundos, opcional)">
+    <div class="linha" style="margin-top:4px">
+      <button class="btn cinza" onclick="fecharFormItem()">Cancelar</button>
+      <button class="btn verde" onclick="salvarItem()">&#128190; Salvar</button>
+    </div>
+  </div>
+</section>
+
+<section id="aba-medidor">
+  <div class="card">
+    <h3>Cron&ocirc;metro</h3>
+    <div class="grande" id="crono_tempo">00:00.00</div>
+    <div class="linha" style="margin-top:10px">
+      <button class="btn verde" onclick="medidor('cronometro','iniciar')">&#9654; Iniciar</button>
+      <button class="btn cinza" onclick="medidor('cronometro','parar')">&#9208; Parar</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn cinza" onclick="medidor('cronometro','continuar')">&#9199; Continuar</button>
+      <button class="btn vermelho" onclick="medidor('cronometro','encerrar')">&#9209; Encerrar</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Contagem regressiva</h3>
+    <input id="cont_tempo" inputmode="numeric" placeholder="Tempo (ex.: 5:00)" value="5:00">
+    <input id="cont_titulo" placeholder="Nome / frase (opcional)">
+    <div class="grande" id="cont_restante">05:00</div>
+    <div class="linha" style="margin-top:10px">
+      <button class="btn verde" onclick="iniciarContagem()">&#9654; Iniciar</button>
+      <button class="btn cinza" onclick="medidor('contagem','parar')">&#9208; Parar</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn cinza" onclick="medidor('contagem','continuar')">&#9199; Continuar</button>
+      <button class="btn vermelho" onclick="medidor('contagem','encerrar')">&#9209; Encerrar</button>
+    </div>
+  </div>
+</section>
+
+<div id="toast"></div>
+
+<div id="token_tela">
+  <h2 style="color:#f0c040">&#128274; Token de acesso</h2>
+  <p style="color:#8b949e;font-size:14px">Cole o token exibido no
+  computador (Configura&ccedil;&otilde;es &gt; Controle Remoto).</p>
+  <input id="token_digito" placeholder="Token">
+  <button class="btn" onclick="salvarToken()">Entrar</button>
+</div>
+
+<script>""" + _REMOTO_JS + """</script>
 </body>
 </html>
 """
