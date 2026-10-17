@@ -69,8 +69,8 @@ check(f"todo getElementById tem id no HTML ({len(ids_usados)} ids)",
 check("há ids (o regex não passou em branco)", bool(ids_usados))
 
 # ── 4. Rotas da página existem no servidor ───────────────────────────
-rotas_pagina = set(re.findall(r"/api/remoto/[a-z_]+", PAGINA))
-rotas_servidor = set(re.findall(r"/api/remoto/[a-z_]+", _SRV_SRC))
+rotas_pagina = set(re.findall(r"/api/remoto/[a-z_/]+", PAGINA))
+rotas_servidor = set(re.findall(r"/api/remoto/[a-z_/]+", _SRV_SRC))
 orfa = sorted(rotas_pagina - rotas_servidor)
 check(f"toda rota da página existe no servidor ({len(rotas_pagina)} rotas)",
       not orfa, ", ".join(orfa))

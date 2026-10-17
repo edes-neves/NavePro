@@ -419,6 +419,57 @@ class MainWindow:
                     names.append(name)
         return names
 
+    # ── Configuração programática (controle remoto pelo celular) ──
+    def configurar_numeros(self, inicio: int, fim: int, por_vez: int = 1) -> None:
+        """Configura o sorteio por faixa de números.
+
+        Reinicia o sorteio (zera os já sorteados) para que a nova faixa valha
+        na próxima vez, devolvendo o telão ao estado de espera — sem recriar a
+        janela pública (o que faria o telão piscar durante o culto).
+        """
+        self._reiniciar_para_config()
+        self._on_mode_change("Números")
+        self._entry_start.delete(0, "end")
+        self._entry_start.insert(0, str(inicio))
+        self._entry_end.delete(0, "end")
+        self._entry_end.insert(0, str(fim))
+        self._aplicar_por_vez(self._count_vars, por_vez)
+        # Já configura o motor para o celular ver a faixa (o "Sortear"
+        # reconfigura igual antes de sortear, então não há perda).
+        self._engine.configure(int(inicio), int(fim))
+        self._update_status()
+
+    def configurar_nomes(self, nomes: list, por_vez: int = 1) -> None:
+        """Configura o sorteio por lista de nomes (um por linha)."""
+        nomes = [str(n) for n in nomes]
+        self._reiniciar_para_config()
+        self._on_mode_change("Nomes")
+        self._names_text.delete("1.0", "end")
+        self._names_text.insert("1.0", "\n".join(nomes))
+        self._stored_names = list(nomes)
+        self._names_info.configure(text=f"Nomes cadastrados: {len(nomes)}")
+        self._aplicar_por_vez(self._names_count_vars, por_vez)
+        self._engine.configure_names(nomes)
+        self._update_status()
+
+    def _aplicar_por_vez(self, vars_: list, por_vez: int) -> None:
+        """Marca só a caixinha 'por vez' escolhida (as demais, desmarcadas)."""
+        for var, valor in vars_:
+            var.set(valor == por_vez)
+
+    def _reiniciar_para_config(self) -> None:
+        """Zera o sorteio para aplicar uma nova configuração (telão → espera)."""
+        self._engine.reset()
+        self._history.clear()
+        self._error_label.configure(text="")
+        self._update_status()
+        self._update_history_display()
+        self._draw_state = "start"
+        self._btn_iniciar.configure(text="Iniciar Sorteio")
+        self._set_btn_theme(self._btn_iniciar, "btn_primary", "btn_primary_hover")
+        if self._on_clear:
+            self._on_clear()
+
     def _on_import_names(self) -> None:
         import os as _os
 

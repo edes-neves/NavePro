@@ -292,4 +292,187 @@ assert "_navepro_tema_proprio" in _fonte_navepro, (
     "NavePro ignora a marca de tema próprio"
 )
 
+# --- Controle remoto do sorteio (abrir/sortear/reiniciar pelo celular) ---
+assert hasattr(integracao, "estado_sorteio"), "integracao sem estado_sorteio"
+assert hasattr(integracao, "sortear"), "integracao sem sortear"
+assert hasattr(integracao, "reiniciar"), "integracao sem reiniciar"
+
+
+class _LabelFalso:
+    def __init__(self, texto=""):
+        self._texto = texto
+
+    def configure(self, **kw):
+        self._texto = kw.get("text", "")
+
+    def cget(self, chave):
+        return self._texto
+
+
+class _JanelaFalsa:
+    def __init__(self, engine, erro=""):
+        self._engine = engine
+        self._error_label = _LabelFalso(erro)
+        self.sorteou = 0
+        self.limpou = 0
+
+    def _on_draw_toggle(self):
+        self.sorteou += 1
+        if self._error_label._texto:
+            return  # simula validação que barra o clique
+        self._engine.configure(1, 5)
+        self._engine.draw_many(1)
+
+    def _on_clear_toggle(self):
+        self.limpou += 1
+        self._engine.reset()
+
+
+class _AppSorteioFalso:
+    def __init__(self, engine, janela):
+        self._engine = engine
+        self._main_window = janela
+
+
+class _RaizFalsa:
+    pass
+
+
+class _NaveProFalso:
+    def __init__(self):
+        self.root = _RaizFalsa()
+
+
+def _registrar(np_falso, app):
+    integracao._aberto[id(np_falso.root)] = {"janela": None, "app": app}
+
+
+_np = _NaveProFalso()
+
+# Fechado: estado {aberto: False} e ações recusadas com mensagem clara.
+assert integracao.estado_sorteio(_np) == {"aberto": False}
+assert integracao.sortear(_np)["ok"] is False
+assert integracao.reiniciar(_np)["ok"] is False
+assert "Abra o Sorteio" in integracao.sortear(_np)["erro"]
+
+# Aberto e configurado: "sortear" incrementa e o estado reflete o sorteio.
+_eng = LotteryEngine()
+_jan = _JanelaFalsa(_eng)
+_registrar(_np, _AppSorteioFalso(_eng, _jan))
+_est = integracao.estado_sorteio(_np)
+assert _est["aberto"] is True and _est["sorteados"] == [], _est
+_res = integracao.sortear(_np)
+assert _res["ok"] is True and _res["desenhou"] == 1, _res
+assert len(integracao.estado_sorteio(_np)["sorteados"]) == 1
+assert _jan.sorteou == 1
+
+# Reiniciar zera os sorteados.
+_res = integracao.reiniciar(_np)
+assert _res["ok"] is True and _res["sorteados"] == [], _res
+assert integracao.estado_sorteio(_np)["sorteados"] == []
+assert _jan.limpou == 1
+
+# Janela barrando o clique (intervalo/nomes não configurados): o aviso dela
+# chega ao celular em vez de um "ok" silencioso.
+_eng2 = LotteryEngine()
+_jan2 = _JanelaFalsa(_eng2, erro="Configure o intervalo e clique em Iniciar.")
+_registrar(_np, _AppSorteioFalso(_eng2, _jan2))
+_res = integracao.sortear(_np)
+assert _res["ok"] is False and "Configure o intervalo" in _res["erro"], _res
+
+integracao._aberto.pop(id(_np.root), None)
+
+# --- Configuração remota (faixa de números / lista de nomes) ---
+assert hasattr(integracao, "configurar_sorteio"), "integracao sem configurar_sorteio"
+assert hasattr(integracao, "_lista_de_nomes"), "integracao sem _lista_de_nomes"
+
+# Parsing de nomes: uma por linha ou separadas por vírgula, sem repetir.
+assert integracao._lista_de_nomes("Ana\nJoão, Ana\nMaria") == [
+    "Ana", "João", "Maria"
+], integracao._lista_de_nomes("Ana\nJoão, Ana\nMaria")
+assert integracao._lista_de_nomes(["a", "b"]) == ["a", "b"]
+assert integracao._lista_de_nomes("  \n ,  ") == []
+
+
+class _JanelaConfigFalsa:
+    def __init__(self):
+        self._mode = "numbers"
+        self._stored_names = []
+        self.chamadas = []
+
+    def configurar_numeros(self, inicio, fim, por_vez):
+        self.chamadas.append(("numeros", inicio, fim, por_vez))
+
+    def configurar_nomes(self, nomes, por_vez):
+        self.chamadas.append(("nomes", list(nomes), por_vez))
+
+    def _numbers_per_draw(self):
+        return 1
+
+    def _names_per_draw(self):
+        return 1
+
+    def _names_from_input(self):
+        return []
+
+
+class _AppConfigFalso:
+    def __init__(self, engine, mw):
+        self._engine = engine
+        self._main_window = mw
+
+
+_np2 = _NaveProFalso()
+
+# Fechado: recusa configurar.
+assert integracao.configurar_sorteio(
+    _np2, {"modo": "numeros", "inicio": "1", "fim": "10"}
+)["ok"] is False
+
+_eng3 = LotteryEngine()
+_jan3 = _JanelaConfigFalsa()
+_registrar(_np2, _AppConfigFalso(_eng3, _jan3))
+
+# Números válidos: repassa (inicio, fim, por_vez).
+_res = integracao.configurar_sorteio(
+    _np2, {"modo": "numeros", "inicio": "1", "fim": "50", "por_vez": "3"})
+assert _res["ok"] is True and _jan3.chamadas[-1] == ("numeros", 1, 50, 3), _res
+
+# "por vez" fora da faixa é limitado a 1..5.
+integracao.configurar_sorteio(
+    _np2, {"modo": "numeros", "inicio": "1", "fim": "10", "por_vez": "99"})
+assert _jan3.chamadas[-1] == ("numeros", 1, 10, 5), _jan3.chamadas
+integracao.configurar_sorteio(
+    _np2, {"modo": "numeros", "inicio": "1", "fim": "10", "por_vez": "0"})
+assert _jan3.chamadas[-1] == ("numeros", 1, 10, 1), _jan3.chamadas
+
+# Faixa inválida: usa a validação do sorteio (mensagem em português).
+_res = integracao.configurar_sorteio(
+    _np2, {"modo": "numeros", "inicio": "10", "fim": "1"})
+assert _res["ok"] is False and "inicial" in _res["erro"].lower(), _res
+
+# Nomes: normaliza e repassa a lista.
+_res = integracao.configurar_sorteio(
+    _np2, {"modo": "nomes", "nomes": "Ana\nJoão, Ana\nMaria", "por_vez": "2"})
+assert _res["ok"] is True and _jan3.chamadas[-1] == (
+    "nomes", ["Ana", "João", "Maria"], 2), _res
+
+# Nomes vazio: recusa.
+_res = integracao.configurar_sorteio(_np2, {"modo": "nomes", "nomes": " \n , "})
+assert _res["ok"] is False and "nome" in _res["erro"].lower(), _res
+
+integracao._aberto.pop(id(_np2.root), None)
+
+# Os métodos de configuração vivem na janela do sorteio e mexem no motor.
+assert hasattr(MainWindow, "configurar_numeros"), "MainWindow sem configurar_numeros"
+assert hasattr(MainWindow, "configurar_nomes"), "MainWindow sem configurar_nomes"
+with open(os.path.join(_DIR_SORTEIO, "main_window.py"), encoding="utf-8") as _f_mwc:
+    _fonte_mwc = _f_mwc.read()
+assert "self._engine.configure(int(inicio), int(fim))" in _fonte_mwc, (
+    "configurar_numeros não deixa o motor pronto para o celular"
+)
+assert "self._engine.configure_names(nomes)" in _fonte_mwc, (
+    "configurar_nomes não deixa o motor pronto para o celular"
+)
+
 print("OK test_sorteio")

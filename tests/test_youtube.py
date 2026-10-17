@@ -213,5 +213,51 @@ checar("título do YouTube não usa mais a regra de busca (_usou_titulo_como_bus
 checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
        "item.get('youtube_url')" in _fonte_app)
 
+# ── 8. Item YouTube no controle remoto (_remoto_resolver_item) ────────
+# O editor do celular marca a caixinha "Vídeo do YouTube" sob o tipo Vídeo e
+# envia tipo='youtube' + youtube_url. A resolução sem Tk precisa aceitar esse
+# tipo, validar a URL e não guardar caminho em disco — espelhando o desktop.
+
+
+def _extrair_metodo_app(classe, metodo, ns):
+    _no = ast.parse(_fonte_app)
+    for _n in ast.walk(_no):
+        if isinstance(_n, ast.ClassDef) and _n.name == classe:
+            for _sub in _n.body:
+                if isinstance(_sub, ast.FunctionDef) and _sub.name == metodo:
+                    _mod = ast.Module(body=[_sub], type_ignores=[])
+                    ast.fix_missing_locations(_mod)
+                    exec(compile(_mod, f"<{classe}.{metodo}>", "exec"), ns)
+                    return ns[metodo]
+    raise AssertionError(f"{classe}.{metodo} não encontrada")
+
+
+_resolver = _extrair_metodo_app("AppInterface", "_remoto_resolver_item",
+                                {"os": os, "_eh_url": _eh_url})
+
+_ok, _err, _campos = _resolver(None, {
+    "tipo": "youtube", "youtube_url": "https://youtu.be/abc123"})
+checar("remoto: item YouTube é aceito", _ok and not _err)
+checar("remoto: tipo do item vira 'youtube'", _campos.get("tipo") == "youtube")
+checar("remoto: a URL é guardada em youtube_url",
+       _campos.get("youtube_url") == "https://youtu.be/abc123")
+checar("remoto: item YouTube não guarda caminho de arquivo",
+       _campos.get("caminho_arquivo") == "")
+checar("remoto: sem título, a URL vira o rótulo",
+       _campos.get("titulo_custom") == "https://youtu.be/abc123")
+
+_ok, _err, _campos = _resolver(None, {
+    "tipo": "youtube", "youtube_url": "https://youtu.be/abc123",
+    "titulo": "Culto ao vivo"})
+checar("remoto: título digitado é preservado no YouTube",
+       _campos.get("titulo_custom") == "Culto ao vivo")
+
+_ok, _err, _campos = _resolver(None, {"tipo": "youtube", "youtube_url": ""})
+checar("remoto: YouTube sem URL é recusado", not _ok and "URL" in _err)
+
+_ok, _err, _campos = _resolver(None, {"tipo": "slide"})
+checar("remoto: item comum também ganha a chave youtube_url (vazia)",
+       _ok and _campos.get("youtube_url") == "")
+
 print("OK" if not falhas else f"\n{falhas} falha(s)")
 sys.exit(1 if falhas else 0)

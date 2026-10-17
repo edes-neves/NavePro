@@ -37,6 +37,10 @@ _ACOES_POST_REMOTO: dict = {
     '/api/remoto/servico_item': 'servico_item',
     '/api/remoto/medidor': 'medidor',
     '/api/remoto/tamanho': 'tamanho',
+    '/api/remoto/sorteio/abrir': 'sorteio_abrir',
+    '/api/remoto/sorteio/configurar': 'sorteio_configurar',
+    '/api/remoto/sorteio/sortear': 'sorteio_sortear',
+    '/api/remoto/sorteio/reiniciar': 'sorteio_reiniciar',
 }
 
 # Limites do parser HTTP: evitam memória ilimitada com cabeçalho/corpo
@@ -383,6 +387,8 @@ class ServidorAsyncHTTP:
             return ('listar_servicos', {})
         if path == '/api/remoto/servico_itens':
             return ('servico_itens', {'servico': params.get('servico', '')})
+        if path == '/api/remoto/sorteio':
+            return ('sorteio_estado', {})
         raise KeyError(path)
 
     def _executar_remoto(self, acao: str, dados: dict) -> bytes:

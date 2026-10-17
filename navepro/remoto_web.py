@@ -25,7 +25,12 @@ A API usada (tudo com o header `X-Token`):
   POST /api/remoto/servico     → {id, item?}
   POST /api/remoto/servico_item→ {operacao: add|editar|apagar|mover, servico, ...}
   POST /api/remoto/medidor     → {qual, acao, seg?, titulo?}
-  POST /api/remoto/tamanho     → {qual, acao}"""
+  POST /api/remoto/tamanho     → {qual, acao}
+  GET  /api/remoto/sorteio     → estado e configuração do Sorteio
+  POST /api/remoto/sorteio/abrir      → abre o Sorteio
+  POST /api/remoto/sorteio/configurar → {modo, inicio, fim, nomes, por_vez}
+  POST /api/remoto/sorteio/sortear    → próximo sorteio
+  POST /api/remoto/sorteio/reiniciar  → limpa os sorteados"""
 
 _REMOTO_CSS = """
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -75,10 +80,12 @@ _REMOTO_CSS = """
   .btn.vermelho { background: #da3633; }
   .btn.verde { background: #238636; }
   .btn.mini { flex: 0 0 auto; padding: 9px 14px; font-size: 14px; }
-  input, select {
+  .btn.on { background: #6e40c9; }
+  input, select, textarea {
     width: 100%; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
     border-radius: 8px; padding: 12px; font-size: 16px; margin-bottom: 8px;
   }
+  textarea { resize: vertical; min-height: 96px; font-family: inherit; }
   .linha input, .linha select {
     width: auto; flex: 1 1 auto; margin-bottom: 0;
   }
@@ -161,6 +168,7 @@ document.getElementById('abas').addEventListener('click', function(e) {
   [].forEach.call(document.querySelectorAll('section'), function(x) { x.classList.remove('on'); });
   b.classList.add('on');
   document.getElementById('aba-' + b.dataset.aba).classList.add('on');
+  if (b.dataset.aba === 'sorteio') carregarConfigSorteio();
 });
 
 // ── Slides ──
@@ -415,7 +423,7 @@ function emojiTipo(t) {
   var m = {hino: '\U0001F3B5', versiculo: '\U0001F4D6',
            video: '\U0001F3A5', audio: '\U0001F3A7',
            slide: '\U0001F4C4', anuncio: '\U0001F4E3',
-           sermao: '\U0001F399'};
+           sermao: '\U0001F399', youtube: '\U0001F4FA'};
   return m[t] || '\u2022';
 }
 
@@ -550,6 +558,14 @@ function tipoItemMudou() {
   mostrar('painel_versiculo', t === 'versiculo');
   mostrar('painel_anuncio', t === 'anuncio');
   mostrar('painel_arquivo', t === 'video' || t === 'audio' || t === 'sermao');
+  mostrar('painel_youtube', t === 'video');
+  youtubeMudou();
+}
+
+function youtubeMudou() {
+  var marcado = document.getElementById('item_youtube').checked;
+  document.getElementById('item_youtube_url').style.display =
+    marcado ? 'block' : 'none';
 }
 
 function carregarSelectsItem() {
@@ -604,6 +620,13 @@ function abrirFormItem(item) {
     document.getElementById('item_hino').value = item.titulo || '';
   }
   document.getElementById('item_tipo').value = item ? item.tipo : 'hino';
+  // Item do YouTube: o seletor volta para "Vídeo" e a caixinha é marcada,
+  // guardando a URL — o mesmo arranjo do editor do aplicativo.
+  var ehYoutube = !!(item && item.tipo === 'youtube');
+  document.getElementById('item_youtube').checked = ehYoutube;
+  document.getElementById('item_youtube_url').value =
+    (item && item.youtube_url) || '';
+  if (ehYoutube) document.getElementById('item_tipo').value = 'video';
   tipoItemMudou();
   document.getElementById('serv_form').scrollIntoView({block: 'start'});
 }
@@ -626,6 +649,14 @@ function salvarItem() {
     caminho_arquivo: document.getElementById('item_arquivo').value.trim()
   };
   if (ITEM_EDIT_ID) dados.id = ITEM_EDIT_ID;
+  // Vídeo do YouTube: guarda a URL em vez do arquivo (como no aplicativo).
+  if (tipo === 'video' && document.getElementById('item_youtube').checked) {
+    var yurl = document.getElementById('item_youtube_url').value.trim();
+    if (!yurl) { aviso('Informe a URL do v\u00eddeo do YouTube.'); return; }
+    dados.tipo = 'youtube';
+    dados.youtube_url = yurl;
+    dados.caminho_arquivo = '';
+  }
   if (tipo === 'hino') {
     var h = document.getElementById('item_hino').value.trim();
     if (h) dados.hino = h;
@@ -688,6 +719,101 @@ function mostrarMedidor(m) {
     fmtContagem(m.contagem.restante || 0);
 }
 
+// ── Sorteio ──
+function mostrarSorteio(j) {
+  if (!j || j.aberto === undefined) return;
+  var est = document.getElementById('sorteio_estado');
+  var res = document.getElementById('sorteio_resumo');
+  var sort = document.getElementById('sorteio_sorteados');
+  if (!j.aberto) {
+    est.textContent = 'fechado';
+    res.textContent = 'toque em Abrir';
+    sort.textContent = 'ningu\u00e9m';
+    return;
+  }
+  var rotulo = j.modo === 'names' ? 'nomes' : 'n\u00fameros';
+  est.textContent = j.concluido ? 'conclu\u00eddo'
+    : (j.pronto ? 'pronto' : 'em andamento');
+  res.textContent = rotulo + ': ' + (j.sorteados || []).length + '/' + j.total +
+    ' \u00b7 restam ' + j.restantes;
+  sort.textContent = (j.sorteados && j.sorteados.length)
+    ? j.sorteados.join(' \u00b7 ') : 'ningu\u00e9m';
+}
+
+function atualizarSorteio() {
+  if (!document.getElementById('aba-sorteio').classList.contains('on')) return;
+  apiGet('/api/remoto/sorteio').then(mostrarSorteio).catch(function() {});
+}
+
+function sorteioAbrir() {
+  apiPost('/api/remoto/sorteio/abrir', {}).then(function(j) {
+    if (j.ok) aviso('Sorteio aberto', '#238636');
+    carregarConfigSorteio();
+  });
+}
+
+function sorteioSortear() {
+  apiPost('/api/remoto/sorteio/sortear', {}).then(function(j) {
+    if (j.ok) aviso('Sorteado!', '#238636');
+    atualizarSorteio();
+  });
+}
+
+function sorteioReiniciar() {
+  if (!confirm('Reiniciar o sorteio (limpa os sorteados)?')) return;
+  apiPost('/api/remoto/sorteio/reiniciar', {}).then(function(j) {
+    if (j.ok) aviso('Sorteio reiniciado', '#238636');
+    atualizarSorteio();
+  });
+}
+
+var SORTEIO_MODO = 'numbers';
+function sorteioModo(m) {
+  SORTEIO_MODO = m;
+  document.getElementById('sor_panel_numeros').style.display =
+    m === 'numbers' ? 'block' : 'none';
+  document.getElementById('sor_panel_nomes').style.display =
+    m === 'names' ? 'block' : 'none';
+  document.getElementById('sor_btn_numeros').classList.toggle('on', m === 'numbers');
+  document.getElementById('sor_btn_nomes').classList.toggle('on', m === 'names');
+}
+
+function carregarConfigSorteio() {
+  apiGet('/api/remoto/sorteio').then(function(j) {
+    if (!j || j.aberto === undefined) return;
+    mostrarSorteio(j);
+    if (!j.aberto) return;
+    var c = j.config || {};
+    sorteioModo(j.modo === 'names' ? 'names' : 'numbers');
+    if (j.modo === 'names') {
+      document.getElementById('sor_nomes').value =
+        (c.nomes || []).join(String.fromCharCode(10));
+      document.getElementById('sor_por_vez_nomes').value = String(c.por_vez || 1);
+    } else {
+      if (c.inicio) document.getElementById('sor_inicio').value = c.inicio;
+      if (c.fim) document.getElementById('sor_fim').value = c.fim;
+      document.getElementById('sor_por_vez').value = String(c.por_vez || 1);
+    }
+  }).catch(function() {});
+}
+
+function configurarSorteio() {
+  var dados = {modo: SORTEIO_MODO === 'names' ? 'nomes' : 'numeros'};
+  if (SORTEIO_MODO === 'names') {
+    dados.nomes = document.getElementById('sor_nomes').value;
+    dados.por_vez = parseInt(document.getElementById('sor_por_vez_nomes').value, 10) || 1;
+    if (!dados.nomes.trim()) { aviso('Digite ao menos um nome.'); return; }
+  } else {
+    dados.inicio = document.getElementById('sor_inicio').value.trim();
+    dados.fim = document.getElementById('sor_fim').value.trim();
+    dados.por_vez = parseInt(document.getElementById('sor_por_vez').value, 10) || 1;
+  }
+  apiPost('/api/remoto/sorteio/configurar', dados).then(function(j) {
+    if (j.ok) aviso('Sorteio configurado', '#238636');
+    mostrarSorteio(j);
+  });
+}
+
 // ── Estado geral (polling) ──
 function esc(s) {
   return String(s == null ? '' : s)
@@ -746,6 +872,7 @@ function iniciar() {
   setInterval(function() {
     if (document.getElementById('aba-anuncio').classList.contains('on')) carregarAnuncios();
   }, 15000);
+  setInterval(atualizarSorteio, 4000);
 }
 
 iniciar();
@@ -773,6 +900,7 @@ PAGINA = """<!DOCTYPE html>
   <button data-aba="anuncio">&#128227; An&uacute;ncio</button>
   <button data-aba="servico">&#128203; Servi&ccedil;o</button>
   <button data-aba="medidor">&#9201; Medidor</button>
+  <button data-aba="sorteio">&#127922; Sorteio</button>
 </nav>
 
 <section id="aba-slides" class="on">
@@ -912,6 +1040,13 @@ PAGINA = """<!DOCTYPE html>
     <div id="painel_arquivo" style="display:none">
       <input id="item_arquivo" placeholder="Caminho completo do arquivo">
     </div>
+    <div id="painel_youtube" style="display:none">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:14px">
+        <input type="checkbox" id="item_youtube" onchange="youtubeMudou()" style="width:auto">
+        <span>V&iacute;deo do YouTube (usar URL)</span>
+      </label>
+      <input id="item_youtube_url" placeholder="https://youtu.be/..." style="display:none">
+    </div>
     <input id="item_duracao" inputmode="numeric" placeholder="Dura&ccedil;&atilde;o (segundos, opcional)">
     <div class="linha" style="margin-top:4px">
       <button class="btn cinza" onclick="fecharFormItem()">Cancelar</button>
@@ -946,6 +1081,65 @@ PAGINA = """<!DOCTYPE html>
       <button class="btn cinza" onclick="medidor('contagem','continuar')">&#9199; Continuar</button>
       <button class="btn vermelho" onclick="medidor('contagem','encerrar')">&#9209; Encerrar</button>
     </div>
+  </div>
+</section>
+
+<section id="aba-sorteio">
+  <div class="card">
+    <h3>Configurar sorteio</h3>
+    <div class="linha">
+      <button class="btn on" id="sor_btn_numeros" onclick="sorteioModo('numbers')">&#128290; N&uacute;meros</button>
+      <button class="btn" id="sor_btn_nomes" onclick="sorteioModo('names')">&#128101; Nomes</button>
+    </div>
+    <div id="sor_panel_numeros" style="margin-top:8px">
+      <div class="linha">
+        <span class="pill">De</span>
+        <input id="sor_inicio" inputmode="numeric" placeholder="1">
+        <span class="pill">At&eacute;</span>
+        <input id="sor_fim" inputmode="numeric" placeholder="100">
+      </div>
+      <div class="linha" style="margin-top:8px">
+        <span class="pill">Por vez</span>
+        <select id="sor_por_vez">
+          <option value="1">1</option><option value="2">2</option>
+          <option value="3">3</option><option value="4">4</option>
+          <option value="5">5</option>
+        </select>
+      </div>
+    </div>
+    <div id="sor_panel_nomes" style="display:none;margin-top:8px">
+      <textarea id="sor_nomes" rows="6" placeholder="Um nome por linha"></textarea>
+      <div class="linha">
+        <span class="pill">Por vez</span>
+        <select id="sor_por_vez_nomes">
+          <option value="1">1</option><option value="2">2</option>
+          <option value="3">3</option><option value="4">4</option>
+          <option value="5">5</option>
+        </select>
+      </div>
+    </div>
+    <div class="linha" style="margin-top:10px">
+      <button class="btn verde" onclick="configurarSorteio()">&#128190; Configurar</button>
+    </div>
+    <div class="linha" style="margin-top:4px">
+      <span class="pill">Configurar reinicia o sorteio (zera os sorteados).</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Sorteio</h3>
+    <div class="grande" id="sorteio_estado">fechado</div>
+    <div class="linha" style="margin-top:8px">
+      <span class="pill" id="sorteio_resumo">-</span>
+    </div>
+    <div class="linha" style="margin-top:10px">
+      <button class="btn verde" onclick="sorteioAbrir()">&#127922; Abrir</button>
+      <button class="btn" onclick="sorteioSortear()">&#127922; Sortear</button>
+      <button class="btn vermelho" onclick="sorteioReiniciar()">&#8634; Reiniciar</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Sorteados</h3>
+    <div id="sorteio_sorteados" class="vazio">ningu&eacute;m</div>
   </div>
 </section>
 

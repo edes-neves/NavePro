@@ -1712,6 +1712,8 @@ class AppInterface:
                     for s in servicos]}
             if acao == 'servico_itens':
                 return self._remoto_servico_itens(dados)
+            if acao == 'sorteio_estado':
+                return self._remoto_sorteio_estado()
             # ── Ações (POST) ──
             if acao == 'slide':
                 return self._remoto_slide(str(dados.get('acao') or ''))
@@ -1734,10 +1736,44 @@ class AppInterface:
                 return self._remoto_servico_item(dados)
             if acao == 'medidor':
                 return self._remoto_medidor(dados)
+            if acao == 'sorteio_abrir':
+                return self._remoto_sorteio_abrir()
+            if acao == 'sorteio_configurar':
+                return self._remoto_sorteio_configurar(dados)
+            if acao == 'sorteio_sortear':
+                return self._remoto_sorteio_sortear()
+            if acao == 'sorteio_reiniciar':
+                return self._remoto_sorteio_reiniciar()
             return {'ok': False, 'erro': f'Ação desconhecida: {acao}'}
         except Exception as exc:  # noqa: BLE001 — vira JSON de erro
             log.exception(f"❌ Erro na ação remota '{acao}': {exc}")
             return {'ok': False, 'erro': str(exc) or type(exc).__name__}
+
+    def _remoto_sorteio_estado(self) -> dict:
+        """Estado do Sorteio Profissional (para o controle remoto)."""
+        from navepro.sorteio.integracao import estado_sorteio
+        return {'ok': True, **estado_sorteio(self)}
+
+    def _remoto_sorteio_abrir(self) -> dict:
+        """Abre (ou traz para frente) a janela do Sorteio pelo celular."""
+        from navepro.sorteio.integracao import estado_sorteio
+        self.abrir_sorteio()
+        return {'ok': True, **estado_sorteio(self)}
+
+    def _remoto_sorteio_configurar(self, dados: dict) -> dict:
+        """Configura o sorteio (faixa/nomes) pelo celular."""
+        from navepro.sorteio.integracao import configurar_sorteio
+        return configurar_sorteio(self, dados)
+
+    def _remoto_sorteio_sortear(self) -> dict:
+        """Faz o próximo sorteio pelo celular (via janela do operador)."""
+        from navepro.sorteio.integracao import sortear
+        return sortear(self)
+
+    def _remoto_sorteio_reiniciar(self) -> dict:
+        """Limpa/reinicia o sorteio pelo celular."""
+        from navepro.sorteio.integracao import reiniciar
+        return reiniciar(self)
 
     def _remoto_estado(self) -> dict:
         """Snapshot do estado do app para a tela do celular."""
@@ -2071,13 +2107,14 @@ class AppInterface:
                 'duracao': item.get('duracao_estimada_segundos') or 0,
                 'detalhe': detalhe,
                 'caminho_arquivo': item.get('caminho_arquivo') or '',
+                'youtube_url': item.get('youtube_url') or '',
                 'ref': ref}
 
     def _remoto_resolver_item(self, dados: dict) -> tuple:
         """Resolve um item da Ordem de Serviço vindo do celular.
 
         Replica, sem Tk, a lógica da janela "Adicionar Item" do aplicativo
-        (hino/versículo/vídeo/áudio/sermão/anúncio/slide). Retorna
+        (hino/versículo/vídeo/áudio/sermão/anúncio/slide/youtube). Retorna
         (ok, msg_erro, campos), já com as chaves prontas para gravar em
         servicos.json (inclui 'versiculos' quando for uma faixa).
         """
@@ -2085,12 +2122,13 @@ class AppInterface:
         titulo = str(dados.get('titulo') or '').strip()
         termo = str(dados.get('termo') or '').strip()
         caminho_arquivo = str(dados.get('caminho_arquivo') or '').strip()
+        youtube_url = str(dados.get('youtube_url') or '').strip()
         try:
             duracao = int(dados.get('duracao') or 0)
         except (TypeError, ValueError):
             duracao = 0
         if tipo not in ('hino', 'versiculo', 'video', 'audio', 'slide',
-                        'anuncio', 'sermao'):
+                        'anuncio', 'sermao', 'youtube'):
             return (False, f'Tipo de item inválido: "{tipo}".', {})
         if tipo not in ('video', 'audio', 'sermao'):
             caminho_arquivo = ''
@@ -2148,6 +2186,14 @@ class AppInterface:
             ref_id = m.get('id')
             if not titulo or _usou_titulo_como_busca:
                 titulo = m.get('nome_exibicao', '') or f'Item ({tipo.title()})'
+        elif tipo == 'youtube':
+            if not _eh_url(youtube_url):
+                return (False,
+                        'Informe a URL do vídeo (começando com http:// ou '
+                        'https://).', {})
+            caminho_arquivo = ''
+            if not titulo:
+                titulo = youtube_url or f'Item ({tipo.title()})'
         elif tipo == 'sermao':
             return (False, 'Informe o caminho do arquivo do sermão.', {})
         elif tipo == 'anuncio' and _usou_painel_anuncio:
@@ -2231,6 +2277,7 @@ class AppInterface:
             'titulo_custom': titulo,
             'letra_snapshot': letra_snap,
             'caminho_arquivo': caminho_arquivo,
+            'youtube_url': youtube_url,
             'duracao_estimada_segundos': duracao,
         }
         if vers_salvos:
