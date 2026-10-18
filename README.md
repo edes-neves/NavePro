@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.1.7.AppImage
-   ./NavePro-2.1.7.AppImage
+   chmod +x NavePro-2.1.8.AppImage
+   ./NavePro-2.1.8.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.7          # gera NavePro-2.1.7.AppImage
+./build.sh 2.1.8          # gera NavePro-2.1.8.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -352,7 +352,7 @@ do projeto quando existe e exige Tk 8.6. Passo a passo detalhado: `Gerar.AppImag
 ### Build e instalação local do Flatpak (Linux)
 
 ```bash
-# pré-requisito: flatpak + flatpak-builder + runtime 24.08 (ver build-flatpak.sh)
+# pré-requisito: flatpak + flatpak-builder + runtime 25.08 (ver build-flatpak.sh)
 ./build-flatpak.sh            # gera io.github.edes_neves.NavePro.<arch>.flatpak
 ./build-flatpak.sh --install  # também instala no usuário
 ```
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.1.7
+   ./build.sh 2.1.8
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.1.7: ..."
-   git tag v2.1.7
-   git push origin main v2.1.7
+   git add -A && git commit -m "NavePro 2.1.8: ..."
+   git tag v2.1.8
+   git push origin main v2.1.8
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.1.7 NavePro-2.1.7.AppImage \
-     --title "NavePro 2.1.7" --notes "O que mudou nesta versão..."
+   gh release create v2.1.8 NavePro-2.1.8.AppImage \
+     --title "NavePro 2.1.8" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -536,6 +536,25 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.1.8
+
+- **Controle remoto pelo celular ganhou mais abas**: **YouTube** e **Sorteio**,
+  com botão **Fechar** no sorteio e **combos** (livros/capítulos/versículos) na
+  Bíblia.
+- **Aba Bíblia projeta sozinha**: ao escolher livro e capítulo e preencher o
+  **V:**, o versículo já vai para o telão (sem botão) e navega com
+  **◀ Anterior** / **▶ Próximo** — o ▶ Próximo encerra e volta ao relógio ao
+  passar do último versículo, como nos Slides.
+- **Campo "V:" com um número** (ex.: `17`) projeta **somente** aquele versículo;
+  faixas (`9-16`) seguem inclusivas e o campo vazio projeta o capítulo inteiro.
+- **Flatpak**: o **fade de áudio** (play/pausar/parar) passa a funcionar
+  **também dentro do sandbox** (o volume é controlado no player do host) e o
+  runtime foi atualizado para **25.08** — fim do aviso *"parou de receber
+  atualizações"* nos gerenciadores de programas.
+- Correções: leitura de respostas HTTP maiores no servidor embutido,
+  endurecimento do servidor e versionamento do esquema do banco (evita perda de
+  dados em migração que falha).
 
 ### 2.1.7
 

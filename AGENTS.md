@@ -137,7 +137,7 @@ icones/                    # PNGs dos botões (fallback; gerados por gerar_icone
   mpv/SMPlayer abrem sem `--fullscreen` e são posicionados via Win32.
 - **Flatpak:** manifest com `finish-args` que dão acesso a `~/.navepro`, players do
   host (`--filesystem=host-os`, `flatpak-spawn`) e D-Bus MPRIS (mpv/smplayer/vlc.
-  Runtime `org.freedesktop.Platform//24.08` — o Tcl/Tk é construído no build (8.6.15).
+  Runtime `org.freedesktop.Platform//25.08` — o Tcl/Tk é construído no build (8.6.15).
 - **Repositório Flatpak oficial** é auto-hospedado (GitHub Pages) e **não assinado**:
   os usuários adicionam com `flatpak remote-add --user --no-gpg-verify navepro https://edes-neves.github.io/NavePro/`.
 

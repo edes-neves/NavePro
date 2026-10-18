@@ -49,8 +49,9 @@ log = get_logger("mediaplayer")
 # ── Fade de áudio (Play/Pausar/Parar) ────────────────────────────────
 # Ao começar/retomar, o som sobe de 0 até o volume devagar; ao pausar/parar,
 # desce de volta a 0. É "best-effort": só age onde já controlamos o player
-# (IPC do mpv no Windows, D-Bus/MPRIS no Linux fora do Flatpak). Sem esse
-# controle, nada muda — o comportamento antigo (parar/pausar na hora) segue.
+# (IPC do mpv no Windows e D-Bus/MPRIS no Linux — direto no AppImage e pelo
+# host no Flatpak). Sem esse controle, nada muda — o comportamento antigo
+# (parar/pausar na hora) segue.
 _FADE_AUDIO_SEGUNDOS = 1.2
 _FADE_AUDIO_PASSOS = 30
 # Ao iniciar uma faixa, o player leva um instante para aparecer no barramento
@@ -892,15 +893,18 @@ class MediaPlayer:
         """(tipo, destino) para controlar o volume do player em uso, ou None.
 
         Só onde já controlamos o player: IPC do mpv no Windows e D-Bus/MPRIS
-        no Linux fora do Flatpak. Dentro do Flatpak, não: o player roda no
-        host e, pausado, fica congelado (SIGSTOP) — mexer no volume ali só
-        travaria a interface à espera de um D-Bus que não responde.
+        no Linux. No Flatpak o player roda no HOST e, pausado, fica congelado
+        (SIGSTOP); por isso o volume vai por `flatpak-spawn --host`
+        ("mpris-host"), que fala com o barramento da sessão do host em vez do
+        barramento filtrado do sandbox (ali os MÉTODOS não são confiáveis).
         """
         if _eh_windows():
             return ("mpv", None) if self._ipc_mpv_disponivel() else None
-        if _eh_linux() and not _eh_flatpak():
+        if _eh_linux():
             dest = mpris_ativo(self._candidatos_mpris())
-            return ("mpris", dest) if dest else None
+            if not dest:
+                return None
+            return ("mpris-host", dest) if _eh_flatpak() else ("mpris", dest)
         return None
 
     def _ler_volume(self, canal) -> float | None:
@@ -914,6 +918,8 @@ class MediaPlayer:
             if isinstance(valor, (int, float)):
                 return max(0.0, min(1.0, float(valor) / 100.0))
             return None
+        if tipo == "mpris-host":
+            return mpris_obter_volume(dest, timeout=0.6, host=True)
         return mpris_obter_volume(dest, timeout=0.6)
 
     def _escrever_volume(self, canal, valor: float) -> bool:
@@ -927,6 +933,8 @@ class MediaPlayer:
                 return bool(ok)
             except Exception:
                 return False
+        if tipo == "mpris-host":
+            return mpris_definir_volume(dest, valor, timeout=0.6, host=True)
         return mpris_definir_volume(dest, valor, timeout=0.6)
 
     def obter_volume(self) -> float | None:

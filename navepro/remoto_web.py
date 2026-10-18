@@ -140,7 +140,7 @@ function apiGet(path) {
   });
 }
 
-function apiPost(path, dados) {
+function apiPost(path, dados, silencioso) {
   return fetch(rota(path), {
     method: 'POST',
     headers: {'X-Token': TOKEN, 'Content-Type': 'application/json'},
@@ -149,7 +149,7 @@ function apiPost(path, dados) {
     if (r.status === 403) { pedirToken(); throw new Error('sem token'); }
     return r.json();
   }).then(function(j) {
-    if (j && j.ok === false && j.erro) aviso(j.erro);
+    if (j && j.ok === false && j.erro && !silencioso) aviso(j.erro);
     return j;
   });
 }
@@ -323,18 +323,45 @@ document.getElementById('bib_versao').addEventListener('change', carregarOpcoesB
 document.getElementById('bib_livro').addEventListener('change', carregarOpcoesBiblia);
 document.getElementById('bib_cap').addEventListener('change', carregarOpcoesBiblia);
 
+// ── Projeção automática ao escolher a referência ──
+// Terminar de escolher livro/capítulo/versículo já projeta no telão e
+// atualiza a lista, sem precisar tocar em botão (os botões da aba viram
+// ◀ Anterior / ▶ Próximo). O atraso de 600 ms evita projetar a cada tecla.
+var _bibTimer = null;
+function autoBiblia() {
+  clearTimeout(_bibTimer);
+  _bibTimer = setTimeout(function() {
+    var livro = document.getElementById('bib_livro').value;
+    var cap = document.getElementById('bib_cap').value.trim();
+    var vers = document.getElementById('bib_vers').value.trim();
+    // Só projeta com capítulo numérico e "V:" preenchido e completo:
+    // "17" ou "1-7"/"1 - 7"; vazio ou "1-" (incompleto) são ignorados.
+    if (!livro || !/^[0-9]+$/.test(cap)) return;
+    if (!vers || (!/^[0-9]+$/.test(vers) && !/^[0-9]+ *- *[0-9]+$/.test(vers))) return;
+    projetarBibliaRef(null, true);
+    buscarBibliaRef();
+  }, 600);
+}
+['bib_versao', 'bib_livro', 'bib_cap', 'bib_vers'].forEach(function(id) {
+  var el = document.getElementById(id);
+  el.addEventListener('input', autoBiblia);
+  el.addEventListener('change', autoBiblia);
+});
+
 // Projeta por referência (livro + Cap + V:), versículo a versículo.
 // Sem `vers`, usa o campo "V:"; com `vers`, começa naquele versículo.
-function projetarBibliaRef(vers) {
+// `silencioso` (usado pela projeção automática) evita o aviso na tela.
+function projetarBibliaRef(vers, silencioso) {
   var v = document.getElementById('bib_versao').value;
   var livro = document.getElementById('bib_livro').value;
   var cap = document.getElementById('bib_cap').value.trim();
   var versTxt = (vers != null) ? String(vers)
                                : document.getElementById('bib_vers').value.trim();
-  if (!livro || !cap) { aviso('Informe livro e capítulo'); return; }
-  apiPost('/api/remoto/biblia', {versao: v, livro: livro, cap: cap, vers: versTxt})
+  if (!livro || !cap) { if (!silencioso) aviso('Informe livro e capítulo'); return; }
+  apiPost('/api/remoto/biblia', {versao: v, livro: livro, cap: cap, vers: versTxt},
+          silencioso)
     .then(function(j) {
-      if (j.ok) aviso('Projetado: ' + (j.primeiro || ''), '#238636');
+      if (j.ok && !silencioso) aviso('Projetado: ' + (j.primeiro || ''), '#238636');
       atualizarEstado();
     });
 }
@@ -1015,12 +1042,16 @@ PAGINA = """<!DOCTYPE html>
       <input id="bib_cap" list="bib_cap_opcoes" inputmode="numeric" placeholder="3" style="max-width:80px">
       <datalist id="bib_cap_opcoes"></datalist>
       <span class="pill">V:</span>
-      <input id="bib_vers" list="bib_vers_opcoes" inputmode="numeric" placeholder="16 (ou 1-7; vazio = cap.)">
+      <input id="bib_vers" list="bib_vers_opcoes" inputmode="numeric" placeholder="16 (ou 1-7)">
       <datalist id="bib_vers_opcoes"></datalist>
     </div>
     <div class="linha" style="margin-top:8px">
-      <button class="btn" onclick="buscarBibliaRef()">&#128269; Buscar</button>
-      <button class="btn verde" onclick="projetarBibliaRef()">&#128250; Projetar</button>
+      <button class="btn" onclick="slide('ant')">&#9664; Anterior</button>
+      <button class="btn verde" onclick="slide('prox')">&#9654; Pr&oacute;ximo</button>
+    </div>
+    <div style="color:#8b949e;font-size:13px;margin-top:6px">
+      Preencha o vers&iacute;culo (V:): a proje&ccedil;&atilde;o come&ccedil;a sozinha.
+      No fim da faixa, &#9654; Pr&oacute;ximo encerra e volta ao rel&oacute;gio.
     </div>
   </div>
   <div class="card">

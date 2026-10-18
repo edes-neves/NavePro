@@ -40,6 +40,17 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.8" date="2026-10-18">
+      <description>
+        <ul>
+          <li>Controle remoto pelo celular com novas abas YouTube e Sorteio, botão Fechar no sorteio e combos de livros/capítulos/versículos na Bíblia</li>
+          <li>Aba Bíblia projeta sozinha ao preencher o V: e navega com Anterior/Próximo (o Próximo encerra e volta ao relógio no fim, como nos Slides)</li>
+          <li>Campo "V:" com um único número (ex.: 17) projeta somente aquele versículo</li>
+          <li>Flatpak: o fade de áudio (play/pausar/parar) passa a funcionar também dentro do sandbox e o runtime foi atualizado para 25.08 (fim do aviso de "sem atualizações")</li>
+          <li>Correções: leitura de respostas HTTP grandes no servidor embutido, endurecimento do servidor e versionamento do esquema do banco</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.7" date="2026-10-15">
       <description>
         <ul>

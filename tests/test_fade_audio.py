@@ -7,7 +7,7 @@ antigo (pausar/parar na hora) precisa continuar idêntico. Esta suíte trava:
 
   - o formato do Volume no MPRIS (`Properties.Set` com `variant:double:`);
   - o volume do mpv por IPC (`set_property volume` 0-100);
-  - `_canal_volume` não mexe no Flatpak (player congelado no host);
+  - `_canal_volume` usa o host no Flatpak (mpris-host) e MPRIS direto fora;
   - o fade desce/some até o alvo e só então roda o `depois` (pausar/parar);
   - um fade novo cancela o anterior (só o mais recente age);
   - retomar toca do 0 e sobe; pausar desce e devolve o volume (o smplayer
@@ -98,6 +98,23 @@ try:
 finally:
     player_mod.subprocess.run = _orig_run
 
+# No Flatpak o volume vai pelo HOST: flatpak-spawn --host + barramento do host.
+try:
+    chamadas = []
+    player_mod.subprocess.run = lambda cmd, **kw: (chamadas.append(cmd), _Resp(0, ''))[1]
+    player_mod.mpris_definir_volume(
+        'org.mpris.MediaPlayer2.smplayer', 0.5, host=True)
+    cmd_host = chamadas[-1]
+    check('MPRIS no host usa flatpak-spawn --host',
+          cmd_host[0] == 'flatpak-spawn' and '--host' in cmd_host, str(cmd_host[:3]))
+    check('MPRIS no host aponta o barramento da sessão do host',
+          any(a.startswith('--env=DBUS_SESSION_BUS_ADDRESS=') for a in cmd_host))
+    check('MPRIS no host mantém o Set de Volume',
+          'org.freedesktop.DBus.Properties.Set' in cmd_host
+          and 'variant:double:0.500' in cmd_host)
+finally:
+    player_mod.subprocess.run = _orig_run
+
 # mpris_obter_volume: resposta sem double / erro → None
 try:
     player_mod.subprocess.run = lambda cmd, **kw: _Resp(
@@ -140,7 +157,33 @@ check('mpv: volume 0 vira 0 (não "0.0")',
       obj._ipc.cmds[-1][1] == ["set_property", "volume", 0],
       str(obj._ipc.cmds[-1]))
 
-# ── 3) _canal_volume: só onde já controlamos, nunca no Flatpak ─────────
+# ── 2b) canal "mpris-host" (Flatpak): lê/escreve pelo host ─────────────
+ns_host = _extrair('_ler_volume', '_escrever_volume')
+chamadas_host = []
+
+
+def _obter_host(dest, timeout=1.0, host=False):
+    chamadas_host.append(('get', dest, host))
+    return 0.5
+
+
+def _definir_host(dest, valor, timeout=1.0, host=False):
+    chamadas_host.append(('set', dest, host, round(valor, 3)))
+    return True
+
+
+ns_host['mpris_obter_volume'] = _obter_host
+ns_host['mpris_definir_volume'] = _definir_host
+obj_host = types.SimpleNamespace()
+_ligar(obj_host, ns_host, '_ler_volume', '_escrever_volume')
+check('mpris-host: _ler_volume lê pelo host',
+      obj_host._ler_volume(("mpris-host", 'd')) == 0.5
+      and chamadas_host[-1] == ('get', 'd', True), str(chamadas_host[-1]))
+obj_host._escrever_volume(("mpris-host", 'd'), 0.5)
+check('mpris-host: _escrever_volume escreve pelo host',
+      chamadas_host[-1] == ('set', 'd', True, 0.5), str(chamadas_host[-1]))
+
+# ── 3) _canal_volume: onde já controlamos (Flatpak vai pelo host) ──────
 ns_canal = _extrair('_canal_volume', '_candidatos_mpris')
 
 
@@ -160,8 +203,10 @@ check('canal: Linux não-Flatpak com MPRIS vivo',
       _canal(linux=True, mpris_dest='org.mpris.MediaPlayer2.smplayer')
       == ("mpris", 'org.mpris.MediaPlayer2.smplayer'))
 check('canal: Linux sem MPRIS → None', _canal(linux=True) is None)
-check('canal: Flatpak NUNCA mexe no volume', _canal(
-    linux=True, flatpak=True, mpris_dest='org.mpris.MediaPlayer2.smplayer') is None)
+check('canal: Flatpak com MPRIS vivo → canal do host ("mpris-host")', _canal(
+    linux=True, flatpak=True, mpris_dest='org.mpris.MediaPlayer2.smplayer')
+    == ("mpris-host", 'org.mpris.MediaPlayer2.smplayer'))
+check('canal: Flatpak sem MPRIS → None', _canal(linux=True, flatpak=True) is None)
 check('canal: Windows com IPC → ("mpv", None)',
       _canal(win=True, ipc=True) == ("mpv", None))
 check('canal: Windows sem IPC → None', _canal(win=True, ipc=False) is None)
@@ -373,11 +418,12 @@ check('parar_agora: cancela o fade ANTES de parar',
 
 # ── 8) Invariantes estruturais ─────────────────────────────────────────
 fonte_nv = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
-check('_canal_volume não mexe no Flatpak (guarda _eh_flatpak)',
+check('_canal_volume trata o Flatpak (usa _eh_flatpak)',
       '_eh_flatpak' in _extrair('_canal_volume')['_canal_volume'].__code__.co_names)
-seg_canal = _SRC.split('def _canal_volume')[1][:900]
-check('_canal_volume: só Linux não-Flatpak usa MPRIS',
-      'not _eh_flatpak' in seg_canal and 'mpris_ativo' in seg_canal)
+seg_canal = _SRC.split('def _canal_volume')[1][:1200]
+check('_canal_volume: Flatpak usa o canal do host (mpris-host)',
+      'mpris-host' in seg_canal and '_eh_flatpak' in seg_canal
+      and 'mpris_ativo' in seg_canal)
 seg_stop = _SRC.split('def stop')[1][:1200]
 check('stop: faz fade antes de _parar_agora',
       '_fade_audio' in seg_stop and '_parar_agora' in seg_stop)

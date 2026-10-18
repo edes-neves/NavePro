@@ -645,6 +645,34 @@ def destino_mpris(comando: str) -> str | None:
     return MPRIS_DESTS.get(base)
 
 
+def _endereco_bus_host() -> str:
+    """Endereço do barramento de sessão do HOST (fora do sandbox).
+
+    Dentro do Flatpak o DBUS_SESSION_BUS_ADDRESS aponta para o barramento
+    filtrado do próprio sandbox; ao rodar um comando no host com
+    `flatpak-spawn --host`, esse caminho não existe lá. O barramento real
+    fica em XDG_RUNTIME_DIR/bus (no Flatpak, o XDG_RUNTIME_DIR já é o
+    /run/user/<uid> do host).
+    """
+    base = os.environ.get('XDG_RUNTIME_DIR') or f"/run/user/{os.getuid()}"
+    return f"unix:path={base}/bus"
+
+
+def _comando_dbus(host: bool) -> list[str]:
+    """Argumentos-base do dbus-send, no host (Flatpak) ou no sandbox.
+
+    Dentro do Flatpak o player roda no HOST e o barramento do sandbox não
+    entrega os MÉTODOS de forma confiável. Rodando o dbus-send no host, via
+    `flatpak-spawn --host`, o fade controla o volume do player real — o
+    endereço do barramento é repassado porque o do sandbox não vale lá.
+    """
+    if not host:
+        return ['dbus-send']
+    return ['flatpak-spawn', '--host',
+            f'--env=DBUS_SESSION_BUS_ADDRESS={_endereco_bus_host()}',
+            'dbus-send']
+
+
 def mpris_status(dest: str, timeout: float = 1.0) -> str | None:
     """PlaybackStatus ('Playing'/'Paused'/'Stopped') de um nome MPRIS.
 
@@ -716,19 +744,24 @@ def mpris_ativo(destinos: list, timeout: float = 1.0) -> str | None:
     return None
 
 
-def mpris_obter_volume(dest: str, timeout: float = 1.0) -> float | None:
+def mpris_obter_volume(dest: str, timeout: float = 1.0,
+                       host: bool = False) -> float | None:
     """Volume de um destino MPRIS em 0.0-1.0, ou None se não responde.
 
     A leitura de propriedade funciona inclusive de dentro do Flatpak (só os
     MÉTODOS é que são pouco confiáveis lá). É o que permite ao fade saber de
     onde partir, em vez de assumir um valor fixo.
+
+    Com `host=True` a leitura é feita no HOST (flatpak-spawn), para falar com
+    o player que roda fora do sandbox.
     """
     try:
         resp = subprocess.run(
-            ['dbus-send', '--session', '--print-reply',
-             f'--dest={dest}', '/org/mpris/MediaPlayer2',
-             'org.freedesktop.DBus.Properties.Get',
-             'string:org.mpris.MediaPlayer2.Player', 'string:Volume'],
+            _comando_dbus(host) + [
+                '--session', '--print-reply',
+                f'--dest={dest}', '/org/mpris/MediaPlayer2',
+                'org.freedesktop.DBus.Properties.Get',
+                'string:org.mpris.MediaPlayer2.Player', 'string:Volume'],
             timeout=timeout, capture_output=True, text=True,
             env=_ambiente_sem_appimage())
     except Exception:
@@ -742,21 +775,26 @@ def mpris_obter_volume(dest: str, timeout: float = 1.0) -> float | None:
         return None
 
 
-def mpris_definir_volume(dest: str, valor: float, timeout: float = 1.0) -> bool:
+def mpris_definir_volume(dest: str, valor: float, timeout: float = 1.0,
+                         host: bool = False) -> bool:
     """Define o Volume (0.0-1.0) de um destino MPRIS. True se aplicado.
 
     Volume é propriedade padrão do MPRIS: o Set costuma valer mesmo em
     players que ignoram os métodos PlayPause. Ainda assim é best-effort — o
     chamador trata False como "não deu para controlar o volume".
+
+    Com `host=True` o Set é enviado pelo HOST (flatpak-spawn), para o player
+    que roda fora do sandbox — é o canal do fade no Flatpak.
     """
     valor = max(0.0, min(1.0, float(valor)))
     try:
         resp = subprocess.run(
-            ['dbus-send', '--session', '--type=method_call',
-             f'--dest={dest}', '/org/mpris/MediaPlayer2',
-             'org.freedesktop.DBus.Properties.Set',
-             'string:org.mpris.MediaPlayer2.Player', 'string:Volume',
-             f'variant:double:{valor:.3f}'],
+            _comando_dbus(host) + [
+                '--session', '--type=method_call',
+                f'--dest={dest}', '/org/mpris/MediaPlayer2',
+                'org.freedesktop.DBus.Properties.Set',
+                'string:org.mpris.MediaPlayer2.Player', 'string:Volume',
+                f'variant:double:{valor:.3f}'],
             timeout=timeout, capture_output=True, text=True,
             env=_ambiente_sem_appimage())
     except Exception:

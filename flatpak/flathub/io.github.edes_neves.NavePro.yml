@@ -1,6 +1,6 @@
 app-id: io.github.edes_neves.NavePro
 runtime: org.freedesktop.Platform
-runtime-version: '24.08'
+runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
 command: navepro
 separate-locales: false
@@ -61,7 +61,8 @@ modules:
         url: https://prdownloads.sourceforge.net/tcl/tk8.6.15-src.tar.gz
         sha256: 550969f35379f952b3020f3ab7b9dd5bfd11c1ef7c9b7c6a75f5c49aca793fec
 
-  # _tkinter para o Python da runtime
+  # _tkinter para o Python da runtime (commit 8e78e38 = suporte a Python 3.13;
+  # o patch devolve as libs para Tcl/Tk 8.6 — Tk 9.0 quebra as fontes)
   - name: python3-tkinter
     buildsystem: simple
     build-commands:
@@ -69,7 +70,9 @@ modules:
     sources:
       - type: git
         url: https://github.com/iwalton3/tkinter-standalone
-        commit: 4f5cfe3cdd1f58cd4e136fd66d4e5e27d21d820b
+        commit: 8e78e38ef0cceb44a3a0062e1c314a4ff3f981db
+      - type: patch
+        path: tkinter-tcl8.6.patch
 
   # Dependências Python
   - name: python-deps
@@ -108,7 +111,7 @@ modules:
       - type: git
         url: https://github.com/edes-neves/NavePro.git
         # Atualize a tag ao lançar nova versão:
-        tag: v2.1.5
+        tag: v2.1.8
       - type: file
         path: io.github.edes_neves.NavePro.desktop
       - type: file

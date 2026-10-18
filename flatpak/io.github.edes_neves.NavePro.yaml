@@ -8,16 +8,19 @@
 # x86_64, aarch64 e riscv64.
 #
 # Referências:
-#   - Runtime íns fundo Python: a runtime 24.08 inclui /usr/bin/python3
+#   - Runtime íns fundo Python: a runtime 25.08 inclui /usr/bin/python3
 #     mas NÃO inclui o módulo _tkinter.
 #   - Módulo _tkinter: https://github.com/iwalton3/tkinter-standalone
-#     (combinação comprovada no Flathub — Thonny — commit 4f5cfe3)
+#     (commit 8e78e38 = único com suporte a Python 3.13, exigido pela
+#     runtime 25.08). Ver tkinter-tcl8.6.patch.
 #   - Tcl/Tk 8.6.15 e não 9.0: o NavePro documenta que o Tk 9.0 quebra
 #     os aliases de fonte (fontconfig) — mesmo motivo do AppImage usar 8.6.
+#     Como o commit 8e78e38 passou a exigir tcl9.0/tcl9tk9.0, o patch
+#     tkinter-tcl8.6.patch devolve as bibliotecas para a série 8.6.
 
 app-id: io.github.edes_neves.NavePro
 runtime: org.freedesktop.Platform
-runtime-version: '24.08'
+runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
 command: navepro
 separate-locales: false
@@ -94,7 +97,9 @@ modules:
     sources:
       - type: git
         url: https://github.com/iwalton3/tkinter-standalone
-        commit: 4f5cfe3cdd1f58cd4e136fd66d4e5e27d21d820b
+        commit: 8e78e38ef0cceb44a3a0062e1c314a4ff3f981db
+      - type: patch
+        path: tkinter-tcl8.6.patch
 
   # ── Dependências Python (Pillow, screeninfo, pypdf) ───────────────
   - name: python-deps

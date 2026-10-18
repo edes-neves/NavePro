@@ -1,0 +1,13 @@
+# O único commit do tkinter-standalone com suporte a Python 3.13 exige
+# Tcl/Tk 9.0 (libraries = ["tcl9.0", "tcl9tk9.0"]). O NavePro precisa de
+# Tcl/Tk 8.6 (o Tk 9.0 quebra os aliases de fonte do fontconfig), entao
+# voltamos apenas as bibliotecas para a serie 8.6.
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -13,5 +13,5 @@
+ [tool.setuptools]
+ packages = ["tkinter"]
+ ext-modules = [
+-  {name = "_tkinter", sources = ["_tkinter.c"], libraries = ["tcl9.0", "tcl9tk9.0"], include-dirs = ["/app/include/", "/usr/include/python3.13/internal/"]}
++  {name = "_tkinter", sources = ["_tkinter.c"], libraries = ["tcl8.6", "tk8.6"], include-dirs = ["/app/include/", "/usr/include/python3.13/internal/"]}
+ ]
