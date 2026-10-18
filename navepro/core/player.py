@@ -654,7 +654,13 @@ def _endereco_bus_host() -> str:
     fica em XDG_RUNTIME_DIR/bus (no Flatpak, o XDG_RUNTIME_DIR já é o
     /run/user/<uid> do host).
     """
-    base = os.environ.get('XDG_RUNTIME_DIR') or f"/run/user/{os.getuid()}"
+    base = os.environ.get('XDG_RUNTIME_DIR')
+    if not base:
+        # os.getuid() é POSIX; no Windows o canal do host nem é usado, mas o
+        # fallback evita AttributeError (o subprocess.run engoliria o erro e
+        # devolveria False em silêncio).
+        getuid = getattr(os, "getuid", None)
+        base = f"/run/user/{getuid()}" if getuid else "/run/user/0"
     return f"unix:path={base}/bus"
 
 
