@@ -321,6 +321,24 @@ def reiniciar(app_interface) -> dict:
     return {"ok": True, **_estado_do_app(app)}
 
 
+def fechar_sorteio(app_interface) -> dict:
+    """Fecha a janela do Sorteio pelo controle remoto.
+
+    Usa o mesmo caminho do Esc/"Sair" da janela do operador
+    (``App._on_quit``): destrói a tela pública do telão, a janela do
+    operador e limpa o registro em ``_aberto``.
+    """
+    app = _buscar_app_aberto(app_interface)
+    if app is None:
+        return {"ok": False, "erro": "O Sorteio não está aberto."}
+    try:
+        app._on_quit()
+    except Exception as e:  # pragma: no cover - defensivo
+        log.warning("Falha ao fechar o sorteio pelo controle remoto: %s", e)
+        return {"ok": False, "erro": "Não foi possível fechar o Sorteio."}
+    return {"ok": True, **estado_sorteio(app_interface)}
+
+
 def sincronizar_tema(app_interface) -> None:
     """Aplica ao sorteio aberto o tema ativo do NavePro (chamado no toggle)."""
     root = getattr(app_interface, "root", None)

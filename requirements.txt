@@ -10,6 +10,12 @@ screeninfo>=0.7          # Detecção real de monitores (com fallback para xrand
 Pillow>=10.0.0           # Logo/ícone na interface (ImageTk)
 pypdf>=4.0.0             # Importação de anúncios em PDF (extração de texto)
 
+# ── Opcionais (Sorteio: importar lista de nomes de arquivos) ──
+# São carregados sob demanda em navepro/sorteio/name_importer.py; sem eles o
+# app funciona e o Sorteio avisa como instalar na hora de usar o formato.
+# python-docx>=1.0.0     # nomes em .docx
+# textract                # nomes em .doc legado (alternativa: antiword no sistema)
+
 # ── Build (gerar o AppImage) ──
 # https://github.com/pyinstaller/pyinstaller
 pyinstaller>=6.22.0

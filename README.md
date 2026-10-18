@@ -168,10 +168,10 @@ sozinho (Flatpak > Windows > AppImage; sem sinal de instalação, vale o AppImag
 - **Carga automática**: trocar versão/livro/capítulo recarrega o texto sozinho em
   500 ms (não há botão "Carregar"; se nada mudar, use **Ir**).
 - **Campo "V:"** — o que projetar:
-  - vazio ou `1` → capítulo inteiro;
-  - `16` → do versículo 16 até o fim do capítulo;
-  - `9-16` → faixa **inclusiva** (9 a 16). Quando o texto não couber, o campo
-    mostra a faixa válida (`9 a 16`).
+  - vazio → capítulo inteiro;
+  - `16` → somente o versículo 16;
+  - `9-16` → faixa **inclusiva** (9 a 16), um versículo por slide. Quando o
+    texto não couber, o campo mostra a faixa válida (`9 a 16`).
 - **Busca por texto**: LIKE no texto da versão selecionada.
 - **📺 Projetar**: destaca o versículo atual (fundo `#6e40c9`) e projeta cada
   versículo no telão. Faixa parcial (`9-16`) começa no início, encerra sozinha

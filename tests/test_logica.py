@@ -81,9 +81,9 @@ print(f"João 3 tem {len(db_query('SELECT * FROM versiculos WHERE versao=? AND l
 
 casos = [
     ("vazio",        "",        list(range(1, 37))),
-    ("1",           "1",       list(range(1, 37))),
-    ("7",           "7",       list(range(7, 37))),
-    ("16",          "16",      list(range(16, 37))),
+    ("1",           "1",       [1]),
+    ("7",           "7",       [7]),
+    ("16",          "16",      [16]),
     ("1-7",         "1-7",     list(range(1, 8))),
     ("1 - 7",       "1 - 7",   list(range(1, 8))),
     ("5-5",         "5-5",     [5]),

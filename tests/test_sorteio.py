@@ -292,10 +292,11 @@ assert "_navepro_tema_proprio" in _fonte_navepro, (
     "NavePro ignora a marca de tema próprio"
 )
 
-# --- Controle remoto do sorteio (abrir/sortear/reiniciar pelo celular) ---
+# --- Controle remoto do sorteio (abrir/fechar/sortear/reiniciar pelo celular) ---
 assert hasattr(integracao, "estado_sorteio"), "integracao sem estado_sorteio"
 assert hasattr(integracao, "sortear"), "integracao sem sortear"
 assert hasattr(integracao, "reiniciar"), "integracao sem reiniciar"
+assert hasattr(integracao, "fechar_sorteio"), "integracao sem fechar_sorteio"
 
 
 class _LabelFalso:
@@ -381,6 +382,34 @@ _res = integracao.sortear(_np)
 assert _res["ok"] is False and "Configure o intervalo" in _res["erro"], _res
 
 integracao._aberto.pop(id(_np.root), None)
+
+# Fechar: recusa se não está aberto; se está, chama o mesmo caminho do
+# Esc/"Sair" (App._on_quit) e limpa o registro em _aberto.
+assert integracao.fechar_sorteio(_np)["ok"] is False
+assert "não está aberto" in integracao.fechar_sorteio(_np)["erro"].lower()
+
+
+class _AppFechaFalso:
+    def __init__(self, np_falso, engine):
+        self._engine = engine
+        self._main_window = _JanelaFalsa(engine)
+        self._np = np_falso
+        self.saiu = 0
+
+    def _on_quit(self):
+        # Mesmo efeito do App._on_quit embutido: on_close (_fechar) destrói
+        # a janela e remove a entrada de _aberto.
+        self.saiu += 1
+        integracao._aberto.pop(id(self._np.root), None)
+
+
+_eng_f = LotteryEngine()
+_app_f = _AppFechaFalso(_np, _eng_f)
+_registrar(_np, _app_f)
+_res = integracao.fechar_sorteio(_np)
+assert _res["ok"] is True and _res["aberto"] is False, _res
+assert _app_f.saiu == 1
+assert id(_np.root) not in integracao._aberto
 
 # --- Configuração remota (faixa de números / lista de nomes) ---
 assert hasattr(integracao, "configurar_sorteio"), "integracao sem configurar_sorteio"

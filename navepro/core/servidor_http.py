@@ -38,6 +38,7 @@ _ACOES_POST_REMOTO: dict = {
     '/api/remoto/medidor': 'medidor',
     '/api/remoto/tamanho': 'tamanho',
     '/api/remoto/sorteio/abrir': 'sorteio_abrir',
+    '/api/remoto/sorteio/fechar': 'sorteio_fechar',
     '/api/remoto/sorteio/configurar': 'sorteio_configurar',
     '/api/remoto/sorteio/sortear': 'sorteio_sortear',
     '/api/remoto/sorteio/reiniciar': 'sorteio_reiniciar',
@@ -379,6 +380,11 @@ class ServidorAsyncHTTP:
                 'livro': params.get('livro', ''),
                 'cap': params.get('cap', ''),
                 'vers': params.get('vers', '')})
+        if path == '/api/remoto/biblia_opcoes':
+            return ('biblia_opcoes', {
+                'versao': params.get('versao', ''),
+                'livro': params.get('livro', ''),
+                'cap': params.get('cap', '')})
         if path == '/api/remoto/livros':
             return ('livros_biblia', {})
         if path == '/api/remoto/anuncios':

@@ -1697,6 +1697,8 @@ class AppInterface:
                     str(dados.get('versao') or ''))
             if acao == 'buscar_biblia_ref':
                 return self._remoto_buscar_biblia_ref(dados)
+            if acao == 'biblia_opcoes':
+                return self._remoto_biblia_opcoes(dados)
             if acao == 'livros_biblia':
                 return {'ok': True, 'livros': list(self.LIVROS_BIBLIA)}
             if acao == 'listar_anuncios':
@@ -1738,6 +1740,8 @@ class AppInterface:
                 return self._remoto_medidor(dados)
             if acao == 'sorteio_abrir':
                 return self._remoto_sorteio_abrir()
+            if acao == 'sorteio_fechar':
+                return self._remoto_sorteio_fechar()
             if acao == 'sorteio_configurar':
                 return self._remoto_sorteio_configurar(dados)
             if acao == 'sorteio_sortear':
@@ -1759,6 +1763,11 @@ class AppInterface:
         from navepro.sorteio.integracao import estado_sorteio
         self.abrir_sorteio()
         return {'ok': True, **estado_sorteio(self)}
+
+    def _remoto_sorteio_fechar(self) -> dict:
+        """Fecha a janela do Sorteio pelo celular."""
+        from navepro.sorteio.integracao import fechar_sorteio
+        return fechar_sorteio(self)
 
     def _remoto_sorteio_configurar(self, dados: dict) -> dict:
         """Configura o sorteio (faixa/nomes) pelo celular."""
@@ -1901,9 +1910,9 @@ class AppInterface:
 
         O campo "V:" segue a mesma regra da janela Bíblia
         (`_analisar_faixa_versiculos`):
-          - vazio ou "1" → o capítulo inteiro
-          - "7"          → do versículo 7 até o fim do capítulo
-          - "1-7"        → somente os versículos de 1 a 7
+          - vazio   → o capítulo inteiro
+          - "7"     → somente o versículo 7
+          - "1-7"   → somente os versículos de 1 a 7
         """
         versao = str(dados.get('versao') or '').strip()
         livro = str(dados.get('livro') or '').strip()
@@ -1926,12 +1935,10 @@ class AppInterface:
                     'resultados': [], 'erro': msg}
         if ini is None:
             v_ini, v_fim = 1, 9999
-        elif '-' in vers_t:
-            # Faixa explícita: respeita o fim digitado (16-16 = só o 16).
-            v_ini, v_fim = ini, fim
         else:
-            # Número único é o ponto de partida: vai até o fim do capítulo.
-            v_ini, v_fim = ini, 9999
+            # Número único ("7") = só ele; faixa ("1-7") respeita o fim
+            # digitado (16-16 = só o 16).
+            v_ini, v_fim = ini, fim
         rows = db_query(
             "SELECT * FROM versiculos WHERE versao = ? AND livro = ? "
             "AND capitulo = ? AND versiculo >= ? AND versiculo <= ? "
@@ -1943,6 +1950,31 @@ class AppInterface:
                     {'livro': r.get('livro'), 'capitulo': r.get('capitulo'),
                      'versiculo': r.get('versiculo'), 'texto': r.get('texto')}
                     for r in rows]}
+
+    def _remoto_biblia_opcoes(self, dados: dict) -> dict:
+        """Opções dos combos "Cap:"/"V:" da aba Bíblia (controle remoto).
+
+        Mesmos ``SELECT DISTINCT`` da janela Bíblia (``_atualizar_opcoes_*``):
+        os capítulos seguem versão+livro e os versículos dependem do capítulo
+        informado (vazio/não numérico → sem opções, como o combo do app).
+        """
+        versao = str(dados.get('versao') or '').strip()
+        livro = str(dados.get('livro') or '').strip()
+        cap = str(dados.get('cap') or '').strip()
+        if not versao:
+            versoes = self._versoes_biblia()
+            versao = versoes[0] if versoes else ''
+        capitulos = [str(r.get('capitulo')) for r in db_query(
+            "SELECT DISTINCT capitulo FROM versiculos "
+            "WHERE versao = ? AND livro = ? ORDER BY capitulo",
+            (versao, livro))] if (versao and livro) else []
+        versiculos = []
+        if cap.isdigit() and versao and livro:
+            versiculos = [str(r.get('versiculo')) for r in db_query(
+                "SELECT DISTINCT versiculo FROM versiculos "
+                "WHERE versao = ? AND livro = ? AND capitulo = ? "
+                "ORDER BY versiculo", (versao, livro, int(cap)))]
+        return {'ok': True, 'capitulos': capitulos, 'versiculos': versiculos}
 
     def _remoto_projetar_biblia_ref(self, dados: dict) -> dict:
         """Projeta o trecho por referência, versículo a versículo (slides)."""
@@ -2225,8 +2257,6 @@ class AppInterface:
             cap = int(cap_t)
             if v_ini is None:
                 v_ini, v_fim = 1, 9999
-            elif '-' not in vers:
-                v_fim = 9999
             rows = db_query(
                 "SELECT * FROM versiculos WHERE versao = ? AND livro = ? "
                 "AND capitulo = ? AND versiculo >= ? AND versiculo <= ? "
@@ -8269,7 +8299,7 @@ class AppInterface:
                                  width=4, font=("Arial", 11))
         combo_cap.pack(side='left', padx=2)
 
-        # Versículo (número = deste até o fim, "1-7" = faixa, vazio = capítulo)
+        # Versículo (número = só ele, "1-7" = faixa, vazio = capítulo inteiro)
         # Também aceita escolher na lista; continua editável para faixas.
         tk.Label(ref_frame, text="V:", fg='#c9d1d9', bg='#161b22',
                  font=("Arial", 10)).pack(side='left', padx=(5, 2))
@@ -8375,9 +8405,9 @@ class AppInterface:
             """Carrega a referência atual (versão/livro/cap/V:) na área de texto.
 
             O campo "V:" define o trecho carregado:
-              - vazio ou "1"  → o capítulo inteiro
-              - "7"            → do versículo 7 até o fim do capítulo
-              - "1-7"          → somente os versículos de 1 a 7
+              - vazio   → o capítulo inteiro
+              - "7"     → somente o versículo 7
+              - "1-7"   → somente os versículos de 1 a 7
 
             Se `foco` for informado, exibe o capítulo inteiro e destaca o
             versículo correspondente (usado para sincronizar a janela com a
@@ -8403,12 +8433,10 @@ class AppInterface:
                     return
                 if ini is None:
                     v_ini, v_fim = 1, 9999
-                elif "-" in vers:
-                    # Faixa explícita: respeita o fim digitado (16-16 = só o 16).
-                    v_ini, v_fim = ini, fim
                 else:
-                    # Número único é o ponto de partida: vai até o fim.
-                    v_ini, v_fim = ini, 9999
+                    # Número único ("7") = só ele; faixa ("1-7") respeita o
+                    # fim digitado (16-16 = só o 16).
+                    v_ini, v_fim = ini, fim
 
             rows = db_query(
                 "SELECT * FROM versiculos WHERE versao = ? AND livro = ? "
@@ -8952,8 +8980,8 @@ class AppInterface:
             O campo "V:" define o que é projetado, com a mesma regra usada
             no carregamento da janela:
               - vazio    → o capítulo inteiro, começando no versículo 1
-              - "7"      → do versículo 7 até o fim do capítulo
-              - "9-16"   → somente os versículos de 9 a 16
+              - "7"      → somente o versículo 7
+              - "9-16"   → somente os versículos de 9 a 16 (um a um)
 
             O administrador navega entre versículos com as setas do teclado,
             do painel ou do controle remoto. Ao passar do último versículo da
@@ -8983,15 +9011,16 @@ class AppInterface:
                 return
             if ini is None:
                 ini = 1
-            # Faixa explícita ("9-16"): projeta só os versículos pedidos,
-            # senão mantém o capítulo inteiro começando no versículo inicial.
-            if "-" in vers_t:
+            # Número único ("16") ou faixa explícita ("9-16"): projeta só os
+            # versículos pedidos; vazio mantém o capítulo inteiro.
+            if vers_t:
                 rows = [r for r in rows if ini <= r['versiculo'] <= fim]
                 if not rows:
+                    ref_ausente = f"{ini}" if ini == fim else f"{ini}-{fim}"
                     tkinter.messagebox.showwarning(
                         "Projeção",
                         f"Nenhum versículo encontrado para {livro} "
-                        f"{cap}:{ini}-{fim} ({versao}).", parent=janela)
+                        f"{cap}:{ref_ausente} ({versao}).", parent=janela)
                     return
 
             numeros = [r['versiculo'] for r in rows]

@@ -158,16 +158,16 @@ check('◀ Anterior para no versículo 9', telao.desenhos[-1][1] == 'João 3:9',
       telao.desenhos[-1][1])
 check('◀ Anterior não encerra a projeção', telao.paradas == 0 and telao._em_slides)
 
-# --- 4) casos que NÃO podem mudar ---
+# --- 4) vazio não muda; número único = só o versículo (novo) ---
 desenhos, numeros, faixa, em_slides, avisos = projetar_com('')
 check('V: vazio = capítulo inteiro (36)', numeros == list(range(1,37)), str(len(numeros)))
 check('V: vazio começa no 1', desenhos[0][1] == 'João 3:1')
 check('V: vazio sem faixa no rótulo', faixa is None, str(faixa))
 
 desenhos, numeros, faixa, em_slides, avisos = projetar_com('16')
-check('V:="16" = capítulo inteiro (36)', numeros == list(range(1,37)), str(len(numeros)))
-check('V:="16" começa no 16', desenhos[-1][1] == 'João 3:16' and
-      telao._slide_index == numeros.index(16), f"idx={telao._slide_index}")
+check('V:="16" = só o versículo 16', numeros == [16], str(numeros))
+check('V:="16" projeta João 3:16', desenhos and desenhos[0][1] == 'João 3:16',
+      desenhos[0][1] if desenhos else '-')
 check('V:="16" sem faixa no rótulo', faixa is None, str(faixa))
 
 # --- 5) entradas inválidas não projetam nada ---

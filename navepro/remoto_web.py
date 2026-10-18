@@ -12,6 +12,8 @@ A API usada (tudo com o header `X-Token`):
   GET  /api/remoto/midias      → busca músicas/vídeos na tabela `midia`
   GET  /api/remoto/biblia      → busca de versículos (texto) + versões
   GET  /api/remoto/biblia_ref  → versículos por livro/cap/V: (como no app)
+  GET  /api/remoto/biblia_opcoes → opções dos combos Cap:/V: (capítulos e
+                                   versículos do livro/capítulo escolhidos)
   GET  /api/remoto/livros      → lista dos livros da Bíblia
   GET  /api/remoto/anuncios    → lista de anúncios
   GET  /api/remoto/servicos    → lista de serviços
@@ -28,6 +30,7 @@ A API usada (tudo com o header `X-Token`):
   POST /api/remoto/tamanho     → {qual, acao}
   GET  /api/remoto/sorteio     → estado e configuração do Sorteio
   POST /api/remoto/sorteio/abrir      → abre o Sorteio
+  POST /api/remoto/sorteio/fechar     → fecha o Sorteio
   POST /api/remoto/sorteio/configurar → {modo, inicio, fim, nomes, por_vez}
   POST /api/remoto/sorteio/sortear    → próximo sorteio
   POST /api/remoto/sorteio/reiniciar  → limpa os sorteados"""
@@ -272,6 +275,7 @@ function carregarVersoes(j) {
     if (j.versao === v) o.selected = true;
     sel.appendChild(o);
   });
+  carregarOpcoesBiblia();
 }
 
 function carregarLivros() {
@@ -285,8 +289,39 @@ function carregarLivros() {
       if (l === 'Jo\u00E3o') o.selected = true;
       sel.appendChild(o);
     });
+    carregarOpcoesBiblia();
   }).catch(function() {});
 }
+
+// ── Opções dos campos Cap:/V: (como os combos da janela Bíblia) ──
+// Lista suspensa atrás de cada input: dá para clicar e escolher, e o campo
+// continua digitável (faixa "1-7", vazio = capítulo inteiro).
+function preencherOpcoes(id, valores) {
+  var dl = document.getElementById(id);
+  dl.innerHTML = '';
+  (valores || []).forEach(function(v) {
+    var o = document.createElement('option');
+    o.value = v;
+    dl.appendChild(o);
+  });
+}
+
+function carregarOpcoesBiblia() {
+  var v = document.getElementById('bib_versao').value;
+  var livro = document.getElementById('bib_livro').value;
+  var cap = document.getElementById('bib_cap').value.trim();
+  apiGet('/api/remoto/biblia_opcoes?versao=' + encodeURIComponent(v) +
+         '&livro=' + encodeURIComponent(livro) +
+         '&cap=' + encodeURIComponent(cap)).then(function(j) {
+    if (!j || !j.ok) return;
+    preencherOpcoes('bib_cap_opcoes', j.capitulos);
+    preencherOpcoes('bib_vers_opcoes', j.versiculos);
+  }).catch(function() {});
+}
+
+document.getElementById('bib_versao').addEventListener('change', carregarOpcoesBiblia);
+document.getElementById('bib_livro').addEventListener('change', carregarOpcoesBiblia);
+document.getElementById('bib_cap').addEventListener('change', carregarOpcoesBiblia);
 
 // Projeta por referência (livro + Cap + V:), versículo a versículo.
 // Sem `vers`, usa o campo "V:"; com `vers`, começa naquele versículo.
@@ -759,10 +794,10 @@ function sorteioSortear() {
   });
 }
 
-function sorteioReiniciar() {
-  if (!confirm('Reiniciar o sorteio (limpa os sorteados)?')) return;
-  apiPost('/api/remoto/sorteio/reiniciar', {}).then(function(j) {
-    if (j.ok) aviso('Sorteio reiniciado', '#238636');
+function sorteioFechar() {
+  if (!confirm('Fechar o Sorteio?')) return;
+  apiPost('/api/remoto/sorteio/fechar', {}).then(function(j) {
+    if (j.ok) aviso('Sorteio fechado', '#238636');
     atualizarSorteio();
   });
 }
@@ -977,9 +1012,11 @@ PAGINA = """<!DOCTYPE html>
     <select id="bib_livro"></select>
     <div class="linha" style="margin-top:8px">
       <span class="pill">Cap:</span>
-      <input id="bib_cap" inputmode="numeric" placeholder="3" style="max-width:80px">
+      <input id="bib_cap" list="bib_cap_opcoes" inputmode="numeric" placeholder="3" style="max-width:80px">
+      <datalist id="bib_cap_opcoes"></datalist>
       <span class="pill">V:</span>
-      <input id="bib_vers" inputmode="numeric" placeholder="16 (ou 1-7; vazio = cap.)">
+      <input id="bib_vers" list="bib_vers_opcoes" inputmode="numeric" placeholder="16 (ou 1-7; vazio = cap.)">
+      <datalist id="bib_vers_opcoes"></datalist>
     </div>
     <div class="linha" style="margin-top:8px">
       <button class="btn" onclick="buscarBibliaRef()">&#128269; Buscar</button>
@@ -1134,7 +1171,7 @@ PAGINA = """<!DOCTYPE html>
     <div class="linha" style="margin-top:10px">
       <button class="btn verde" onclick="sorteioAbrir()">&#127922; Abrir</button>
       <button class="btn" onclick="sorteioSortear()">&#127922; Sortear</button>
-      <button class="btn vermelho" onclick="sorteioReiniciar()">&#8634; Reiniciar</button>
+      <button class="btn vermelho" onclick="sorteioFechar()">&#10006; Fechar</button>
     </div>
   </div>
   <div class="card">
