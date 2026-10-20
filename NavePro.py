@@ -719,6 +719,13 @@ class AppInterface:
             "rodando": False, "pausado": False,
             "fim": 0.0, "restante": 0.0, "total": 0.0, "timer_id": None,
         }
+        # Medidor que o operador deixou projetado ("contagem"/"cronometro"/None):
+        # usado para reprojetá-lo quando uma projeção comum (slide/letra) ou
+        # música/vídeo termina, em vez de o relógio voltar por cima da frase.
+        self._medidor_projetado: str | None = None
+
+        # Relógio/temperatura ocultos no telão pelo operador (só na sessão).
+        self._relogio_oculto_telao = False
 
         # Quando o telão for fechado (Esc/Ctrl+Q) e recriado pelo player,
         # reaplica a aparência configurada e volta a mostrar a hora inicial.
@@ -728,6 +735,7 @@ class AppInterface:
                     self.config_data.get("projecao", {}))
                 novo_telao.configurar_relogio(
                     self.config_data.get("relogio", {}))
+                novo_telao.definir_relogio_oculto(self._relogio_oculto_telao)
                 novo_telao._exibir_hora_inicial()
             except Exception as _e_reap:
                 log.exception(f"⚠️ Erro ao reaplicar config no telão recriado: "
@@ -2618,7 +2626,11 @@ class AppInterface:
                   ).pack(pady=6)
 
     def salvar_config_relogio(self, cfg: dict) -> None:
-        """Persiste a configuração de aparência do relógio e aplica ao telão."""
+        """Persiste a configuração de aparência do relógio e aplica ao telão.
+
+        O dict pode incluir os campos do medidor (contagem/cronômetro)
+        preservados pelo diálogo, para eles não se perderem ao salvar.
+        """
         self.config_data["relogio"] = cfg
         try:
             with open(CONFIG_FILE, "w") as f:
@@ -2684,6 +2696,7 @@ class AppInterface:
         cfg_cont.setdefault("quebrar_sub", False)
         cfg_cont.setdefault("posicao_sub", "abaixo")
         cfg_cont.setdefault("dist_sub", 0.05)
+        cfg_cont.setdefault("titulo", "")
 
         cfg_win = tk.Toplevel(self.root)
         cfg_win.title("⚙️ Configura Relógio / Cronômetro / Contagem")
@@ -2837,13 +2850,42 @@ class AppInterface:
                 "fundo_opaco": bool(tab_relogio.var_fundo_opaco.get()),
                 "fundo_imagem": var_fundo_imagem.get().strip(),
             }
+            # Preserva o nome/frase da contagem regressiva e demais campos do
+            # medidor: o dict gravado por este botão não os contém, e sem isso
+            # a frase da contagem sumia do telão ao salvar as cores do relógio.
+            med_cfg = dict(self.config_data.get("contagem", {}) or {})
+            entry = getattr(tab_cont, "entry_titulo", None)
+            if entry is not None:
+                med_cfg["titulo"] = entry.get().strip()
+            novo = {**med_cfg, **novo}
             self.salvar_config_relogio(novo)
-            cfg_win.destroy()
+            self.status_label.config(text="✅ Configuração do relógio salva")
+            # A janela permanece aberta: o operador fecha quando quiser.
 
         tk.Button(tab_relogio, text="💾 Salvar", font=("Arial", 12, "bold"),
                   bg='#238636', fg='white', activebackground='#2ea043',
                   command=_salvar_cfg_relogio, cursor='hand2', padx=20, pady=5
                   ).pack(pady=(4, 6))
+
+        # ── Mostrar/ocultar o relógio e a temperatura no telão (monitor 2) ──
+        tk.Label(tab_relogio,
+                 text="Mostrar ou esconder o relógio e a temperatura no telão:",
+                 font=("Arial", 11, "bold"), fg='#58a6ff', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        self._btn_relogio_telao = tk.Button(
+            tab_relogio, text="🚫 Ocultar relógio do telão",
+            font=("Arial", 12, "bold"), bg='#6e40c9', fg='white',
+            activebackground='#8957e5',
+            command=self.alternar_relogio_telao, cursor='hand2',
+            padx=20, pady=5)
+        self._btn_relogio_telao.pack(pady=(4, 4))
+        self._atualizar_botao_relogio_telao()
+        tk.Label(tab_relogio,
+                 text="Ao ocultar, o telão fica só com o fundo (cor ou imagem "
+                      "configurada); projeções e contagem/cronômetro continuam "
+                      "normais. A escolha vale só nesta sessão.",
+                 font=("Arial", 9), fg='#8b949e', bg='#0d1117',
+                 justify='left', wraplength=620).pack(pady=(0, 6))
 
         # ══════════════════════ Tab ⏱ Cronômetro ══════════════════════
         tab_crono = tk.Frame(notebook, bg='#0d1117')
@@ -2967,6 +3009,10 @@ class AppInterface:
         entry_titulo = tk.Entry(
             tab_cont, font=("Arial", 11), bg='#21262d', fg='#c9d1d9',
             insertbackground='#f0c040', bd=0, highlightthickness=0)
+        # Guardado no próprio telão para a aba Relógio poder preservar o
+        # nome/frase ao salvar (o novo dict da contagem é remontado lá).
+        tab_cont.entry_titulo = entry_titulo
+        entry_titulo.insert(0, str(cfg_cont.get("titulo", "") or ""))
         entry_titulo.pack(fill='x', ipady=3, pady=(0, 8))
 
         # ── Opções do nome / frase (só afetam o texto, NÃO os números) ──
@@ -3086,6 +3132,7 @@ class AppInterface:
                 "quebrar_sub": bool(tab_cont.var_quebrar_sub.get()),
                 "posicao_sub": tab_cont.var_posicao_sub.get(),
                 "dist_sub": float(tab_cont.var_dist_sub.get()),
+                "titulo": entry_titulo.get().strip(),
             }
             self._salvar_config_medidor("contagem", novo)
             self.status_label.config(text="✅ Configuração da contagem salva")
@@ -4946,11 +4993,58 @@ class AppInterface:
             log.exception(f"Erro ao salvar config de {chave}: {e}")
 
     def _projetar_medidor_seguro(self, chave: str, modo: str,
-                                 subtitulo: str = "", tempo: str = "00:00") -> None:
-        """Projeta um medidor no telão; recria o telão se necessário."""
+                                 subtitulo: str = "", tempo: str = "00:00",
+                                 guardar_temp: bool = True) -> None:
+        """Projeta um medidor no telão; recria o telão se necessário.
+
+        Também registra no telão o retorno usado quando uma projeção comum
+        (slide/texto/imagem) termina: o medidor que o operador deixou
+        projetado volta no lugar do relógio (ver `_reprojetar_medidor_ativo`).
+        """
         telao = self.player._garantir_telao()
+        if telao is None:
+            return
         cfg = self.config_data.get(chave, {})
-        telao._projetar_medidor(cfg, modo, subtitulo=subtitulo, tempo=tempo)
+        telao._projetar_medidor(cfg, modo, subtitulo=subtitulo, tempo=tempo,
+                                guardar_temp=guardar_temp)
+        self._medidor_projetado = modo
+        telao.definir_retorno_medidor(self._reprojetar_medidor_ativo)
+
+    def _reprojetar_medidor_ativo(self) -> bool:
+        """Reprojeta o medidor (contagem/cronômetro) que está ativo na UI.
+
+        Chamado pelo telão quando uma projeção comum termina (fim de slide,
+        letra ou anúncio) ou quando a música/vídeo termina com uma projeção
+        na tela. Usa o tempo real do medidor, preservando a frase. Retorna
+        True se assumiu a tela; False deixa o telão ir para o relógio.
+        """
+        modo = getattr(self, "_medidor_projetado", None)
+        if modo not in ("contagem", "cronometro"):
+            return False
+        if modo == "contagem":
+            c = self._contagem
+            if not c.get("rodando") and not c.get("pausado") \
+                    and not c.get("total"):
+                return False
+            if c.get("rodando") and not c.get("pausado"):
+                tempo = self._formatar_tempo(max(0.0, c["fim"] - time.time()))
+            elif c.get("pausado"):
+                tempo = self._formatar_tempo(max(0.0, c.get("restante", 0.0)))
+            else:
+                tempo = self._formatar_tempo(c.get("total", 0.0) or 0.0)
+            self._projetar_medidor_seguro(
+                "contagem", "contagem", subtitulo=c.get("titulo", "") or "",
+                tempo=tempo, guardar_temp=False)
+            return True
+        c = self._crono
+        if c.get("rodando") and not c.get("pausado"):
+            tempo = self._formatar_cronometro(
+                c["acumulado"] + time.time() - c["inicio"])
+        else:
+            tempo = self._formatar_cronometro(c.get("acumulado", 0.0))
+        self._projetar_medidor_seguro("cronometro", "cronometro",
+                                      tempo=tempo, guardar_temp=False)
+        return True
 
     def cronometro_iniciar(self, label: tk.Label | None = None) -> None:
         """Inicia (ou continua) o cronômetro e garante a projeção no telão.
@@ -4967,6 +5061,10 @@ class AppInterface:
                 self.config_data.get("cronometro", {}),
                 "cronometro", tempo=tempo_inicial,
             )
+        # Com o cronômetro em uso, uma projeção comum que terminar depois
+        # volta a ele (e não ao relógio): registra o retorno no telão.
+        self._medidor_projetado = "cronometro"
+        telao.definir_retorno_medidor(self._reprojetar_medidor_ativo)
         if c["rodando"] and not c["pausado"]:
             return
         if c["pausado"]:
@@ -5033,6 +5131,7 @@ class AppInterface:
         c["rodando"] = False
         c["acumulado"] = 0.0
         c["timer_id"] = None
+        self._medidor_projetado = None
         try:
             if self.player.telao and self.player.telao._raiz_viva():
                 if getattr(self.player.telao, "_modo_extra", None) == "cronometro":
@@ -5183,6 +5282,7 @@ class AppInterface:
         c["restante"] = 0.0
         c["total"] = 0.0
         c["timer_id"] = None
+        self._medidor_projetado = None
         try:
             if self.player.telao and self.player.telao._raiz_viva():
                 if getattr(self.player.telao, "_modo_extra", None) == "contagem":
@@ -5326,6 +5426,48 @@ class AppInterface:
         except Exception:
             pass
         self.root.after(1000, self.atualizar_relogio)
+
+    def alternar_relogio_telao(self) -> None:
+        """Oculta/mostra o relógio e a temperatura no telão (monitor 2).
+
+        Afeta só o modo relógio: projeções e medidores em andamento não são
+        interrompidos (a escolha é aplicada quando o telão voltar ao
+        relógio). O fundo do telão (cor/imagem) permanece. Vale só na sessão.
+        """
+        novo = not self._relogio_oculto_telao
+        self._relogio_oculto_telao = novo
+        telao = getattr(self.player, "telao", None)
+        if telao is not None:
+            try:
+                telao.definir_relogio_oculto(novo)
+            except Exception as e:
+                log.exception(f"Erro ao ocultar/mostrar o relógio no telão: {e}")
+        # Força o redesenho imediato: o cache de hora impediria a atualização.
+        self._ultima_hora_telao = None
+        try:
+            if telao is not None and getattr(telao, "mostrando_relogio", False):
+                hora_atual = datetime.now().strftime("%H:%M")
+                temp_display = (self.temperatura_atual
+                                if self._temperatura_valida() else "")
+                self._ultima_hora_telao = hora_atual
+                self.player.mostrar_relogio(hora_atual, temp_display)
+        except Exception as e:
+            log.exception(f"Erro ao atualizar o relógio do telão: {e}")
+        self._atualizar_botao_relogio_telao()
+
+    def _atualizar_botao_relogio_telao(self) -> None:
+        """Atualiza o rótulo do botão de mostrar/ocultar o relógio no telão."""
+        btn = getattr(self, "_btn_relogio_telao", None)
+        if btn is None:
+            return
+        try:
+            if not btn.winfo_exists():
+                return
+            btn.config(text="✅ Mostrar relógio no telão"
+                       if self._relogio_oculto_telao
+                       else "🚫 Ocultar relógio do telão")
+        except tk.TclError:
+            pass
 
     # ── Gerenciador de Banco (mantido, com recarga de cache) ────
 

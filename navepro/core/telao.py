@@ -141,6 +141,7 @@ class TelaoWindow:
         self.mostrando_letra = False
         self._em_slides = False
         self._modo_extra: str | None = None
+        self._relogio_oculto = False
         self._mostrando_imagem = False
         self._mostrando_imagem_com_texto = False
         self._imagem_item = None
@@ -168,6 +169,12 @@ class TelaoWindow:
         self._fundo_imagem_caminho = ""
         self._proj_timer = None
         self._temp_salvo = ""
+        self._sub_cfg_medidor = None
+        self._medidor_cfg: dict = {}
+        # Retorno definido pelo operador (NavePro.py): quando uma projeção
+        # (slide/texto/imagem) termina e ainda há um medidor ativo, ele é
+        # reprojetado no lugar do relógio em vez do relógio voltar sozinho.
+        self._ao_voltar_relogio = None
         self.root.protocol("WM_DELETE_WINDOW", self.fechar)
         # Aplica alpha imediatamente
         self.root.attributes('-alpha', self._alpha_relogio())
@@ -348,6 +355,15 @@ class TelaoWindow:
             # Durante projeções (slides/vídeo/texto/imagem/medidor) o relógio
             # não deve redesenhar hora/temperatura por cima do conteúdo.
             return
+        if getattr(self, "_relogio_oculto", False):
+            # Relógio oculto pelo operador: mantém o telão limpo (só o fundo,
+            # com a cor ou imagem configurada). Projeções/medidores não são
+            # afetados — só o modo relógio.
+            if not self._is_visible:
+                self.root.deiconify()
+                self._is_visible = True
+            self._esconder_textos_relogio()
+            return
         # Evita chamadas Tk desnecessárias se os valores não mudaram
         texto_mudou = texto != self._current_text
         temp_mudou = temperatura != self._current_temp
@@ -382,6 +398,38 @@ class TelaoWindow:
         # Usamos lower() apenas na primeira vez ou após vídeo
         if not self._is_visible or not self.mostrando_relogio:
             self.root.lower()
+    def _esconder_textos_relogio(self) -> None:
+        """Esconde hora e temperatura do canvas (mantém o fundo do telão)."""
+        if not self._raiz_viva():
+            return
+        try:
+            self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
+            self.canvas.itemconfig(self.temp_text, text="", state="hidden")
+        except tk.TclError:
+            return
+        self._current_text = ""
+        self._current_temp = ""
+        try:
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
+    def definir_relogio_oculto(self, oculto: bool) -> None:
+        """Oculta ou mostra o relógio + temperatura no telão.
+
+        Afeta apenas o modo relógio: projeções (texto/slides/imagem) e
+        medidores (cronômetro/contagem) continuam funcionando normalmente.
+        Oculto, o fundo do telão (cor ou imagem configurada) permanece.
+        Ao mostrar de novo, quem chamou deve redesenhar via mostrar_relogio.
+        """
+        self._relogio_oculto = bool(oculto)
+        if not self._raiz_viva():
+            return
+        # Durante uma projeção/medidor a decisão fica registrada e é
+        # aplicada quando o telão voltar ao modo relógio.
+        if not getattr(self, "mostrando_relogio", False):
+            return
+        if self._relogio_oculto:
+            self._esconder_textos_relogio()
     def _raiz_viva(self) -> bool:
         """True se o Tk do telão ainda existe (não foi fechado/destruído)."""
         try:
@@ -407,11 +455,32 @@ class TelaoWindow:
                 pass
             self._is_visible = False
     def restaurar_tela(self) -> None:
-        """Restaura o telão após o término do vídeo (sem after repetido)."""
+        """Restaura o telão após o término do vídeo (sem after repetido).
+
+        Se houver um medidor (cronômetro/contagem) projetado e ainda ativo,
+        ele é retomado no lugar do relógio; caso contrário, restaura o
+        relógio + temperatura. Sem isso, a hora/temperatura redesenham por
+        cima do número e o nome/frase da contagem some.
+        """
         if not self._raiz_viva():
+            return
+        modo = getattr(self, "_modo_extra", None)
+        if getattr(self, "mostrando_letra", False) and \
+                modo in ("contagem", "cronometro"):
+            # Retoma o medidor preservando número/frase e a transparência
+            # originais (não sobrescreve a temperatura do relógio).
+            cfg = getattr(self, "_medidor_cfg", None) or {}
+            tempo = self._current_text or "00:00"
+            sub = self._current_temp or ""
+            self._projetar_medidor(
+                cfg, modo, subtitulo=sub, tempo=tempo, guardar_temp=False)
             return
         if self._is_visible and self.mostrando_relogio:
             return  # Já está visível
+        # Medidor suspenso por uma projeção (slide/texto/imagem) que estava
+        # na tela quando a música/vídeo terminou: retoma ele, não o relógio.
+        if self._retomar_medidor_ativo():
+            return
         self._current_alpha = self._alpha_relogio()
         self._is_visible = True
         self.mostrando_relogio = True
@@ -421,6 +490,9 @@ class TelaoWindow:
         self.root.deiconify()
         self.root.attributes('-alpha', self._alpha_relogio())
         self.root.lower()
+        if getattr(self, "_relogio_oculto", False):
+            # O operador optou por não exibir o relógio: mantém limpo.
+            self._esconder_textos_relogio()
     # ── Projeção de texto (letra / versículo) ─────────────────────
     def configurar_projecao(self, cfg: dict | None = None) -> None:
         """Define as configurações de aparência da projeção de texto."""
@@ -1270,12 +1342,39 @@ class TelaoWindow:
         seguinte encontraria ``_current_temp`` vazio e apagaria o valor salvo,
         fazendo a temperatura não voltar ao encerrar. Só sobrescreve o valor
         memorizado quando há uma temperatura real no relógio.
+        Com um medidor projetado, ``_current_temp`` guarda o nome/frase da
+        contagem (não a temperatura): nesse caso o valor salvo não muda.
         """
+        if getattr(self, "_modo_extra", None) in ("contagem", "cronometro"):
+            return
         if self._current_temp:
             self._temp_salvo = self._current_temp
+    def definir_retorno_medidor(self, callback) -> None:
+        """Registra o retorno chamado quando uma projeção comum termina.
+
+        O operador (NavePro.py) registra um callback que reprojeta o medidor
+        ativo (contagem/cronômetro) no lugar do relógio. ``None`` desliga o
+        retorno (ex.: medidor encerrado pelo operador).
+        """
+        self._ao_voltar_relogio = callback
+    def _retomar_medidor_ativo(self) -> bool:
+        """Chama o retorno registrado pelo operador; True se ele assumiu a tela.
+
+        Retorna False quando não há retorno registrado ou quando o callback
+        decidir que o telão deve seguir para o relógio.
+        """
+        cb = getattr(self, "_ao_voltar_relogio", None)
+        if cb is None:
+            return False
+        try:
+            return bool(cb())
+        except Exception as e:
+            log.warning(f"⚠️ Falha ao retomar o medidor ativo: {e}")
+            return False
     def _retornar_ao_relogio(self) -> None:
         """Retorna relógio + temperatura ao telão ao fim da projeção."""
         self._proj_timer = None
+        modo_antes = getattr(self, "_modo_extra", None)
         self._modo_extra = None
         if not getattr(self, "mostrando_letra", False):
             return
@@ -1325,6 +1424,13 @@ class TelaoWindow:
         self._font_temp_exib_texto = None
         self._current_text = ""
         self._current_temp = ""
+        # Se um medidor (contagem/cronômetro) continua ativo no operador,
+        # ele volta no lugar do relógio (ex.: fim de um slide projetado).
+        # Esc/parar_projecao() sobre o próprio medidor NÃO volta para cá:
+        # nesse caso modo_antes já era o medidor e o relógio é restaurado.
+        if modo_antes not in ("contagem", "cronometro") and \
+                self._retomar_medidor_ativo():
+            return
         temp = getattr(self, "_temp_salvo", "") or ""
         self.mostrar_relogio(datetime.datetime.now().strftime("%H:%M"), temp)
         self.root.update_idletasks()
@@ -1368,6 +1474,13 @@ class TelaoWindow:
                 self._current_temp = temperatura
                 self._guardar_temp_para_restaurar()
             return
+        if getattr(self, "_relogio_oculto", False):
+            # Relógio oculto: memoriza a temperatura, mas não desenha nada.
+            if temperatura:
+                self._current_temp = temperatura
+                self._guardar_temp_para_restaurar()
+            self._esconder_textos_relogio()
+            return
         hora = datetime.datetime.now().strftime("%H:%M")
         self.canvas.itemconfig(self.overlay_text, text=hora, state="normal")
         self._current_text = hora
@@ -1400,12 +1513,18 @@ class TelaoWindow:
             size = max(40, min(620, int(size * alvo / real)))
         return size
     def _projetar_medidor(self, cfg: dict, modo: str,
-                          subtitulo: str = "", tempo: str = "00:00") -> None:
+                          subtitulo: str = "", tempo: str = "00:00",
+                          guardar_temp: bool = True) -> None:
         """Inicia/atualiza a projeção de um medidor (cronômetro/contagem).
         Reusa o ciclo de vida das projeções: enquanto ativo, mostrando_
         letra fica True e Esc ou parar_projecao() restauram o relógio.
         Usa a mesma fonte Digital-7, cores, fundo e transparência do
         relógio ("fundo_opaco" => opaco, senão 0.55).
+
+        ``guardar_temp`` fica False quando o medidor está sendo retomado
+        após o fim de um vídeo/música: nesse caso ``_current_temp`` já
+        guarda o nome/frase da contagem e não se deve sobrescrever a
+        temperatura do relógio memorizada em ``_temp_salvo``.
         """
         if not self._raiz_viva():
             return
@@ -1416,7 +1535,9 @@ class TelaoWindow:
             except tk.TclError:
                 pass
             self._proj_timer = None
-        self._guardar_temp_para_restaurar()
+        if guardar_temp:
+            self._guardar_temp_para_restaurar()
+        self._medidor_cfg = dict(cfg)
         self._limpar_camada_imagem()
         self.mostrando_letra = True
         self._em_slides = False
@@ -1590,6 +1711,9 @@ class TelaoWindow:
         """Encerra o medidor ativo e volta o relógio + temperatura ao telão."""
         self._modo_extra = None
         self._sub_cfg_medidor = None
+        # Desliga o retorno do operador: sem isso, uma projeção que estava
+        # na tela (slide) terminaria e o medidor já encerrado voltaria.
+        self._ao_voltar_relogio = None
         if getattr(self, "mostrando_letra", False):
             self.parar_projecao()
         else:

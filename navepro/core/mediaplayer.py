@@ -110,33 +110,45 @@ def _versao_mpv_cacheada() -> tuple[int, int] | None:
     return _MPV_VERSAO_CACHE
 
 
-def _opcoes_telao_wayland(nome_monitor: str) -> list[str]:
-    """Opções do mpv para o telão numa sessão Wayland nativa.
+def _opcoes_telao_mpv(nome_monitor: str, indice: int) -> list[str]:
+    """Opções do mpv (Linux) para abrir em tela cheia no monitor do telão.
 
-    Numa sessão Wayland o mpv IGNORA o `--screen` (índice X11) e abre em
-    tela cheia na saída do FOCO/compositor — testado nos mpv 0.41 de
-    BigLinux e Ubuntu/GNOME: o `--screen-name` só funcionou quando a janela
-    nascia já no monitor certo (terminal no telão). O caminho que funciona é
-    o MESMO do telão Tk: janela X11 (XWayland), que respeita geometria e
-    Xinerama. Então ao detectar Wayland:
+    São DUAS escolhas no mpv e elas não se substituem:
 
-      - `--vo=x11` (disponível em todos os builds testados) força o mpv a
-        rodar como janela X11 — o compositor posiciona por geometria/Xinerama
-        como faz com o próprio Tk do NavePro;
-      - `--screen-name=<saída>` como reforço quando o mpv for >= 0.34.
+      - `--screen` decide onde a JANELA nasce (só isso);
+      - `--fs-screen` decide onde ela entra em TELA CHEIA. O padrão é
+        `current` (o monitor em que a janela estiver), então sem ele o
+        fullscreen segue o foco do compositor. Era o bug: ao executar o 2º
+        vídeo com outro player ainda em foco, a janela nova nascia no
+        monitor do operador e o mpv entrava em tela cheia lá.
 
-    Devolve [] para sessão X11 pura: lá o comportamento já é o certo, sem
-    custo de renderização por software.
+    Em sessão X11 usamos os dois índices (o Xinerama acompanha o xrandr).
+
+    Em sessão Wayland o caminho é o MESMO do telão Tk: forçar uma janela
+    X11 (`--vo=x11`, via XWayland), porque o mpv Wayland nativo ignora o
+    índice e obedece ao foco. Lá escolhemos a saída PELO NOME
+    (`--screen-name`/`--fs-screen-name`, mpv >= 0.34), que é estável entre
+    inicializações; o índice pode mudar de ordem.
+
+    Importante: o mpv IGNORA `--screen-name`/`--fs-screen-name` quando o
+    índice correspondente (`--screen`/`--fs-screen`) está setado — no
+    x11_common.c o índice preenche a tela antes da busca por nome. Por isso
+    no Wayland passamos SÓ os nomes, nunca os dois.
+
+    Devolve opções equivalentes para qualquer sessão (nunca vazio).
     """
     if not _eh_wayland():
-        return []
+        return [f"--screen={indice}", f"--fs-screen={indice}"]
     opcoes = ["--vo=x11"]
     nome = (nome_monitor or "").strip()
-    if not nome:
-        return opcoes
     versao = _versao_mpv_cacheada()
-    if versao is None or versao >= (0, 34):
+    if nome and (versao is None or versao >= (0, 34)):
         opcoes.append(f"--screen-name={nome}")
+        opcoes.append(f"--fs-screen-name={nome}")
+    else:
+        # mpv antigo (sem opções por nome): volta ao índice, como antes.
+        opcoes.append(f"--screen={indice}")
+        opcoes.append(f"--fs-screen={indice}")
     return opcoes
 
 
@@ -794,9 +806,9 @@ class MediaPlayer:
             # geometria era redundante mesmo.
             return [
                 'mpv', '--fullscreen',
-                f'--screen={self._indice_screennumber()}',
+                *_opcoes_telao_mpv(self._monitor_alvo().name,
+                                   self._indice_screennumber()),
                 '--really-quiet', '--no-terminal',
-                *_opcoes_telao_wayland(self._monitor_alvo().name),
                 arquivo,
             ]
         else:
@@ -813,10 +825,9 @@ class MediaPlayer:
         O mpv resolve a URL pelo yt-dlp (já verificado por _tocar_arquivo),
         então este caminho força o mpv em vez de usar o player configurado.
         No Windows liga o IPC (dá pausa/continuar/parar, como um vídeo local);
-        no Linux abre em tela cheia no telão — o `--screen` segue o monitor
-        configurado (`_indice_screennumber`), não o índice 1 fixo: com o
-        `--screen=1` empedrado o vídeo abria no monitor do operador quando o
-        telão configurado não era o segundo da lista.
+        no Linux abre em tela cheia no telão pelo mesmo critério do vídeo
+        local (ver `_opcoes_telao_mpv`): `--fs-screen`/nomes de saída, não o
+        índice 1 nem o foco do compositor.
         """
         self._player_em_uso = "mpv"
         if _eh_windows():
@@ -836,9 +847,9 @@ class MediaPlayer:
         # clampia a posição fora da saída de volta para o operador).
         return [
             'mpv', '--fullscreen',
-            f'--screen={self._indice_screennumber()}',
+            *_opcoes_telao_mpv(self._monitor_alvo().name,
+                               self._indice_screennumber()),
             '--really-quiet', '--no-terminal',
-            *_opcoes_telao_wayland(self._monitor_alvo().name),
             *_MPV_YTDL_OPCOES,
             url,
         ]

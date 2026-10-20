@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.1.8.AppImage
-   ./NavePro-2.1.8.AppImage
+   chmod +x NavePro-2.1.9.AppImage
+   ./NavePro-2.1.9.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.8          # gera NavePro-2.1.8.AppImage
+./build.sh 2.1.9          # gera NavePro-2.1.9.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.1.8
+   ./build.sh 2.1.9
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.1.8: ..."
-   git tag v2.1.8
-   git push origin main v2.1.8
+   git add -A && git commit -m "NavePro 2.1.9: ..."
+   git tag v2.1.9
+   git push origin main v2.1.9
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.1.8 NavePro-2.1.8.AppImage \
-     --title "NavePro 2.1.8" --notes "O que mudou nesta versão..."
+   gh release create v2.1.9 NavePro-2.1.9.AppImage \
+     --title "NavePro 2.1.9" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -536,6 +536,25 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.1.9
+
+- **YouTube no telão corrigido**: ao executar o **2º vídeo** da Ordem de Serviço
+  com o 1º tocando, o vídeo agora abre sempre no **monitor 2**. O mpv passa a
+  receber `--fs-screen` (X11) ou o **nome da saída** (`--fs-screen-name`, no
+  Wayland) — antes só recebia `--screen`, que posiciona a janela mas deixa a
+  tela cheia seguir o foco do gerenciador de janelas.
+- **Contagem regressiva permanece no telão**: ao terminar um **slide** (ou
+  letra/anúncio), com a contagem regressiva ativa a **frase/número voltam** ao
+  telão, em vez de a temperatura tomar o lugar do nome/frase. Vale também para o
+  fim de música/vídeo com uma projeção na tela: o medidor ativo é retomado com o
+  tempo real.
+- **Aba Relógio — botão Salvar**: agora apenas **aplica** as configurações e
+  **mantém a janela aberta** (antes fechava, obrigando a reabrir a cada ajuste).
+  Salvar as cores do relógio também **preserva o nome/frase da contagem**.
+- Botão **"Ocultar relógio do telão"**: esconde a hora e a temperatura mantendo
+  o fundo (cor ou imagem) configurado, **sem afetar projeções nem a
+  contagem/cronômetro**. Vale só na sessão (não é gravado no `config.json`).
 
 ### 2.1.8
 

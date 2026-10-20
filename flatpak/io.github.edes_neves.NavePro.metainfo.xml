@@ -40,6 +40,16 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.9" date="2026-10-19">
+      <description>
+        <ul>
+          <li>YouTube no telão: o 2º vídeo da Ordem de Serviço agora abre sempre no monitor 2 (usa --fs-screen/nome de saída em vez de só --screen)</li>
+          <li>Contagem regressiva permanece no telão ao terminar um slide (ou música/vídeo): a frase volta em vez da temperatura</li>
+          <li>Aba Relógio: o botão Salvar só aplica as configurações e mantém a janela aberta (era preciso reabrir a cada ajuste); o nome/frase da contagem é preservado ao salvar as cores</li>
+          <li>Botão "Ocultar relógio do telão": esconde hora e temperatura mantendo o fundo, sem afetar projeções nem a contagem/cronômetro</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.8" date="2026-10-18">
       <description>
         <ul>
