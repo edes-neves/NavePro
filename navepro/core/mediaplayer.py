@@ -590,13 +590,15 @@ class MediaPlayer:
 
         1. **Janela no telão** — reposiciona em uma thread de fundo, para não
            travar a interface enquanto espera a janela do player aparecer. Só
-           para vídeo: arquivo de áudio não tem janela para cobrir.
+           para vídeo: arquivo de áudio não tem janela para cobrir. URL
+           (YouTube) também é vídeo: o mpv abre a janela pelo yt-dlp e precisa
+           do mesmo posicionamento para ficar em tela cheia no telão.
 
         2. **Comando remoto** — se o player for o mpv, conecta no IPC dele. É
            o que dá pausa/continuar/parar e o tempo exato, e só precisa do
            pipe: não bloqueia.
         """
-        if self._eh_arquivo_de_video(arquivo):
+        if _eh_url(arquivo) or self._eh_arquivo_de_video(arquivo):
             # O VLC já entra em tela cheia no monitor certo por conta própria
             # (--fullscreen + --qt-fullscreen-screennumber), e redimensionar a
             # janela de vídeo dele quebra o vout (ver _montar_comando_player).

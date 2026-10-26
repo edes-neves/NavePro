@@ -403,6 +403,16 @@ def _rodar() -> int:
                "posicionar_janela_player" in ramo_win32
                and "esconder_janelas_auxiliares" not in ramo_win32)
 
+    # URL (YouTube) também é vídeo: sem isso o mpv abria no tamanho padrão,
+    # porque só arquivos com extensão de vídeo passavam pelo SetWindowPos.
+    condicoes_video = [
+        n for n in ast.walk(arvore_preparar)
+        if isinstance(n, ast.If)
+        and "_eh_arquivo_de_video" in ast.unparse(n.test)
+    ]
+    checar("_preparar_controle_windows posiciona URL (YouTube em tela cheia)",
+           any("_eh_url" in ast.unparse(n.test) for n in condicoes_video))
+
     # ── 6. Posicionamento: coordenadas exatas, sem sair do SO ─────────
     if _eh_windows():
         checar("esconder_janelas_auxiliares ignora PID inexistente",
