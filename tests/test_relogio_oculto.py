@@ -16,7 +16,7 @@ tree = ast.parse(src)
 nos = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 
 _metodos = ('mostrar_relogio', '_esconder_textos_relogio',
-            'definir_relogio_oculto')
+            'definir_relogio_oculto', '_desativar_topmost_projecao')
 _corpo = "\n".join(ast.get_source_segment(src, nos[n]) for n in _metodos)
 
 ns = {}
@@ -147,6 +147,14 @@ t = Stub(oculto=True, vivo=False)
 t.mostrar_relogio("10:00", "25°")
 t.definir_relogio_oculto(True)
 check('telão morto: sem chamadas de canvas', not t.canvas.chamadas)
+
+# 7) voltar ao relógio desliga o -topmost usado durante as projeções
+t = Stub(oculto=False)
+t._topmost_projecao = True
+t.mostrar_relogio("10:00", "25°")
+check('relógio: topmost desligado', t._topmost_projecao is False)
+check('relógio: -topmost=False aplicado',
+      ('-topmost', False) in t.root.attrs, str(t.root.attrs))
 
 print('\n' + ('TODOS OS CASOS PASSARAM' if not falhas else f'FALHAS: {falhas}'))
 sys.exit(1 if falhas else 0)

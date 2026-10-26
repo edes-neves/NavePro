@@ -65,6 +65,14 @@ _CANDIDATOS_WINDOWS: dict[str, tuple[str, ...]] = {
         r"%ProgramFiles%\MPC-HC\mpc.exe",
         r"%ProgramFilesX86%\MPC-HC\mpc.exe",
     ),
+    "powerpnt": (
+        r"%ProgramFiles%\Microsoft Office\root\Office*\POWERPNT.EXE",
+        r"%ProgramFilesX86%\Microsoft Office\root\Office*\POWERPNT.EXE",
+        r"%ProgramFiles%\Microsoft Office\Office*\POWERPNT.EXE",
+        r"%ProgramFilesX86%\Microsoft Office\Office*\POWERPNT.EXE",
+        r"%ProgramFiles%\Microsoft Office 15\root\office15\POWERPNT.EXE",
+        r"%ProgramFilesX86%\Microsoft Office 15\root\office15\POWERPNT.EXE",
+    ),
 }
 
 # Caminhos absolutos do Linux, mantidos exatamente como o NavePro já usava.
@@ -111,6 +119,42 @@ def _trocar_wrapper_console(caminho: str) -> str:
     if os.path.isfile(irmao):
         return irmao
     return caminho
+
+
+def _app_path_windows(nome: str) -> str | None:
+    """Procura `nome` no registro App Paths do Windows.
+
+    É onde instaladores registram o caminho real do executável (o PowerPoint
+    do Microsoft 365, por exemplo, fica em `...\\Microsoft Office\\root\\
+    Office16\\POWERPNT.EXE` e normalmente não está no PATH). Só Windows:
+    `winreg` não existe nas outras plataformas.
+    """
+    if not _eh_windows():
+        return None
+    exe = nome if nome.lower().endswith(".exe") else nome + ".exe"
+    try:
+        import winreg
+    except ImportError:
+        return None
+
+    chaves = (
+        (winreg.HKEY_CURRENT_USER,
+         rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{exe}"),
+        (winreg.HKEY_LOCAL_MACHINE,
+         rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{exe}"),
+        (winreg.HKEY_LOCAL_MACHINE,
+         rf"Software\WOW6432Node\Microsoft\Windows\CurrentVersion"
+         rf"\App Paths\{exe}"),
+    )
+    for raiz, subchave in chaves:
+        try:
+            with winreg.OpenKey(raiz, subchave) as chave:
+                valor, _tipo = winreg.QueryValueEx(chave, None)
+        except OSError:
+            continue
+        if valor and os.path.isfile(valor):
+            return _trocar_wrapper_console(valor)
+    return None
 
 
 def _expandir_padrao(relativo: str, env: dict[str, str]) -> str:
@@ -181,7 +225,10 @@ def localizar_executavel(nome: str) -> str | None:
     if via_path:
         achado = _trocar_wrapper_console(via_path)
 
-    # 2. Caminhos absolutos de instalação.
+    # 2. Caminhos absolutos de instalação (App Paths do registro e pastas
+    #    padrão). O PowerPoint do Microsoft 365 só aparece no registro.
+    if achado is None and _eh_windows():
+        achado = _app_path_windows(nome)
     if achado is None and _eh_windows():
         for candidato in _candidatos_windows(nome):
             achado = candidato

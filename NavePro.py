@@ -50,6 +50,7 @@ from navepro.config import (
 from navepro.core.ambiente import (
     _ambiente_sem_appimage,
     _eh_appimage,
+    _eh_flatpak,
     _eh_windows,
     _tornar_dpi_aware,
 )
@@ -64,6 +65,11 @@ from navepro.core.anuncios import (
     _migrar_anuncios_do_json,
     _projetar_anuncio_ordserv,
     _tipo_midia_para_arquivo,
+)
+from navepro.core.apresentacao import (
+    _ambiente_apresentacao,
+    _comando_apresentacao,
+    _monitorar_apresentacao,
 )
 from navepro.core.atualizacao import (
     FORMATO_FLATPAK,
@@ -85,6 +91,11 @@ from navepro.core.banco import (
 from navepro.core.busca import SearchWorker
 from navepro.core.clima import (
     obter_temperatura,
+)
+from navepro.core.foco_apresentacao import (
+    _agendar_captura_janela_apresentacao,
+    _criar_alvo_apresentacao,
+    _focar_apresentacao,
 )
 from navepro.core.fontes_pil import (
     _PCT_FONTE_CAIXA,
@@ -663,6 +674,10 @@ class AppInterface:
         # Snapshot do player guardado durante um item de serviço (restaurado
         # quando o item termina; compartilhado com o controle remoto)
         self._snapshot_servico: dict = {"guardada": False}
+        # Apresentação (PowerPoint/Impress) aberta pelo serviço: guarda o
+        # caminho/PID e a janela do slide show para devolver o foco quando
+        # uma projeção de versículo terminar.
+        self._apresentacao_alvo: dict | None = None
         
         self.cidade_salva: str = self.config_data.get("cidade", "")
         self.estado_salvo: str = self.config_data.get("estado", "")
@@ -709,6 +724,7 @@ class AppInterface:
                 t.configurar_relogio(self.config_data.get("relogio", {}))
             except Exception:
                 pass
+            self._registrar_foco_apresentacao_telao(t)
 
         # Estado dos medidores (cronômetro / contagem regressiva)
         self._crono = {
@@ -737,6 +753,7 @@ class AppInterface:
                     self.config_data.get("relogio", {}))
                 novo_telao.definir_relogio_oculto(self._relogio_oculto_telao)
                 novo_telao._exibir_hora_inicial()
+                self._registrar_foco_apresentacao_telao(novo_telao)
             except Exception as _e_reap:
                 log.exception(f"⚠️ Erro ao reaplicar config no telão recriado: "
                       f"{_e_reap}")
@@ -1373,32 +1390,63 @@ class AppInterface:
                 # o telão enquanto estiver aberta.
                 self.player._matar_processo()
                 self.player.telao.preparar_video()
-                if _eh_windows():
-                    _cmd_apres = ['cmd', '/c', 'start', '', caminho]
-                elif _ext == '.pdf':
-                    # PDF: visualizador padrão do sistema (o LibreOffice
-                    # em modo apresentação não serve para PDF).
-                    _cmd_apres = ['xdg-open', caminho]
-                else:
-                    _cmd_apres = ['xdg-open', caminho]
-                    for _so in ('libreoffice', 'soffice'):
-                        if self.player._player_existe(_so):
-                            _cmd_apres = [_so, '--show', caminho]
-                            break
+                _cmd_apres = _comando_apresentacao(
+                    caminho, windows=_eh_windows(), flatpak=_eh_flatpak())
+                _env_apres = _ambiente_sem_appimage()
+                if not _eh_windows():
+                    if _monitorar_apresentacao(_cmd_apres):
+                        # Mantém o slide show no XWayland
+                        # (ver foco_apresentacao).
+                        _env_apres = _ambiente_apresentacao(_env_apres)
+                    # O LibreOffice abre as janelas no monitor da janela
+                    # ativa. Devolve o foco ao painel (primário) antes de
+                    # lançar, senão editor e apresentação podem nascer os
+                    # dois no telão.
+                    try:
+                        self.root.lift()
+                        self.root.focus_force()
+                        self.root.update_idletasks()
+                    except tk.TclError:
+                        pass
                 try:
                     _proc_apres = subprocess.Popen(
                         _cmd_apres, start_new_session=True,
-                        env=_ambiente_sem_appimage())
+                        env=_env_apres)
                 except Exception as e:
                     log.exception(f"❌ Erro ao abrir apresentação/PDF: {e}")
                     iniciado = False
                 else:
                     iniciado = True
-                    if _cmd_apres[0] in ('libreoffice', 'soffice'):
+                    # Guarda a apresentação aberta e captura a janela do
+                    # slide show em segundo plano: quando a projeção de um
+                    # versículo terminar, o foco volta para ela.
+                    _alvo_anterior = self._apresentacao_alvo
+                    if _alvo_anterior is not None:
+                        _alvo_anterior["cancelado"] = True
+                    try:
+                        _geom_monitor_apres = self.player._get_monitor_geometry()
+                    except Exception:
+                        _geom_monitor_apres = None
+                    _geom_painel_apres = None
+                    if getattr(self, "_monitor_geo", None):
+                        _mw, _mh, _mx, _my = self._monitor_geo
+                        _geom_painel_apres = (_mx, _my, _mw, _mh)
+                    _alvo_apres = _criar_alvo_apresentacao(
+                        caminho, getattr(_proc_apres, "pid", None),
+                        _geom_monitor_apres, _geom_painel_apres)
+                    self._apresentacao_alvo = _alvo_apres
+                    _agendar_captura_janela_apresentacao(
+                        self.root, _alvo_apres)
+                    if _monitorar_apresentacao(_cmd_apres):
                         # Monitora o fim da apresentação e restaura o telão
                         def _monitor_apres():
                             _rc = _proc_apres.poll()
                             if _rc is not None:
+                                _alvo_atual = getattr(
+                                    self, "_apresentacao_alvo", None)
+                                if _alvo_atual is _alvo_apres:
+                                    _alvo_apres["cancelado"] = True
+                                    self._apresentacao_alvo = None
                                 try:
                                     self.player.telao.restaurar_tela()
                                 except Exception:
@@ -3397,6 +3445,33 @@ class AppInterface:
         self.atualizar_lista()
 
     # ── Criação de widgets ─────────────────────────────────────────
+
+    def _registrar_foco_apresentacao_telao(self, telao) -> None:
+        """Registra no telão o retorno de foco para a apresentação aberta.
+
+        Precisa ser reaplicado sempre que o telão é recriado pelo player.
+        """
+        if telao is None:
+            return
+        try:
+            telao.definir_retorno_apresentacao(self._ao_encerrar_projecao)
+        except Exception as e:
+            log.warning(f"⚠️ Falha ao registrar foco da apresentação: {e}")
+
+    def _ao_encerrar_projecao(self) -> None:
+        """Devolve o foco ao PowerPoint/Impress ao fim de uma projeção.
+
+        Chamado pelo telão depois de restaurar o relógio/medidor. Se a
+        apresentação já tiver sido fechada, `_focar_apresentacao` recusa e
+        nada é trazido para a frente.
+        """
+        alvo = getattr(self, "_apresentacao_alvo", None)
+        if not alvo:
+            return
+        try:
+            _focar_apresentacao(alvo)
+        except Exception as e:
+            log.warning(f"⚠️ Falha ao devolver foco à apresentação: {e}")
 
     def _criar_menu(self) -> None:
         """Cria a barra de menu no topo da janela."""

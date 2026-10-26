@@ -85,6 +85,7 @@ class TelaoWindow:
         self.root.configure(bg='black')
         self.root.attributes('-alpha', self._alpha_relogio())
         self.root.attributes('-topmost', False)
+        self._topmost_projecao = False
         self._fullscreen: bool = True
         self._aplicar_tela_cheia(True)
         self.root.lift()
@@ -175,6 +176,10 @@ class TelaoWindow:
         # (slide/texto/imagem) termina e ainda há um medidor ativo, ele é
         # reprojetado no lugar do relógio em vez do relógio voltar sozinho.
         self._ao_voltar_relogio = None
+        # Chamado quando uma projeção de texto termina (mesmo que um medidor
+        # ativo reassuma a tela): o operador usa para devolver o foco à
+        # apresentação PowerPoint/Impress que estava em curso.
+        self._ao_encerrar_projecao = None
         self.root.protocol("WM_DELETE_WINDOW", self.fechar)
         # Aplica alpha imediatamente
         self.root.attributes('-alpha', self._alpha_relogio())
@@ -355,6 +360,9 @@ class TelaoWindow:
             # Durante projeções (slides/vídeo/texto/imagem/medidor) o relógio
             # não deve redesenhar hora/temperatura por cima do conteúdo.
             return
+        # Ao voltar ao relógio a janela deixa de ser topmost: a apresentação
+        # em tela cheia (Impress/PowerPoint) precisa ficar na frente dela.
+        self._desativar_topmost_projecao()
         if getattr(self, "_relogio_oculto", False):
             # Relógio oculto pelo operador: mantém o telão limpo (só o fundo,
             # com a cor ou imagem configurada). Projeções/medidores não são
@@ -441,6 +449,7 @@ class TelaoWindow:
         """Prepara para exibição de vídeo (esconde o telão)."""
         if not self._raiz_viva():
             return
+        self._desativar_topmost_projecao()
         self.mostrando_relogio = False
         if self._current_alpha != 0.0:
             try:
@@ -671,6 +680,32 @@ class TelaoWindow:
         self.root.configure(bg=cor_fundo)
         self.main_frame.configure(bg=cor_fundo)
         self.canvas.configure(bg=cor_fundo)
+    def _desativar_topmost_projecao(self) -> None:
+        """Devolve o telão à camada normal (relógio ou vídeo)."""
+        if not getattr(self, "_topmost_projecao", False):
+            return
+        try:
+            self.root.attributes('-topmost', False)
+        except tk.TclError:
+            return
+        self._topmost_projecao = False
+    def _elevar_para_projecao(self) -> None:
+        """Coloca o telão acima de uma apresentação em tela cheia.
+
+        O ``lift()`` sozinho só vence enquanto a janela acabou de ser
+        mapeada. Depois que o foco volta ao Impress/PowerPoint, a janela em
+        tela cheia fica na frente e a projeção seguinte aparece por baixo.
+        ``-topmost`` muda a camada do telão e vence a tela cheia em todas as
+        projeções; o estado é desligado ao voltar ao relógio
+        (``mostrar_relogio``) e ao preparar um vídeo.
+        """
+        try:
+            if not getattr(self, "_topmost_projecao", False):
+                self.root.attributes('-topmost', True)
+                self._topmost_projecao = True
+            self.root.lift()
+        except tk.TclError:
+            pass
     def projetar_texto(self, texto: str, titulo: str = "") -> None:
         """Projeta texto (letra/versículo) no telão com a fonte configurada.
         Esconde relógio e temperatura, exibe o texto formatado no centro e
@@ -706,7 +741,7 @@ class TelaoWindow:
             self.root.attributes('-alpha', alpha)
             self._current_alpha = alpha
         self._aplicar_fundo_projecao()
-        self.root.lift()
+        self._elevar_para_projecao()
         # Esconde temperatura
         self.canvas.itemconfig(self.temp_text, text="", state="hidden")
         # Monta o texto final (título em destaque + letra)
@@ -861,7 +896,7 @@ class TelaoWindow:
             self.root.attributes('-alpha', alpha)
             self._current_alpha = alpha
         self._aplicar_fundo_projecao()
-        self.root.lift()
+        self._elevar_para_projecao()
         # Esconde temperatura
         self.canvas.itemconfig(self.temp_text, text="", state="hidden")
         self._mostrar_slide(max(0, min(indice_inicial, len(self._slides) - 1)))
@@ -907,7 +942,7 @@ class TelaoWindow:
             self.root.attributes('-alpha', alpha)
             self._current_alpha = alpha
         self._aplicar_fundo_projecao()
-        self.root.lift()
+        self._elevar_para_projecao()
         # Dá foco de teclado ao telão assim que a projeção começa: sem isso
         # o operador precisa clicar no telão uma vez para o teclado/passador
         # de slides (setas, AvPag/RetPag, espaço, F5) responder.
@@ -1056,7 +1091,7 @@ class TelaoWindow:
             self.root.attributes('-alpha', alpha)
             self._current_alpha = alpha
         self._aplicar_fundo_projecao()
-        self.root.lift()
+        self._elevar_para_projecao()
         # Esconde temperatura e referência (o texto do anúncio usa o overlay)
         self.canvas.itemconfig(self.temp_text, text="", state="hidden")
         self.canvas.itemconfig(self.ref_text, text="", state="hidden")
@@ -1311,7 +1346,7 @@ class TelaoWindow:
         janelas só o honra depois de processar o mapa/raise da janela.
         """
         try:
-            self.root.lift()
+            self._elevar_para_projecao()
             self.root.focus_force()
             self.canvas.focus_set()
             self.root.after_idle(self._reforcar_foco)
@@ -1371,6 +1406,23 @@ class TelaoWindow:
         except Exception as e:
             log.warning(f"⚠️ Falha ao retomar o medidor ativo: {e}")
             return False
+    def definir_retorno_apresentacao(self, callback) -> None:
+        """Registra o retorno de foco após o fim de uma projeção de texto.
+
+        O operador (NavePro.py) usa para trazer de volta a janela do
+        PowerPoint/Impress que estava em modo de apresentação. ``None``
+        desliga o retorno.
+        """
+        self._ao_encerrar_projecao = callback
+    def _avisar_fim_projecao(self) -> None:
+        """Informa ao operador que a projeção terminou (para devolver foco)."""
+        cb = getattr(self, "_ao_encerrar_projecao", None)
+        if cb is None:
+            return
+        try:
+            cb()
+        except Exception as e:
+            log.warning(f"⚠️ Falha no retorno após a projeção: {e}")
     def _retornar_ao_relogio(self) -> None:
         """Retorna relógio + temperatura ao telão ao fim da projeção."""
         self._proj_timer = None
@@ -1430,10 +1482,12 @@ class TelaoWindow:
         # nesse caso modo_antes já era o medidor e o relógio é restaurado.
         if modo_antes not in ("contagem", "cronometro") and \
                 self._retomar_medidor_ativo():
+            self._avisar_fim_projecao()
             return
         temp = getattr(self, "_temp_salvo", "") or ""
         self.mostrar_relogio(datetime.datetime.now().strftime("%H:%M"), temp)
         self.root.update_idletasks()
+        self._avisar_fim_projecao()
     def parar_projecao(self) -> None:
         """Encerra a projeção de texto e restaura o relógio imediatamente."""
         if getattr(self, "_proj_timer", None) is not None:
@@ -1563,7 +1617,7 @@ class TelaoWindow:
         self.root.configure(bg=cor_fundo)
         self.main_frame.configure(bg=cor_fundo)
         self.canvas.configure(bg=cor_fundo)
-        self.root.lift()
+        self._elevar_para_projecao()
         w = self.canvas.winfo_width() or self._monitor.width
         h = self.canvas.winfo_height() or self._monitor.height
         if w < 100 or h < 100:

@@ -27,7 +27,9 @@ src_t = open(ARQ_T, encoding="utf-8").read()
 nos_t = {n.name: n for n in ast.walk(ast.parse(src_t))
          if isinstance(n, ast.FunctionDef)}
 _corpo_t = "\n".join(ast.get_source_segment(src_t, nos_t[n])
-                     for n in ("_retomar_medidor_ativo", "_retornar_ao_relogio"))
+                     for n in ("_retomar_medidor_ativo",
+                               "_avisar_fim_projecao",
+                               "_retornar_ao_relogio"))
 
 # ── Trecho do NavePro.py ──────────────────────────────────────────────
 src = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
@@ -81,6 +83,7 @@ class TelaoStub(Telao):
     def __init__(self, ao_voltar=None, visivel=False, relogio=False,
                  mostrando_letra=True):
         self._ao_voltar_relogio = ao_voltar
+        self._ao_encerrar_projecao = None
         self._is_visible = visivel
         self.mostrando_relogio = relogio
         self.mostrando_letra = mostrando_letra
@@ -313,6 +316,25 @@ check("seguro: repassa o cfg da chave",
       op._telao.recebeu[0] == {"cor_hora": "#fff"}, str(op._telao.recebeu))
 check("seguro: respeita guardar_temp False",
       op._telao.recebeu[4] is False, str(op._telao.recebeu))
+
+# ── 8) Fim da projeção avisa para devolver o foco à apresentação ──
+focos = []
+op = OperadorStub(medidor_projetado=None)
+op._telao = TelaoStub(ao_voltar=op._reprojetar_medidor_ativo)
+op._telao._ao_encerrar_projecao = lambda: focos.append("relogio")
+op._telao._retornar_ao_relogio()
+check("relógio: avisa o fim da projeção", focos == ["relogio"], str(focos))
+
+focos.clear()
+op = OperadorStub(
+    medidor_projetado="contagem",
+    contagem={"rodando": True, "pausado": False, "fim": time.time() + 60,
+              "restante": 60.0, "total": 60.0,
+              "titulo": "Vamos começar em:", "timer_id": None})
+op._telao = TelaoStub(ao_voltar=op._reprojetar_medidor_ativo)
+op._telao._ao_encerrar_projecao = lambda: focos.append("medidor")
+op._telao._retornar_ao_relogio()
+check("medidor: avisa o fim da projeção", focos == ["medidor"], str(focos))
 
 print("\n" + ("TODOS OS CASOS PASSARAM" if not falhas else f"FALHAS: {falhas}"))
 sys.exit(1 if falhas else 0)
