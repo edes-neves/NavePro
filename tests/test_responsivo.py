@@ -18,7 +18,10 @@ _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
 
-from navepro.core.util_tk import _limitar_ao_monitor  # noqa: E402
+from navepro.core.util_tk import (  # noqa: E402
+    _centralizar_sobre,
+    _limitar_ao_monitor,
+)
 
 _SRC = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
 _SRC_INTEG = open(
@@ -87,7 +90,7 @@ def limitar(sw, sh, w, h):
 # Em 1024x768 nada pode passar da margem da tela.
 f, (w, h) = limitar(1024, 768, 1100, 750)
 check("1024x768: largura > tela é limitada", w <= 1024 and h <= 768, f.geo)
-check("1024x768: geometria com coordenadas", "+" in f.geo, f.geo)
+check("1024x768: geometria só com o tamanho", "+" not in f.geo, f.geo)
 
 f, (w, h) = limitar(1024, 768, 680, 980)
 check("1024x768: altura > tela é limitada", w == 680 and h <= 768, f.geo)
@@ -109,6 +112,75 @@ check("tela 800x600: não estoura a tela", w <= 800 and h <= 600, f.geo)
 # Nunca aumenta o tamanho pedido.
 f, (w, h) = limitar(4000, 3000, 500, 400)
 check("nunca aumenta além do pedido", (w, h) == (500, 400), f.geo)
+
+# Com a área do monitor do operador (não a tela virtual inteira), a janela
+# é limitada pela altura do monitor primário — não pela soma dos monitores.
+f = _FakeJanela(3840, 1080)
+aplicado = _limitar_ao_monitor(
+    f, 680, 980, area=(1920, 0, 1366, 768))
+check("área do operador limita a altura do diálogo",
+      aplicado == (680, 720), str(aplicado))
+check("área do operador gera geometria só com tamanho",
+      f.geo == "680x720", f.geo)
+
+f = _FakeJanela(3840, 1080)
+aplicado = _limitar_ao_monitor(
+    f, 1100, 750, area=(1920, 0, 1366, 768))
+check("1100x750 cabe ajustado no monitor do operador",
+      aplicado == (1100, 720), str(aplicado))
+
+
+class _FakeDialogo:
+    def __init__(self, w, h):
+        self._w, self._h = w, h
+        self.geo = None
+
+    def update_idletasks(self):
+        pass
+
+    def winfo_width(self):
+        return self._w
+
+    def winfo_height(self):
+        return self._h
+
+    def winfo_reqwidth(self):
+        return self._w
+
+    def winfo_reqheight(self):
+        return self._h
+
+    def geometry(self, g):
+        self.geo = g
+
+
+d = _FakeDialogo(680, 600)
+_centralizar_sobre(d, area=(1920, 50, 1366, 768))
+check("centraliza na área do monitor do operador (x/y respeitados)",
+      d.geo == "+2263+134", d.geo)
+
+# Sem a área, o comportamento antigo (centralizar sobre o pai) é mantido.
+class _FakePai:
+    def winfo_exists(self):
+        return True
+
+    def winfo_x(self):
+        return 10
+
+    def winfo_y(self):
+        return 20
+
+    def winfo_width(self):
+        return 900
+
+    def winfo_height(self):
+        return 700
+
+
+d = _FakeDialogo(400, 300)
+_centralizar_sobre(d, _FakePai())
+check("sem área continua centralizando sobre o pai",
+      d.geo == "+260+220", d.geo)
 
 
 # ── 2) Janela principal ──
@@ -147,6 +219,47 @@ check(
     and '"800x900"' not in _SRC
     and '"680x860"' not in _SRC
     and '"1100x750"' not in _SRC,
+)
+check(
+    "diálogos usam a área do monitor do operador",
+    "_SRC.count('_area_monitor_operador') >= 7"
+    and _SRC.count("area=self._area_monitor_operador()") >= 6,
+    str(_SRC.count("area=self._area_monitor_operador()")),
+)
+check(
+    "árvore tem o helper da área do monitor do operador",
+    "_area_monitor_operador" in _NOS,
+)
+
+
+def _carregar_area_monitor_operador():
+    no = _NOS["_area_monitor_operador"]
+    mod = ast.Module(body=[no], type_ignores=[])
+    ast.fix_missing_locations(mod)
+    ns = {}
+    exec(compile(mod, "<area_monitor_operador>", "exec"), ns)
+    return ns["_area_monitor_operador"]
+
+
+_area_operador = _carregar_area_monitor_operador()
+
+
+class _AppComMonitor:
+    _monitor_geo = (1366, 768, 1920, 50)
+
+
+class _AppSemMonitor:
+    _monitor_geo = None
+
+
+check(
+    "helper devolve (x, y, largura, altura) do monitor primário",
+    _area_operador(_AppComMonitor()) == (1920, 50, 1366, 768),
+    str(_area_operador(_AppComMonitor())),
+)
+check(
+    "helper sem geometria devolve None (fallback antigo)",
+    _area_operador(_AppSemMonitor()) is None,
 )
 
 

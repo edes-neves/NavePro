@@ -2748,10 +2748,12 @@ class AppInterface:
 
         cfg_win = tk.Toplevel(self.root)
         cfg_win.title("⚙️ Configura Relógio / Cronômetro / Contagem")
-        _limitar_ao_monitor(cfg_win, 680, 980)
+        _limitar_ao_monitor(cfg_win, 680, 980,
+                            area=self._area_monitor_operador())
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(self.root)
-        _centralizar_sobre(cfg_win, self.root)
+        _centralizar_sobre(cfg_win, self.root,
+                           area=self._area_monitor_operador())
         cfg_win.after(50, cfg_win.grab_set)
 
         c_main = tk.Frame(cfg_win, bg='#0d1117')
@@ -4290,6 +4292,21 @@ class AppInterface:
                     self.root.geometry(f"{mw}x{mh}+{mx}+{my}")
             self._maximizado = True
 
+    def _area_monitor_operador(self) -> tuple[int, int, int, int] | None:
+        """Retângulo `(x, y, largura, altura)` do monitor do operador.
+
+        Em multi-monitor a janela principal pode aparecer maximizada sobre a
+        tela virtual inteira (X11/Wayland), então `winfo_x()`/`winfo_width()`
+        não servem para centralizar diálogos: o centro da tela virtual cai no
+        telão. A geometria do monitor primário é guardada em `_monitor_geo`
+        ao iniciar; os diálogos usam esta área.
+        """
+        geo = getattr(self, "_monitor_geo", None)
+        if not geo:
+            return None
+        largura, altura, x, y = geo
+        return (x, y, largura, altura)
+
     def criar_widgets(self) -> None:
         """Cria todos os widgets da interface principal."""
         main_frame = tk.Frame(self.root, bg='#0d1117')
@@ -5554,10 +5571,12 @@ class AppInterface:
         """Janela completa para gerenciar as mídias do banco."""
         janela = tk.Toplevel(self.root)
         janela.title("📦 Gerenciar Banco de Mídia")
-        _limitar_ao_monitor(janela, 800, 900)
+        _limitar_ao_monitor(janela, 800, 900,
+                            area=self._area_monitor_operador())
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        _centralizar_sobre(janela, self.root)
+        _centralizar_sobre(janela, self.root,
+                           area=self._area_monitor_operador())
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -9517,10 +9536,12 @@ class AppInterface:
         dados = _carregar_servicos_json()
         janela = tk.Toplevel(self.root)
         janela.title("📋 Ordem de Serviço")
-        _limitar_ao_monitor(janela, 1100, 750)
+        _limitar_ao_monitor(janela, 1100, 750,
+                            area=self._area_monitor_operador())
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
-        _centralizar_sobre(janela, self.root)
+        _centralizar_sobre(janela, self.root,
+                           area=self._area_monitor_operador())
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -10002,7 +10023,7 @@ class AppInterface:
                 """Resolve o nº/termo digitado → letra do hino e mostra preview."""
                 res = _resolver_hino()
                 if not res[0]:
-                    tkinter.messagebox.showwarning("Hino", res[1], parent=janela)
+                    tkinter.messagebox.showwarning("Hino", res[1], parent=add_win)
                     return
                 _, _, letra_snap, ref_display, _rid = res
                 preview_hino.config(state='normal')
@@ -10365,7 +10386,7 @@ class AppInterface:
                         tkinter.messagebox.showwarning(
                             "YouTube",
                             "Informe a URL do vídeo (começando com http:// "
-                            "ou https://).", parent=janela)
+                            "ou https://).", parent=add_win)
                         return
                     tipo = "youtube"
                     caminho_arquivo = ""
@@ -10401,7 +10422,7 @@ class AppInterface:
                     res_h = _resolver_hino()
                     if not res_h[0]:
                         tkinter.messagebox.showwarning("Hino", res_h[1],
-                                                       parent=janela)
+                                                       parent=add_win)
                         return
                     _, _, letra_snap, ref_display, ref_id = res_h
                     if not titulo or _usou_titulo_como_busca:
@@ -10414,7 +10435,7 @@ class AppInterface:
                     if not rows_match:
                         tkinter.messagebox.showwarning(
                             "Busca", f"Nenhum hino encontrado para: \"{termo}\".",
-                            parent=janela)
+                            parent=add_win)
                         return
                     ref_hino = rows_match[0]
                     ref_id = ref_hino.get("id")
@@ -10425,7 +10446,7 @@ class AppInterface:
                     if not os.path.exists(caminho_arquivo):
                         tkinter.messagebox.showwarning(
                             "Arquivo", f"Arquivo não encontrado:\n{caminho_arquivo}",
-                            parent=janela)
+                            parent=add_win)
                         return
                     if not titulo or _usou_titulo_como_busca:
                         titulo = (os.path.splitext(os.path.basename(caminho_arquivo))[0]
@@ -10438,7 +10459,7 @@ class AppInterface:
                     if not rows_match:
                         tkinter.messagebox.showwarning(
                             "Busca", f"Nenhuma {tipo.title()} encontrada para: \"{termo}\".",
-                            parent=janela)
+                            parent=add_win)
                         return
                     ref_midia = rows_match[0]
                     ref_id = ref_midia.get("id")
@@ -10453,7 +10474,7 @@ class AppInterface:
                         tkinter.messagebox.showwarning(
                             "Anúncios",
                             "O anúncio selecionado não foi encontrado.",
-                            parent=janela)
+                            parent=add_win)
                         return
                     ref_id = ref_an.get("id")
                     letra_snap = ref_an.get("texto") or ""
@@ -10464,7 +10485,7 @@ class AppInterface:
                     if not rows_match:
                         tkinter.messagebox.showwarning(
                             "Busca", f"Nenhum anúncio encontrado para: \"{termo}\".",
-                            parent=janela)
+                            parent=add_win)
                         return
                     ref_an = rows_match[0]
                     ref_id = ref_an.get("id")
@@ -10475,7 +10496,7 @@ class AppInterface:
                     res = _resolver_referencia_biblia()
                     if not res[0]:
                         tkinter.messagebox.showwarning("Bíblia", res[1],
-                                                       parent=janela)
+                                                       parent=add_win)
                         return
                     _, _, letra_snap, ref_display, ref_id, vers_salvos = res
                     if not titulo or _usou_titulo_como_busca:
@@ -10549,7 +10570,7 @@ class AppInterface:
                                          if it.get("id") != novo_id]
                         dados["_proximo_id_item"] = novo_id
                     tkinter.messagebox.showwarning(
-                        "⚠️", "Não foi possível salvar em servicos.json.", parent=janela)
+                        "⚠️", "Não foi possível salvar em servicos.json.", parent=add_win)
                     return
                 _carregar_itens()
                 tree.selection_set(str(novo_id))

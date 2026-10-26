@@ -15,7 +15,7 @@ log = get_logger("util_tk")
 # ────────────────────────────────────────────────────────────────────
 
 
-def _centralizar_sobre(janela, pai=None) -> None:
+def _centralizar_sobre(janela, pai=None, area=None) -> None:
     """Posiciona `janela` centralizada sobre `pai` (ou sobre a tela).
 
     Uma Toplevel criada só com geometry("LxA") (sem coordenadas) deixa o
@@ -27,6 +27,11 @@ def _centralizar_sobre(janela, pai=None) -> None:
     Mede o tamanho real da janela (com fallback para o tamanho requisitado
     quando ainda não mapeada) e desloca o centro dela para o centro de
     `pai`. Se `pai` não existir mais, centraliza na tela.
+
+    `area`, quando informada, é um retângulo `(x, y, largura, altura)` — por
+    exemplo, a geometria do monitor do operador. Nesse caso a janela é
+    centralizada nessa área, mesmo que `pai` esteja maximizado por vários
+    monitores (no X11, `winfo_width()` pode somar a tela inteira).
     """
     try:
         janela.update_idletasks()
@@ -35,7 +40,9 @@ def _centralizar_sobre(janela, pai=None) -> None:
         if w <= 1 or h <= 1:
             w = max(w, janela.winfo_reqwidth())
             h = max(h, janela.winfo_reqheight())
-        if pai is not None:
+        if area is not None:
+            px, py, pw, ph = (int(v) for v in area)
+        elif pai is not None:
             try:
                 if pai.winfo_exists():
                     px, py = pai.winfo_x(), pai.winfo_y()
@@ -55,7 +62,7 @@ def _centralizar_sobre(janela, pai=None) -> None:
         x = px + max(0, (pw - w) // 2)
         y = py + max(0, (ph - h) // 2)
         janela.geometry(f"+{x}+{y}")
-    except tk.TclError:
+    except (tk.TclError, TypeError, ValueError):
         pass
 
 
@@ -64,28 +71,40 @@ def _centralizar_sobre(janela, pai=None) -> None:
 # ────────────────────────────────────────────────────────────────────
 
 
-def _limitar_ao_monitor(janela, w: int, h: int, margem: int = 48) -> tuple[int, int]:
-    """Define a geometria `w`x`h` de `janela`, limitada ao monitor.
+def _limitar_ao_monitor(
+        janela, w: int, h: int, margem: int = 48,
+        area=None) -> tuple[int, int]:
+    """Define apenas o tamanho `w`x`h` de `janela`, limitado ao monitor.
 
     O NavePro precisa funcionar de 1024x768 até as resoluções mais altas.
     Janelas com tamanho fixo maior que a tela (ex.: 680x980 num monitor de
     1024x768) ficariam cortadas. Aqui o tamanho pedido é limitado à tela
-    com uma margem de segurança (para decoração/barra de tarefas) e
-    centralizado. Nunca aumenta além do pedido nem diminui abaixo de um
-    mínimo utilizável.
+    com uma margem de segurança (para decoração/barra de tarefas). Nunca
+    aumenta além do pedido nem diminui abaixo de um mínimo utilizável.
+
+    A posição NÃO é definida aqui de propósito: em multi-monitor,
+    `winfo_screenwidth()`/`winfo_screenheight()` devolvem a tela virtual
+    inteira e centralizar por eles jogaria o diálogo no monitor do
+    telão. Chame `_centralizar_sobre(janela, pai, area=...)` depois, informando a
+    área do monitor do operador.
+
+    `area`, quando informada, é o retângulo `(x, y, largura, altura)` do
+    monitor do operador: o tamanho é limitado por ele (e não pela tela
+    virtual, que pode ser bem maior com dois monitores).
 
     Devolve o tamanho realmente aplicado `(w, h)`.
     """
     try:
-        aw = janela.winfo_screenwidth()
-        ah = janela.winfo_screenheight()
+        if area is not None:
+            aw, ah = int(area[2]), int(area[3])
+        else:
+            aw = janela.winfo_screenwidth()
+            ah = janela.winfo_screenheight()
         max_w = max(320, aw - margem)
         max_h = max(240, ah - margem)
         w = max(320, min(w, max_w))
         h = max(240, min(h, max_h))
-        x = max(0, (aw - w) // 2)
-        y = max(0, (ah - h) // 2)
-        janela.geometry(f"{w}x{h}+{x}+{y}")
+        janela.geometry(f"{w}x{h}")
         return w, h
     except tk.TclError:
         return w, h
