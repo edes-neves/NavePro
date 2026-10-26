@@ -149,7 +149,6 @@ from navepro.core.slides import (
     _previa_slide,
 )
 from navepro.core.ssl_context import (
-    _baixar,
     _ssl_context,
 )
 from navepro.core.tema import _OPCOES_COR_TK, _OPCOES_TEXTO, _cor_clara
@@ -346,6 +345,28 @@ def _colar_texto_campo(campo) -> None:
     except tk.TclError:
         pass
     campo.insert('insert', texto)
+
+
+def _listar_midias_ativas(tipo: str | None = None) -> list[dict]:
+    """Lista as mídias ativas direto do SQLite, na ordem exibida na janela.
+
+    O Gerenciador de Banco consultava a própria API HTTP local, o que
+    bloqueava a thread do Tk na primeira abertura (servidor ainda subindo e
+    contexto SSL sendo inicializado). A consulta direta elimina essa corrida
+    e mantém a mesma ordenação usada pela API.
+    """
+    consulta = "SELECT * FROM midia WHERE ativo = 1"
+    parametros: list[object] = []
+    if tipo:
+        consulta += " AND tipo = ?"
+        parametros.append(tipo)
+    consulta += (
+        " ORDER BY"
+        " CASE WHEN nome_exibicao GLOB '[0-9]*' THEN 0 ELSE 1 END,"
+        " CAST(SUBSTR(nome_exibicao, 1, INSTR(nome_exibicao || ' ', ' ') - 1) AS INTEGER),"
+        " SUBSTR(nome_exibicao, INSTR(nome_exibicao || ' ', ' ') + 1) ASC"
+    )
+    return db_query(consulta, tuple(parametros))
 
 
 def _listar_pastas_arquivos_usuario(
@@ -5638,28 +5659,21 @@ class AppInterface:
         style.configure("Vertical.TScrollbar", background="#21262d",
                         troughcolor="#161b22", arrowcolor="#f0c040")
 
-        def _atualizar_lista():
-            """Atualiza a TreeView (closure)."""
-            try:
-                tipo_filtro = filtro_var.get()
-                filtro = "" if tipo_filtro == "todos" else f"?tipo={tipo_filtro}"
-                req = urllib.request.Request(f"{BACKEND_URL}/api/midia{filtro}")
-                with _baixar(req, timeout=5) as resp:
-                    midias: list[dict] = json.loads(resp.read().decode())
-            except Exception:
-                midias = []
+        _atualizacao_id = 0
 
+        def _preencher_lista(midias: list[dict]) -> None:
+            """Preenche a TreeView (roda na thread do Tk)."""
             total = len(midias)
-            videos = sum(1 for m in midias if m['tipo'] == 'video')
-            audios = sum(1 for m in midias if m['tipo'] == 'audio')
-            textos = sum(1 for m in midias if m['tipo'] == 'texto')
+            videos = sum(1 for m in midias if m.get('tipo') == 'video')
+            audios = sum(1 for m in midias if m.get('tipo') == 'audio')
+            textos = sum(1 for m in midias if m.get('tipo') == 'texto')
 
             try:
                 gerenciador_info.config(
                     text=f"📊 {total} mídia(s)  |  🎬 {videos}  🎵 {audios}  📄 {textos}"
                 )
             except tk.TclError:
-                pass
+                return
 
             for item in gerenciador_tree.get_children():
                 gerenciador_tree.delete(item)
@@ -5674,17 +5688,54 @@ class AppInterface:
                     tamanho_str = f"{tamanho} B"
 
                 icone = {"video": "🎬", "audio": "🎵", "texto": "📄"}
-                icon = icone.get(m['tipo'], "📁")
+                icon = icone.get(m.get('tipo'), "📁")
                 gerenciador_tree.insert(
                     "", tk.END, iid=str(m['id']),
                     values=(
                         m['id'],
-                        f"{icon} {m['nome_exibicao']}",
-                        m['tipo'],
+                        f"{icon} {m.get('nome_exibicao', '')}",
+                        m.get('tipo', ''),
                         tamanho_str,
                         os.path.basename(m.get('caminho_arquivo', '')),
                     )
                 )
+
+        def _atualizar_lista():
+            """Consulta o banco em background e atualiza a TreeView."""
+            nonlocal _atualizacao_id
+            _atualizacao_id += 1
+            req_id = _atualizacao_id
+
+            try:
+                tipo_filtro = filtro_var.get()
+                gerenciador_info.config(text="⏳ Carregando...")
+            except tk.TclError:
+                return
+            tipo = None if tipo_filtro == "todos" else tipo_filtro
+
+            def _consultar():
+                try:
+                    midias = _listar_midias_ativas(tipo)
+                except Exception as e:
+                    log.exception(f"Erro ao carregar lista de mídias: {e}")
+                    midias = []
+
+                def _aplicar():
+                    if req_id != _atualizacao_id:
+                        return
+                    try:
+                        if not janela.winfo_exists():
+                            return
+                    except tk.TclError:
+                        return
+                    _preencher_lista(midias)
+
+                try:
+                    self.root.after(0, _aplicar)
+                except tk.TclError:
+                    pass
+
+            threading.Thread(target=_consultar, daemon=True).start()
 
         # Botões (usam closures em vez de self._*)
         tk.Button(
@@ -6246,22 +6297,26 @@ class AppInterface:
         def _carregar_hinos(busca: str = ""):
             for item in tree.get_children():
                 tree.delete(item)
+            # A TreeView só usa estas colunas; não vale trazer a letra inteira
+            # de todos os hinos (o banco pode ter milhares de registros).
+            campos = "id, titulo, artista, categoria, ccli_numero"
             if busca and busca != placeholder:
                 if busca.isdigit():
                     # Número do hino está no começo do título (ex.: "11 - ...").
                     num = int(busca)
                     rows = [r for r in db_query(
-                                "SELECT * FROM letras WHERE ativo = 1 ORDER BY titulo")
+                                f"SELECT {campos} FROM letras WHERE ativo = 1 "
+                                "ORDER BY titulo")
                             if _numero_do_titulo(r["titulo"]) == num]
                 else:
                     busca_like = f"%{busca}%"
                     rows = db_query(
-                        "SELECT * FROM letras WHERE ativo = 1 AND "
+                        f"SELECT {campos} FROM letras WHERE ativo = 1 AND "
                         "(titulo LIKE ? OR artista LIKE ? OR letra_completa LIKE ?) "
                         "ORDER BY titulo", (busca_like, busca_like, busca_like))
             else:
                 rows = db_query(
-                    "SELECT * FROM letras WHERE ativo = 1 ORDER BY titulo")
+                    f"SELECT {campos} FROM letras WHERE ativo = 1 ORDER BY titulo")
             for r in rows:
                 tree.insert("", tk.END, iid=str(r['id']),
                             values=(r['id'], r['titulo'], r['artista'],
@@ -11018,8 +11073,6 @@ class AppInterface:
 
     def _inicializar_em_segundo_plano(self) -> None:
         """Tarefas de inicialização que rodam após a interface aparecer."""
-        # Registra no banco os arquivos de mídia da pasta uploads
-        _sincronizar_uploads_midia()
         # Inicia servidor HTTP (API de mídia local + controle remoto)
         self._servidor_thread = ServidorAsyncHTTP()
         self._servidor_thread.ui = self._na_thread_ui
@@ -11027,6 +11080,17 @@ class AppInterface:
         self._aplicar_acesso_remoto()
         self._servidor_thread.iniciar()
         log.info(f"✅ Servidor async rodando em {BACKEND_URL}")
+
+        # Registra no banco os arquivos de mídia da pasta uploads sem travar
+        # a interface: com muitos arquivos, a varredura + INSERTs + stat do
+        # reload_cache seguravam o Tk logo depois da janela aparecer.
+        def _sincronizar_uploads():
+            try:
+                _sincronizar_uploads_midia()
+            except Exception as e:
+                log.exception(f"⚠️ Erro ao sincronizar uploads: {e}")
+
+        threading.Thread(target=_sincronizar_uploads, daemon=True).start()
         
         # Carrega temperatura em thread separada (não bloqueia interface)
         if self.cidade_salva and self.estado_salvo:
