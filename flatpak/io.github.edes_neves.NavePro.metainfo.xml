@@ -40,6 +40,16 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.10" date="2026-10-26">
+      <description>
+        <ul>
+          <li>Apresentações da Ordem de Serviço abrem no PowerPoint/Impress e devolvem o foco ao programa ao terminar a projeção (também no Flatpak)</li>
+          <li>YouTube no Windows: vídeo por URL abre em tela cheia no monitor do telão, como o vídeo local</li>
+          <li>Diálogos são centralizados no monitor do operador e os avisos do editor de item aparecem por cima dele</li>
+          <li>Desempenho: Gerenciador de Mídia consulta o SQLite em background, a lista de hinos não carrega a letra inteira e a sincronização de uploads não trava mais a abertura</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.9" date="2026-10-19">
       <description>
         <ul>

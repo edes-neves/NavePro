@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.1.9.AppImage
-   ./NavePro-2.1.9.AppImage
+   chmod +x NavePro-2.1.10.AppImage
+   ./NavePro-2.1.10.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.9          # gera NavePro-2.1.9.AppImage
+./build.sh 2.1.10          # gera NavePro-2.1.10.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.1.9
+   ./build.sh 2.1.10
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.1.9: ..."
-   git tag v2.1.9
-   git push origin main v2.1.9
+   git add -A && git commit -m "NavePro 2.1.10: ..."
+   git tag v2.1.10
+   git push origin main v2.1.10
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.1.9 NavePro-2.1.9.AppImage \
-     --title "NavePro 2.1.9" --notes "O que mudou nesta versão..."
+   gh release create v2.1.10 NavePro-2.1.10.AppImage \
+     --title "NavePro 2.1.10" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -536,6 +536,20 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.1.10
+
+- **Apresentações na Ordem de Serviço**: itens de apresentação abrem o
+  PowerPoint/Impress no telão e devolvem o foco ao programa ao terminar uma
+  projeção, inclusive no Flatpak.
+- **Vídeo do YouTube em tela cheia no Windows**: a URL agora passa pelo mesmo
+  posicionamento do vídeo local, cobrindo o monitor do telão sem moldura.
+- **Janelas no monitor do operador**: diálogos da Ordem de Serviço, Relógio e
+  Gerenciador de Mídia são centralizados no monitor principal; os avisos do
+  editor de item aparecem por cima dele.
+- **Desempenho**: o Gerenciador de Mídia consulta o SQLite em background (sem a
+  API HTTP), a lista de hinos não carrega mais a letra inteira e a sincronização
+  de uploads deixou de travar a abertura da janela principal.
 
 ### 2.1.9
 
