@@ -52,15 +52,26 @@ check("Anterior/Próximo usam a mesma rota da aba Slides",
       "/api/remoto/slide" in JS and "function slide(acao)" in JS)
 
 # ── 2. Escolher a referência projeta sozinho (com debounce) ──
-check("existe a carga automática da referência", "function autoBiblia()" in JS)
-check("carga automática é agendada com atraso (debounce)",
-      "clearTimeout(_bibTimer)" in JS and "}, 600);" in JS)
+check("existe a carga automática da referência", "function autoBiblia(ev)" in JS)
+check("carga automática usa atraso de 600 ms (debounce)",
+      "BIBLIA_AUTO_MS = 600" in JS and "clearTimeout(_bibTimer)" in JS
+      and "}, espera);" in JS)
 check("os 4 campos da referência disparam a carga automática",
       "['bib_versao', 'bib_livro', 'bib_cap', 'bib_vers']" in JS
       and "el.addEventListener('input', autoBiblia)" in JS
       and "el.addEventListener('change', autoBiblia)" in JS)
 check("carga automática projeta E atualiza a lista",
       "projetarBibliaRef(null, true);" in JS and "buscarBibliaRef();" in JS)
+
+# ── 2b. "V:" que ainda pode crescer espera mais (1 -> 10, 16...) ──
+check("existe a checagem de versículo que pode continuar",
+      "function versiculoPodeContinuar()" in JS
+      and "o.value.indexOf(valor) === 0" in JS)
+check("número ambíguo usa espera maior que 600 ms",
+      "BIBLIA_AUTO_AMBIGUO_MS = 1200" in JS
+      and "? BIBLIA_AUTO_MS : BIBLIA_AUTO_AMBIGUO_MS" in JS)
+check("confirmar o campo (change/Enter) usa a espera curta",
+      "ev.type === 'change'" in JS)
 
 # ── 3. Guarda de entrada: não projeta refeição incompleta ("1-") ──
 check("carga automática exige capítulo numérico",

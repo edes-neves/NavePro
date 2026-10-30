@@ -40,6 +40,14 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.1.11" date="2026-10-30">
+      <description>
+        <ul>
+          <li>Controle remoto — Bíblia no celular: ao digitar o versículo no campo V:, a projeção espera 600 ms após a última tecla (1,2 s quando o número ainda pode crescer, como 1 → 10/16), evitando projetar o versículo errado no meio da digitação</li>
+          <li>Ao sair do campo/Enter, a projeção é feita em 600 ms; a interface do computador não mudou</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.10" date="2026-10-26">
       <description>
         <ul>

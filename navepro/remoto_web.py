@@ -327,9 +327,28 @@ document.getElementById('bib_cap').addEventListener('change', carregarOpcoesBibl
 // Terminar de escolher livro/capítulo/versículo já projeta no telão e
 // atualiza a lista, sem precisar tocar em botão (os botões da aba viram
 // ◀ Anterior / ▶ Próximo). O atraso de 600 ms evita projetar a cada tecla.
+// Quando o "V:" digitado ainda pode virar um número maior (ex.: "1" pode
+// ser 1, 10, 11...), esperamos um pouco mais: sem isso, quem digita "16"
+// devagar via o versículo 1 ser projetado no meio da digitação.
+var BIBLIA_AUTO_MS = 600;
+var BIBLIA_AUTO_AMBIGUO_MS = 1200;
 var _bibTimer = null;
-function autoBiblia() {
+
+function versiculoPodeContinuar() {
+  var el = document.getElementById('bib_vers');
+  var lista = document.getElementById('bib_vers_opcoes');
+  var valor = el ? el.value.trim() : '';
+  if (!el || !lista || !/^[0-9]+$/.test(valor)) return false;
+  return [].some.call(lista.options, function(o) {
+    return o.value !== valor && o.value.indexOf(valor) === 0;
+  });
+}
+
+function autoBiblia(ev) {
   clearTimeout(_bibTimer);
+  // "change" = operador confirmou (saiu do campo/Enter): usa o tempo curto.
+  var espera = (!ev || ev.type === 'change' || !versiculoPodeContinuar())
+    ? BIBLIA_AUTO_MS : BIBLIA_AUTO_AMBIGUO_MS;
   _bibTimer = setTimeout(function() {
     var livro = document.getElementById('bib_livro').value;
     var cap = document.getElementById('bib_cap').value.trim();
@@ -340,7 +359,7 @@ function autoBiblia() {
     if (!vers || (!/^[0-9]+$/.test(vers) && !/^[0-9]+ *- *[0-9]+$/.test(vers))) return;
     projetarBibliaRef(null, true);
     buscarBibliaRef();
-  }, 600);
+  }, espera);
 }
 ['bib_versao', 'bib_livro', 'bib_cap', 'bib_vers'].forEach(function(id) {
   var el = document.getElementById(id);

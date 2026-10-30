@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.1.10.AppImage
-   ./NavePro-2.1.10.AppImage
+   chmod +x NavePro-2.1.11.AppImage
+   ./NavePro-2.1.11.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.10          # gera NavePro-2.1.10.AppImage
+./build.sh 2.1.11          # gera NavePro-2.1.11.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.1.10
+   ./build.sh 2.1.11
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.1.10: ..."
-   git tag v2.1.10
-   git push origin main v2.1.10
+   git add -A && git commit -m "NavePro 2.1.11: ..."
+   git tag v2.1.11
+   git push origin main v2.1.11
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.1.10 NavePro-2.1.10.AppImage \
-     --title "NavePro 2.1.10" --notes "O que mudou nesta versão..."
+   gh release create v2.1.11 NavePro-2.1.11.AppImage \
+     --title "NavePro 2.1.11" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -536,6 +536,14 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.1.11
+
+- **Controle remoto — Bíblia no celular**: ao digitar o versículo no campo
+  **V:**, a projeção agora aguarda **600 ms** após a última tecla. Se o número
+  ainda puder crescer (ex.: `1` → `10`/`16`), a espera é de **1,2 s**, evitando
+  projetar o versículo errado no meio da digitação. Ao sair do campo/Enter, a
+  projeção sai em 600 ms. A interface do computador não mudou.
 
 ### 2.1.10
 
