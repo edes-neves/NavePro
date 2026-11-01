@@ -605,6 +605,7 @@ def esconder_janelas_auxiliares(pid: int, tentativas: int = 20,
 def posicionar_janela_player(
     pid: int, x: int, y: int, largura: int, altura: int,
     tentativas: int = 40, intervalo: float = 0.1, topo: bool = True,
+    estabilizar: float = 0.0,
 ) -> bool:
     """Coloca a janela do player cobrindo exatamente o monitor do telão.
 
@@ -631,6 +632,12 @@ def posicionar_janela_player(
     arquivo, logo depois de aparecer a janela. Se não houver janela visível
     (arquivo só de áudio, ou player que não abre janela), devolve False e o
     NavePro segue normalmente.
+
+    `estabilizar` (segundos) mantém o reposicionamento ativo DEPOIS do
+    primeiro sucesso. É o caso da URL do YouTube: o mpv cria a janela antes de
+    o yt-dlp terminar e pode redimensioná-la quando o vídeo começa; sem isso a
+    janela era colocada uma vez, voltava ao tamanho normal e o vídeo não ficava
+    em tela cheia.
     """
     if not _eh_windows() or not pid:
         return False
@@ -640,6 +647,7 @@ def posicionar_janela_player(
         return False
 
     alvo = (int(x), int(y), int(largura), int(altura))
+    inicio_estavel: float | None = None
     for _ in range(max(1, tentativas)):
         hwnd = _janela_do_processo(u, pid)
         if hwnd:
@@ -657,12 +665,19 @@ def posicionar_janela_player(
                     u.ShowWindow(hwnd, 5)  # SW_SHOW
                 r = wt.RECT()
                 if u.GetWindowRect(hwnd, ctypes.byref(r)):
-                    if (r.left, r.top, r.right - r.left, r.bottom - r.top) == alvo:
-                        return True
+                    if (r.left, r.top, r.right - r.left,
+                            r.bottom - r.top) == alvo:
+                        if estabilizar <= 0:
+                            return True
+                        agora = time.monotonic()
+                        if inicio_estavel is None:
+                            inicio_estavel = agora
+                        elif agora - inicio_estavel >= estabilizar:
+                            return True
             except Exception:
                 return False
         time.sleep(intervalo)
-    return False
+    return inicio_estavel is not None
 
 
 

@@ -80,6 +80,13 @@ _MPV_YTDL_OPCOES = [
     "--ytdl-raw-options=extractor-args=youtube:player_client=android",
 ]
 
+# URL do YouTube demora mais para o mpv abrir a janela (o yt-dlp resolve antes)
+# e pode redimensioná-la quando o vídeo começa. Espera até 30 s e continua
+# reposicionando por 3 s depois do primeiro acerto para não perder a tela
+# cheia. Arquivos locais seguem com os 4 s de sempre.
+_POSICIONAR_URL_TENTATIVAS = 300
+_POSICIONAR_URL_ESTABILIZAR = 3.0
+
 # Idade (em dias) a partir da qual o yt-dlp instalado é considerado velho. O
 # yt-dlp acompanha as mudanças do YouTube e costuma ser atualizado com
 # frequência; passando disso, é bem provável que a URL pare de resolver. O
@@ -614,7 +621,13 @@ class MediaPlayer:
                                  name="navepro-limpa-vlc").start()
             else:
                 def _posicionar() -> None:
-                    ok = posicionar_janela_player(pid, mx, my, mw, mh)
+                    if _eh_url(arquivo):
+                        ok = posicionar_janela_player(
+                            pid, mx, my, mw, mh,
+                            tentativas=_POSICIONAR_URL_TENTATIVAS,
+                            estabilizar=_POSICIONAR_URL_ESTABILIZAR)
+                    else:
+                        ok = posicionar_janela_player(pid, mx, my, mw, mh)
                     if ok:
                         log.info("   🖥️ Player posicionado no telão")
                     else:

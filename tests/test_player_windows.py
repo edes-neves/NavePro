@@ -413,6 +413,19 @@ def _rodar() -> int:
     checar("_preparar_controle_windows posiciona URL (YouTube em tela cheia)",
            any("_eh_url" in ast.unparse(n.test) for n in condicoes_video))
 
+    # O mpv abre a janela antes de o yt-dlp terminar e pode redimensioná-la
+    # quando o vídeo começa. A URL precisa de espera maior e de continuar
+    # reposicionando depois do primeiro acerto; senão volta a não ficar cheia.
+    chamadas_pos = [
+        n for n in ast.walk(arvore_preparar)
+        if isinstance(n, ast.Call)
+        and "posicionar_janela_player" in ast.unparse(n.func)
+    ]
+    checar("URL espera mais e estabiliza a janela do YouTube",
+           any("_POSICIONAR_URL_TENTATIVAS" in ast.unparse(n)
+               and "estabilizar" in ast.unparse(n)
+               for n in chamadas_pos))
+
     # ── 6. Posicionamento: coordenadas exatas, sem sair do SO ─────────
     if _eh_windows():
         checar("esconder_janelas_auxiliares ignora PID inexistente",

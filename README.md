@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.1.11.AppImage
-   ./NavePro-2.1.11.AppImage
+   chmod +x NavePro-2.2.12.AppImage
+   ./NavePro-2.2.12.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.1.11          # gera NavePro-2.1.11.AppImage
+./build.sh 2.2.12          # gera NavePro-2.2.12.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.1.11
+   ./build.sh 2.2.12
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.1.11: ..."
-   git tag v2.1.11
-   git push origin main v2.1.11
+   git add -A && git commit -m "NavePro 2.2.12: ..."
+   git tag v2.2.12
+   git push origin main v2.2.12
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.1.11 NavePro-2.1.11.AppImage \
-     --title "NavePro 2.1.11" --notes "O que mudou nesta versão..."
+   gh release create v2.2.12 NavePro-2.2.12.AppImage \
+     --title "NavePro 2.2.12" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -536,6 +536,20 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.2.12
+
+- **Controle remoto — aba Serviço**: os itens da Ordem de Serviço agora aparecem
+  em cartões legíveis no celular, com título, tipo, duração, detalhe e uma
+  prévia da letra. Os botões de ação ficam em uma linha própria, abaixo do
+  conteúdo.
+- **Executar item**: o botão **▶ Executar** de cada item usa o mesmo fluxo do
+  **Executar** geral, começando pelo item tocado, e destaca na lista o item que
+  está em execução.
+- **Windows — ícones**: os botões **Bíblia** e **Configurações** não são mais
+  cortados no canto esquerdo; o ícone recebe uma margem transparente no Windows.
+- **Windows — YouTube**: vídeos por URL esperam o yt-dlp resolver e estabilizam
+  a janela no telão, entrando em tela cheia como no Linux.
 
 ### 2.1.11
 

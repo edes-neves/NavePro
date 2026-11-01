@@ -88,6 +88,25 @@ emojis = sorted({i for i, _p in pares})
 if Image is None:
     print('PULA  renderização do emoji (Pillow ausente nesta máquina)')
 else:
+    # Regressão Windows: os PNGs biblia/config têm desenho até a borda e o
+    # Tk/GDI cortava o canto esquerdo. No Windows o loader precisa reduzi-los
+    # e centralizar num quadro transparente com margem.
+    _eh_windows_original = icones._eh_windows
+    try:
+        icones._eh_windows = lambda: True
+        cheia = Image.new('RGBA', (40, 40), (255, 0, 0, 255))
+        com_margem = icones._aplicar_margem_icone(cheia)
+        check('PNG full-bleed ganha margem no Windows',
+              com_margem.size == (40, 40)
+              and com_margem.getpixel((0, 0))[3] == 0
+              and com_margem.getpixel((2, 2))[3] > 0,
+              f'{com_margem.size}')
+        icones._eh_windows = lambda: False
+        check('PNG não é alterado no Linux',
+              icones._aplicar_margem_icone(cheia) is cheia)
+    finally:
+        icones._eh_windows = _eh_windows_original
+
     fonte = icones._localizar_fonte_emoji()
     print(f'      (fonte de emoji colorida desta máquina: {fonte})')
     for e in emojis:

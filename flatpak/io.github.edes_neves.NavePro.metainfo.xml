@@ -40,6 +40,16 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.2.12" date="2026-11-01">
+      <description>
+        <ul>
+          <li>Controle remoto — aba Serviço: itens em cartões legíveis no celular, com título, tipo, duração, detalhe e prévia da letra; botões de ação em linha própria</li>
+          <li>O botão Executar de cada item usa o mesmo fluxo do Executar geral, começa pelo item tocado e destaca o item em execução</li>
+          <li>Windows: os ícones de Bíblia e Configurações não são mais cortados no canto esquerdo</li>
+          <li>Windows: vídeos do YouTube por URL entram em tela cheia no telão, aguardando o yt-dlp e estabilizando a janela</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.11" date="2026-10-30">
       <description>
         <ul>

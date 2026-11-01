@@ -50,6 +50,37 @@ _cache_notdef: dict = {}
 _cache_fontes_pil: dict = {}
 _cache_image_tk: list = [None]
 
+# No Windows o Tk/GDI recorta o ícone quando o PNG ocupa a borda inteira do
+# botão (caso do ✝️ biblia.png e do ⚙️ config.png). Uma margem transparente
+# de 2 px evita o corte sem mudar o tamanho da pílula. No Linux o ícone já
+# era exibido corretamente; a margem fica restrita ao Windows.
+_MARGEM_ICONE_WINDOWS = 2
+
+
+def _margem_icone() -> int:
+    """Margem de segurança aplicada ao redor do ícone (só no Windows)."""
+    return _MARGEM_ICONE_WINDOWS if _eh_windows() else 0
+
+
+def _aplicar_margem_icone(imagem):
+    """Reduz o ícone e o centraliza num quadro transparente com margem.
+
+    Sem margem (Linux) devolve a própria imagem para não alterar nada.
+    """
+    margem = _margem_icone()
+    if margem <= 0:
+        return imagem
+    from PIL import Image
+    reduzida = imagem.convert("RGBA")
+    lado = max(1, max(reduzida.size) - 2 * margem)
+    reduzida.thumbnail((lado, lado), Image.LANCZOS)
+    quadro = Image.new("RGBA",
+                       (reduzida.width + 2 * margem,
+                        reduzida.height + 2 * margem),
+                       (0, 0, 0, 0))
+    quadro.paste(reduzida, (margem, margem), reduzida)
+    return quadro
+
 
 def _obter_image_tk():
     """PIL.ImageTk, ou None quando indisponível (tentativa única).
@@ -292,6 +323,9 @@ def _carregar_emoji(emoji: str, tamanho: int = 40, master=None):
     imagem = _emoji_para_imagem(emoji, tamanho)
     if imagem is None:
         return None
+    # Só encolhe quem encosta na borda: emojis menores já têm folga natural.
+    if max(imagem.size) >= tamanho - _margem_icone():
+        imagem = _aplicar_margem_icone(imagem)
     quadro = Image.new("RGBA", (tamanho, tamanho), (0, 0, 0, 0))
     quadro.paste(imagem, ((tamanho - imagem.width) // 2,
                           (tamanho - imagem.height) // 2), imagem)
@@ -322,7 +356,7 @@ def _carregar_icone(nome: str):
     try:
         from PIL import Image
         with Image.open(caminho) as img:
-            foto = ImageTk.PhotoImage(img)
+            foto = ImageTk.PhotoImage(_aplicar_margem_icone(img))
     except Exception as e:
         log.warning(f"⚠️ Ícone '{nome}' indisponível: {e}")
         return None
