@@ -2198,6 +2198,13 @@ class AppInterface:
             detalhe = 'anúncio'
         elif tipo == 'youtube':
             detalhe = 'YouTube'
+        letra = (item.get('letra_snapshot') or '').strip()
+        linhas = [ln.strip() for ln in letra.splitlines() if ln.strip()]
+        if tipo == 'versiculo' and len(linhas) > 1:
+            linhas = linhas[1:]
+        previa = ' '.join(linhas)
+        if len(previa) > 180:
+            previa = previa[:177].rstrip() + '...'
         ref = None
         if tipo == 'versiculo':
             primeira = (item.get('letra_snapshot') or '').split('\n', 1)[0].strip()
@@ -2214,7 +2221,7 @@ class AppInterface:
         return {'id': item.get('id'), 'ordem': indice, 'tipo': tipo,
                 'titulo': titulo,
                 'duracao': item.get('duracao_estimada_segundos') or 0,
-                'detalhe': detalhe,
+                'detalhe': detalhe, 'previa': previa,
                 'caminho_arquivo': item.get('caminho_arquivo') or '',
                 'youtube_url': item.get('youtube_url') or '',
                 'ref': ref}

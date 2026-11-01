@@ -106,6 +106,36 @@ _REMOTO_CSS = """
             text-align: center; font-variant-numeric: tabular-nums; }
   .pill { font-size: 12px; background: #21262d; border-radius: 20px;
           padding: 3px 10px; color: #8b949e; }
+  .pill.exec { background: #238636; color: #fff; font-weight: 700; }
+  /* Aba Serviço: nome e ações empilhados para caber no celular. */
+  li.servico-linha { flex-wrap: wrap; row-gap: 8px; }
+  li.servico-linha .nome { flex: 1 1 100%; white-space: normal;
+                           overflow: visible; text-overflow: clip; }
+  li.servico-linha .btn { flex: 1 1 0; padding: 11px 12px; }
+  li.item-servico { flex-direction: column; align-items: stretch;
+                    gap: 9px; padding: 14px 6px; }
+  li.item-servico .nome { flex: none; white-space: normal;
+                          overflow: visible; text-overflow: clip; }
+  .item-servico .item-titulo { font-size: 15px; line-height: 1.4; }
+  .item-servico .item-titulo .ordem { color: #f0c040; font-weight: 800; }
+  .item-servico .item-meta { display: flex; flex-wrap: wrap; gap: 6px;
+                             margin-top: 7px; }
+  .item-servico .item-detalhe { color: #8b949e; font-size: 13px;
+                                margin-top: 6px; word-break: break-word; }
+  .item-servico .item-previa { color: #c9d1d9; font-size: 13px;
+                               margin-top: 7px; line-height: 1.45;
+                               display: -webkit-box; -webkit-line-clamp: 3;
+                               -webkit-box-orient: vertical; overflow: hidden; }
+  .item-servico .item-acoes { display: grid;
+                              grid-template-columns: repeat(4, 1fr);
+                              gap: 6px; }
+  .item-servico .item-acoes .btn { min-width: 0; }
+  .item-servico .item-acoes .btn-exec { grid-column: 1 / -1;
+                                        padding: 11px 12px; font-size: 15px; }
+  .item-servico .item-acoes .btn.mini { width: 100%; padding: 11px 0; }
+  .item-servico.em-execucao { background: #0d2818; border-radius: 8px;
+                              padding-left: 10px;
+                              box-shadow: inset 3px 0 0 #f0c040; }
   #toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     background: #da3633; color: #fff; padding: 11px 18px; border-radius: 8px;
@@ -490,6 +520,7 @@ function carregarAnuncios() {
 var SERVICO_SEL = null;   // {id, nome} do serviço aberto
 var ITENS_SERVICO = [];   // itens do serviço aberto
 var ITEM_EDIT_ID = null;  // id em edição (null = novo item)
+var EXECUCAO = null;      // {servico, item, indice, titulo} do último executado
 var TIPOS_ITEM = [
   ['hino', '\U0001F3B5 Hino'],
   ['versiculo', '\U0001F4D6 Vers\u00edculo'],
@@ -516,6 +547,51 @@ function miniBtn(txt, cor, fn) {
   return b;
 }
 
+function pill(txt, classe) {
+  var s = document.createElement('span');
+  s.className = 'pill' + (classe ? ' ' + classe : '');
+  s.textContent = txt;
+  return s;
+}
+
+function rotuloTipo(t) {
+  var m = {hino: 'Hino', versiculo: 'Vers\u00edculo', video: 'V\u00eddeo',
+           audio: '\u00C1udio', slide: 'Slide', anuncio: 'An\u00fancio',
+           sermao: 'Serm\u00e3o', youtube: 'YouTube'};
+  return m[t] || (t ? String(t) : 'Item');
+}
+
+function fmtDuracao(seg) {
+  seg = Math.max(0, parseInt(seg, 10) || 0);
+  if (!seg) return '';
+  var m = Math.floor(seg / 60), s = seg % 60;
+  return m ? (m + 'm' + (s ? ' ' + s + 's' : '')) : (s + 's');
+}
+
+// Caminho único de execução da aba Serviço: o botão geral (sem `itemId`)
+// avança pelo ponteiro do serviço; o botão do item começa naquele item.
+function executarServico(id, itemId, nome) {
+  var dados = {id: id};
+  if (itemId !== undefined && itemId !== null) dados.item = itemId;
+  return apiPost('/api/remoto/servico', dados).then(function(j) {
+    if (j.ok) {
+      EXECUCAO = {servico: id, item: j.id, indice: j.indice,
+                  titulo: j.titulo || ''};
+      var st = document.getElementById('serv_status');
+      if (st) {
+        st.textContent = '\u25B6 ' + (nome ? nome + ' \u00b7 ' : '') +
+          (j.indice + 1) + '. ' + (j.titulo || 'Item em execu\u00e7\u00e3o');
+      }
+      aviso('Item ' + (j.indice + 1) + ' em execu\u00e7\u00e3o', '#238636');
+      if (SERVICO_SEL && String(SERVICO_SEL.id) === String(id)) {
+        carregarItensServico();
+      }
+    }
+    atualizarEstado();
+    return j;
+  });
+}
+
 function carregarServicos() {
   apiGet('/api/remoto/servicos').then(function(j) {
     var ul = document.getElementById('lista_servicos');
@@ -526,16 +602,14 @@ function carregarServicos() {
     }
     j.servicos.forEach(function(s) {
       var li = document.createElement('li');
+      li.className = 'servico-linha';
       var nome = document.createElement('div');
       nome.className = 'nome';
       nome.innerHTML = '<b>' + esc(s.nome || '') + '</b>' +
         '<div class="sub">' + s.itens + ' item(ns)</div>';
       var btnItens = miniBtn('Itens', 'cinza', function() { abrirServico(s); });
       var btn = miniBtn('Executar', 'verde', function() {
-        apiPost('/api/remoto/servico', {id: s.id}).then(function(j) {
-          if (j.ok) aviso('Item ' + (j.indice + 1) + ' em execu\u00e7\u00e3o', '#238636');
-          atualizarEstado();
-        });
+        executarServico(s.id, null, s.nome);
       });
       li.appendChild(nome); li.appendChild(btnItens); li.appendChild(btn);
       ul.appendChild(li);
@@ -569,7 +643,8 @@ function fecharServico() {
 
 function carregarItensServico() {
   if (!SERVICO_SEL) return;
-  apiGet('/api/remoto/servico_itens?servico=' + encodeURIComponent(SERVICO_SEL.id))
+  var servId = SERVICO_SEL.id, servNome = SERVICO_SEL.nome;
+  apiGet('/api/remoto/servico_itens?servico=' + encodeURIComponent(servId))
     .then(function(j) {
       var ul = document.getElementById('lista_itens_servico');
       ul.innerHTML = '';
@@ -579,30 +654,55 @@ function carregarItensServico() {
         return;
       }
       ITENS_SERVICO.forEach(function(it, i) {
+        var emExec = EXECUCAO &&
+          String(EXECUCAO.servico) === String(servId) &&
+          String(EXECUCAO.item) === String(it.id);
         var li = document.createElement('li');
-        var nome = document.createElement('div');
-        nome.className = 'nome';
-        var sub = esc(it.tipo) +
-          (it.duracao ? ' \u00b7 ' + it.duracao + 's' : '') +
-          (it.detalhe ? ' \u00b7 ' + esc(it.detalhe) : '');
-        nome.innerHTML = '<b>' + (i + 1) + '. ' + emojiTipo(it.tipo) + ' ' +
-          esc(it.titulo) + '</b><div class="sub">' + sub + '</div>';
-        li.appendChild(nome);
-        li.appendChild(miniBtn('\u25B6', 'verde', function() { executarItem(it.id); }));
-        li.appendChild(miniBtn('\u25B2', 'cinza', function() { moverItem(it.id, 'subir'); }));
-        li.appendChild(miniBtn('\u25BC', 'cinza', function() { moverItem(it.id, 'descer'); }));
-        li.appendChild(miniBtn('\u270E', 'cinza', function() { abrirFormItem(it); }));
-        li.appendChild(miniBtn('\U0001F5D1', 'vermelho', function() { apagarItem(it); }));
+        li.className = 'item-servico' + (emExec ? ' em-execucao' : '');
+        var info = document.createElement('div');
+        info.className = 'nome';
+        var titulo = document.createElement('div');
+        titulo.className = 'item-titulo';
+        titulo.innerHTML = '<span class="ordem">' + (i + 1) + '.</span> ' +
+          emojiTipo(it.tipo) + ' <b>' + esc(it.titulo) + '</b>';
+        info.appendChild(titulo);
+        var meta = document.createElement('div');
+        meta.className = 'item-meta';
+        meta.appendChild(pill(rotuloTipo(it.tipo)));
+        var dur = fmtDuracao(it.duracao);
+        if (dur) meta.appendChild(pill('\u23F1 ' + dur));
+        if (emExec) meta.appendChild(pill('\u25B6 em execu\u00e7\u00e3o', 'exec'));
+        info.appendChild(meta);
+        if (it.detalhe) {
+          var detalhe = document.createElement('div');
+          detalhe.className = 'item-detalhe';
+          detalhe.textContent = it.detalhe;
+          info.appendChild(detalhe);
+        }
+        if (it.previa) {
+          var previa = document.createElement('div');
+          previa.className = 'item-previa';
+          previa.textContent = it.previa;
+          info.appendChild(previa);
+        }
+        li.appendChild(info);
+        var acoes = document.createElement('div');
+        acoes.className = 'item-acoes';
+        var btnExec = document.createElement('button');
+        btnExec.className = 'btn verde btn-exec';
+        btnExec.textContent = '\u25B6 Executar';
+        btnExec.onclick = function() {
+          executarServico(servId, it.id, servNome);
+        };
+        acoes.appendChild(btnExec);
+        acoes.appendChild(miniBtn('\u25B2', 'cinza', function() { moverItem(it.id, 'subir'); }));
+        acoes.appendChild(miniBtn('\u25BC', 'cinza', function() { moverItem(it.id, 'descer'); }));
+        acoes.appendChild(miniBtn('\u270E', 'cinza', function() { abrirFormItem(it); }));
+        acoes.appendChild(miniBtn('\U0001F5D1', 'vermelho', function() { apagarItem(it); }));
+        li.appendChild(acoes);
         ul.appendChild(li);
       });
     });
-}
-
-function executarItem(id) {
-  apiPost('/api/remoto/servico', {id: SERVICO_SEL.id, item: id}).then(function(j) {
-    if (j.ok) aviso('Item ' + (j.indice + 1) + ' em execu\u00e7\u00e3o', '#238636');
-    atualizarEstado();
-  });
 }
 
 function moverItem(id, direcao) {
