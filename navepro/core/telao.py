@@ -153,6 +153,7 @@ class TelaoWindow:
         self._texto_box = (0, 0, 100, 100)
         self._texto_escala = 1.0
         self._texto_largura_base = None
+        self._caixa_texto_itens: list = []
         self._slides: list = []
         self._slide_index = 0
         self._proj_cfg: dict = {
@@ -750,12 +751,136 @@ class TelaoWindow:
         # Agenda retorno automático do relógio + temperatura
         seg = max(1, int(float(cfg.get("duracao_seg", 30))))
         self._proj_timer = self.root.after(seg * 1000, self._retornar_ao_relogio)
+    def _limpar_caixa_texto(self) -> None:
+        """Remove a caixa (cartão) desenhada atrás do texto bíblico."""
+        for item in getattr(self, "_caixa_texto_itens", []) or []:
+            try:
+                self.canvas.delete(item)
+            except tk.TclError:
+                pass
+        self._caixa_texto_itens = []
+
+    def _rgb_da_cor(self, cor: str, padrao: tuple = (0, 0, 0)) -> tuple:
+        """Converte uma cor Tk (hex ou nome) em (r, g, b) de 0 a 255."""
+        try:
+            r, g, b = self.root.winfo_rgb(cor)
+            return (r // 257, g // 257, b // 257)
+        except (tk.TclError, ValueError):
+            return padrao
+
+    @staticmethod
+    def _misturar_cores(a: tuple, b: tuple, peso_b: float) -> tuple:
+        """Mistura duas cores RGB; peso_b=0 devolve `a`, 1 devolve `b`."""
+        peso_b = max(0.0, min(1.0, float(peso_b)))
+        return tuple(int(round(x + (y - x) * peso_b))
+                     for x, y in zip(a, b, strict=False))
+
+    @staticmethod
+    def _hex_da_cor(rgb: tuple) -> str:
+        return "#{:02X}{:02X}{:02X}".format(
+            *(max(0, min(255, int(v))) for v in rgb))
+
+    def _cores_da_caixa_texto(self, cor_fundo: str) -> tuple:
+        """Cores do cartão sempre contrastantes com o fundo escolhido.
+
+        Fundo escuro → cartão levemente mais claro com borda clara; fundo
+        claro → cartão escuro com borda ainda mais escura. Assim o cartão e
+        a borda aparecem independentemente do fundo escolhido pelo operador.
+        """
+        rgb = self._rgb_da_cor(cor_fundo, (0, 0, 0))
+        lum = sum(c * p for c, p in zip(
+            rgb, (0.299, 0.587, 0.114), strict=False)) / 255.0
+        if lum < 0.5:
+            borda = self._hex_da_cor(
+                self._misturar_cores(rgb, (255, 255, 255), 0.92))
+            fundo = self._hex_da_cor(
+                self._misturar_cores(rgb, (255, 255, 255), 0.14))
+            sombra = self._hex_da_cor(
+                self._misturar_cores(rgb, (0, 0, 0), 0.65))
+        else:
+            borda = self._hex_da_cor(
+                self._misturar_cores(rgb, (0, 0, 0), 0.88))
+            fundo = self._hex_da_cor(
+                self._misturar_cores(rgb, (0, 0, 0), 0.74))
+            sombra = self._hex_da_cor(
+                self._misturar_cores(rgb, (0, 0, 0), 0.55))
+        return fundo, borda, sombra
+
+    @staticmethod
+    def _pontos_caixa_arredondada(x1: int, y1: int, x2: int, y2: int,
+                                  raio: int) -> list:
+        """Pontos de um retângulo com cantos arredondados (canvas smooth)."""
+        raio = max(0, min(int(raio), (x2 - x1) // 2, (y2 - y1) // 2))
+        return [
+            x1 + raio, y1, x2 - raio, y1, x2, y1,
+            x2, y1 + raio, x2, y2 - raio, x2, y2,
+            x2 - raio, y2, x1 + raio, y2, x1, y2,
+            x1, y2 - raio, x1, y1 + raio, x1, y1,
+        ]
+
+    def _desenhar_caixa_texto(self, cor_fundo: str) -> None:
+        """Desenha o cartão arredondado atrás do texto já posicionado.
+
+        O tamanho é medido pelo bbox real do texto (com folga interna) e
+        limitado às margens da tela. O cartão fica sempre abaixo do texto,
+        preservando a projeção e a referência bíblica existentes.
+        """
+        self._limpar_caixa_texto()
+        try:
+            self.root.update_idletasks()
+            bbox = self.canvas.bbox(self.overlay_text)
+        except (tk.TclError, AttributeError):
+            bbox = None
+        if not bbox:
+            return
+        w = self.canvas.winfo_width() or self._monitor.width
+        h = self.canvas.winfo_height() or self._monitor.height
+        bx1, by1, bx2, by2 = bbox
+        base = min(w, h)
+        pad_x = max(28, int(base * 0.035))
+        pad_y = max(20, int(base * 0.028))
+        largura = max(bx2 - bx1 + 2 * pad_x, int(w * 0.18))
+        altura = max(by2 - by1 + 2 * pad_y, int(h * 0.10))
+        cx = (bx1 + bx2) // 2
+        cy = (by1 + by2) // 2
+        x1, x2 = cx - largura // 2, cx + largura // 2
+        y1, y2 = cy - altura // 2, cy + altura // 2
+        margem_x = max(24, int(w * 0.04))
+        margem_y = max(20, int(h * 0.04))
+        x1 = max(margem_x, x1)
+        x2 = min(w - margem_x, x2)
+        y1 = max(margem_y, y1)
+        y2 = min(h - margem_y, y2)
+        raio = max(16, int(base * 0.022))
+        desloc = max(5, int(base * 0.007))
+        espessura = max(3, int(base * 0.004))
+        fundo, borda, sombra = self._cores_da_caixa_texto(cor_fundo)
+        try:
+            itens = [
+                self.canvas.create_polygon(
+                    *self._pontos_caixa_arredondada(
+                        x1 + desloc, y1 + desloc, x2 + desloc, y2 + desloc,
+                        raio),
+                    smooth=True, splinesteps=24, fill=sombra, outline="",
+                    tags=("caixa_texto",)),
+                self.canvas.create_polygon(
+                    *self._pontos_caixa_arredondada(x1, y1, x2, y2, raio),
+                    smooth=True, splinesteps=24, fill=fundo, outline=borda,
+                    width=espessura, tags=("caixa_texto",)),
+            ]
+            for item in itens:
+                self.canvas.tag_lower(item, self.overlay_text)
+        except tk.TclError:
+            return
+        self._caixa_texto_itens = itens
+
     def _desenhar_texto_no_canvas(self, texto: str, referencia: str = "",
                                   largura_max: int | None = None) -> tuple:
         """Desenha texto centralizado no canvas com auto-ajuste de fonte.
         Usado tanto na projeção simples (projetar_texto) quanto nos slides.
         Retorna a tupla de fonte aplicada.
-        Se referencia for fornecida (ex.: "João 3:16"), exibe no canto inferior direito.
+        Se referencia for fornecida (ex.: "João 3:16"), exibe no canto inferior direito
+        e o texto é desenhado dentro de uma caixa (cartão) contrastante com o fundo.
         Se largura_max for fornecida, o texto é quebrado (e centralizado)
         dentro dessa largura máxima — usado pelo anúncio de imagem + texto,
         em que parte da tela é ocupada pela imagem.
@@ -765,9 +890,11 @@ class TelaoWindow:
         cfg = getattr(self, "_proj_cfg", None)
         if cfg is None:
             self.configurar_projecao()
+        self._limpar_caixa_texto()
         # Calcula largura de quebra e fonte inicial
         w = self.canvas.winfo_width() or self._monitor.width
         h = self.canvas.winfo_height() or self._monitor.height
+        usar_caixa = bool(referencia and texto.strip() and not largura_max)
         wrap_width = max(200, int(w * 0.95))
         if largura_max:
             wrap_width = max(120, min(wrap_width, int(largura_max)))
@@ -788,6 +915,19 @@ class TelaoWindow:
             cfg["fonte"] = familia
         # Ajusta tamanho para não transbordar verticalmente
         ref = tkfont.Font(family=familia, size=tamanho)
+        if usar_caixa:
+            # A largura acompanha o conteúdo e a fonte: o limite cresce com
+            # o A+/A− e com o tamanho do versículo antes de a caixa começar
+            # a ganhar altura, para ela crescer nos dois eixos.
+            natural = max(
+                (ref.measure(parte) for parte in texto.split("\n") if parte),
+                default=0)
+            fator_fonte = max(0.5, tamanho / max(1.0, h * 0.05))
+            fator_texto = min(1.0, len(texto.strip()) / 160.0)
+            limite = int(w * min(
+                0.90, (0.52 + 0.16 * fator_texto) * fator_fonte))
+            wrap_width = max(
+                200, min(limite, int(max(natural, w * 0.20) * 1.04)))
         linhas = 0
         for parte in texto.split("\n"):
             if not parte:
@@ -796,7 +936,7 @@ class TelaoWindow:
                 comp = ref.measure(parte)
                 linhas += max(1, int(comp / wrap_width)) if comp > wrap_width else 1
         altura_total = linhas * max(1, ref.metrics("linespace"))
-        max_altura = int(h * 0.92)
+        max_altura = int(h * (0.78 if usar_caixa else 0.92))
         if altura_total > max_altura and altura_total > 0:
             fator = max_altura / altura_total
             tamanho = max(12, int(tamanho * fator))
@@ -819,6 +959,9 @@ class TelaoWindow:
             state="normal",
         )
         self.canvas.coords(self.overlay_text, centro_x, h // 2)
+        if usar_caixa:
+            self._desenhar_caixa_texto(
+                cfg.get("cor_fundo", "#000000") if cfg else "#000000")
         # Referência bíblica (livro cap:vers.) — canto inferior direito
         if referencia:
             cor_ref = cfg.get("cor_ref", "#A0A0A0")
@@ -843,6 +986,7 @@ class TelaoWindow:
         anterior com imagem, para não deixar a imagem antiga "colada" no telão
         (o texto novo apareceria por trás da imagem velha).
         """
+        self._limpar_caixa_texto()
         if getattr(self, "_imagem_item", None) is not None:
             try:
                 self.canvas.delete(self._imagem_item)
@@ -1435,6 +1579,9 @@ class TelaoWindow:
         self._slides = []
         self._slide_index = 0
         self.mostrando_relogio = True
+        limpar_caixa = getattr(self, "_limpar_caixa_texto", None)
+        if limpar_caixa is not None:
+            limpar_caixa()
         # Limpa a projeção de imagem (se houver)
         if getattr(self, "_imagem_item", None) is not None:
             try:
