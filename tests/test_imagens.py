@@ -11,6 +11,10 @@ ARQ = os.path.join(RAIZ, 'NavePro.py')
 src = open(ARQ, encoding='utf-8').read()
 raiz_ast = ast.parse(src)
 nos = {n.name: n for n in ast.walk(raiz_ast) if isinstance(n, ast.FunctionDef)}
+_ARQ_APOIO = os.path.join(RAIZ, 'navepro', 'ui', 'apoio.py')
+_src_apoio = open(_ARQ_APOIO, encoding='utf-8').read()
+_nos_apoio = {n.name: n for n in ast.walk(ast.parse(_src_apoio))
+              if isinstance(n, ast.FunctionDef)}
 
 sys.path.insert(0, _AQUI)
 sys.path.insert(0, RAIZ)
@@ -25,7 +29,7 @@ def check(n, cond, extra=''):
 
 # ── 1) o seletor real filtra pelos sufixos de imagem ──
 ns = {'List': list, 'Tuple': tuple}
-exec(compile(textwrap.dedent(ast.get_source_segment(src, nos['_listar_pastas_arquivos_usuario'])),
+exec(compile(textwrap.dedent(ast.get_source_segment(_src_apoio, _nos_apoio['_listar_pastas_arquivos_usuario'])),
              '<l>', 'exec'), ns)
 RAIZ = criar_arvore()
 atexit.register(limpar_arvore, RAIZ)

@@ -203,15 +203,22 @@ check(
 
 
 # ── 3) Diálogos maiores que 1024x768 usam o helper ──
+_SRC_UI = (_SRC
+           + open(os.path.join(RAIZ, "navepro", "ui", "janela_anuncios.py"),
+                  encoding="utf-8").read()
+           + open(os.path.join(RAIZ, "navepro", "ui", "janela_ordem_servico.py"),
+                  encoding="utf-8").read()
+           + open(os.path.join(RAIZ, "navepro", "ui", "gerenciador_midias.py"),
+                  encoding="utf-8").read())
 check(
     "diálogos grandes usam _limitar_ao_monitor",
-    _SRC.count("_limitar_ao_monitor(") >= 4,
-    str(_SRC.count("_limitar_ao_monitor(")),
+    _SRC_UI.count("_limitar_ao_monitor(") >= 4,
+    str(_SRC_UI.count("_limitar_ao_monitor(")),
 )
 for _tamanho in ("680, 980", "800, 900", "680, 860", "1100, 750"):
     check(
         f"diálogo {_tamanho} limitado ao monitor",
-        "_limitar_ao_monitor(" in _SRC and _tamanho in _SRC,
+        "_limitar_ao_monitor(" in _SRC_UI and _tamanho in _SRC_UI,
     )
 check(
     "nenhum geometry fixo antigo restou para os diálogos grandes",
@@ -222,9 +229,9 @@ check(
 )
 check(
     "diálogos usam a área do monitor do operador",
-    "_SRC.count('_area_monitor_operador') >= 7"
-    and _SRC.count("area=self._area_monitor_operador()") >= 6,
-    str(_SRC.count("area=self._area_monitor_operador()")),
+    "_SRC_UI.count('_area_monitor_operador') >= 7"
+    and _SRC_UI.count("area=self._area_monitor_operador()") >= 6,
+    str(_SRC_UI.count("area=self._area_monitor_operador()")),
 )
 check(
     "árvore tem o helper da área do monitor do operador",

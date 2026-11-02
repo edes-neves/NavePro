@@ -223,7 +223,9 @@ checar("sandbox também cobre /run/host/usr/bin (mpv do apt)",
 # quem executa o vídeo. Antes, com a busca vazia, `_usou_titulo_como_busca`
 # virava True e o título era sobreescrito pela URL.
 _fonte_app = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
-_bloco_youtube = _fonte_app.split('elif tipo == "youtube":', 1)[1]
+_fonte_os = open(os.path.join(RAIZ, "navepro", "ui", "janela_ordem_servico.py"),
+                 encoding="utf-8").read()
+_bloco_youtube = _fonte_os.split('elif tipo == "youtube":', 1)[1]
 _bloco_youtube = _bloco_youtube.split("elif ", 1)[0]
 checar("título do YouTube só cai para a URL quando está vazio",
        "if not titulo:" in _bloco_youtube)

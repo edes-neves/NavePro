@@ -12,6 +12,9 @@ tree = ast.parse(src)
 src_serv = open(os.path.join(RAIZ, 'navepro', 'core', 'servicos.py'), encoding='utf-8').read()
 tree_serv = ast.parse(src_serv)
 
+src_biblia = open(os.path.join(RAIZ, 'navepro', 'ui', 'janela_biblia.py'), encoding='utf-8').read()
+tree_biblia = ast.parse(src_biblia)
+
 def achar(nome, classe=None):
     alvos = [n for n in ast.walk(tree_serv)
              if isinstance(n, (ast.FunctionDef,)) and n.name == nome]
@@ -24,6 +27,9 @@ def fonte(no, _ctx_lines):
 # _analisar_faixa_versiculos mora em navepro/core/servicos.py; _carregar_capitulo/_escrever_na_biblia são aninhadas no NavePro.py
 mod_fn = achar('_analisar_faixa_versiculos')
 nos = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+nos.update({n.name: n for n in ast.walk(tree_biblia)
+            if isinstance(n, ast.FunctionDef)})
 assert mod_fn and '_carregar_capitulo' in nos and '_escrever_na_biblia' in nos
 
 # --- stubs ---
@@ -65,8 +71,8 @@ ns = {'Optional': __import__('typing').Optional, 'tk': tkinter,
       'versao_var': versao_var, 'livro_var': livro_var,
       'cap_var': cap_var, 'vers_var': vers_var}
 exec(ast.get_source_segment(src_serv, mod_fn), ns)
-exec(ast.get_source_segment(src, nos['_escrever_na_biblia']), ns)
-exec(ast.get_source_segment(src, nos['_carregar_capitulo']), ns)
+exec(ast.get_source_segment(src_biblia, nos['_escrever_na_biblia']), ns)
+exec(ast.get_source_segment(src_biblia, nos['_carregar_capitulo']), ns)
 carregar = ns['_carregar_capitulo']
 
 def versiculos_exibidos():

@@ -12,6 +12,10 @@ ARQ = os.path.join(RAIZ, 'NavePro.py')
 src = open(ARQ, encoding='utf-8').read()
 tree = ast.parse(src)
 nos = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+ARQ_B = os.path.join(RAIZ, 'navepro', 'ui', 'janela_biblia.py')
+src_b = open(ARQ_B, encoding='utf-8').read()
+tree_b = ast.parse(src_b)
+nos.update({n.name: n for n in ast.walk(tree_b) if isinstance(n, ast.FunctionDef)})
 ARQ_SERV = os.path.join(RAIZ, 'navepro', 'core', 'servicos.py')
 src_serv = open(ARQ_SERV, encoding='utf-8').read()
 tree_serv = ast.parse(src_serv)
@@ -96,7 +100,7 @@ POST = """
 """
 # corpo real da função, indentado em 4 (sem f-string: as chaves ficam intactas)
 _corpo = "\n".join("    " + linha for linha in ast.get_source_segment(
-    src, nos["_projetar_versiculo"]).split("\n"))
+    src_b, nos["_projetar_versiculo"]).split("\n"))
 fabrica = PRE + _corpo + POST
 Vars = {'versao': Var('Almeida Revista e Corrigida'), 'livro': Var('João'),
         'cap': Var('3'), 'vers': Var('')}

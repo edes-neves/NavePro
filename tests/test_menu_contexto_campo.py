@@ -15,7 +15,7 @@ import types
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 
-_SRC = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+_SRC = open(os.path.join(RAIZ, "navepro", "ui", "apoio.py"), encoding="utf-8").read()
 _NOS = {
     n.name: n for n in ast.walk(ast.parse(_SRC)) if isinstance(n, ast.FunctionDef)
 }

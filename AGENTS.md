@@ -8,7 +8,9 @@ Guia para agentes de IA que trabalham neste repositório. Idioma do projeto:
 - **O que é:** aplicativo desktop (Python/Tkinter) de projeção multimídia em **dois
   monitores** para igrejas — monitor 1 controla, monitor 2 é o telão.
 - **Repositório:** `github.com/edes-neves/NavePro` · Licença GPLv3.
-- **Monolito principal:** `NavePro.py` (~15 mil linhas). Infraestrutura em `navepro/`.
+- **Principal:** `NavePro.py` (interface + projeção + importadores, ~6 mil linhas
+  após a extração das janelas). Infraestrutura em `navepro/` e as janelas
+  grandes do painel em `navepro/ui/` (mixins herdados pela `AppInterface`).
 - **Distribuição:** `NavePro.exe` (Windows), `NavePro-<versão>.AppImage` (Linux) e
   Flatpak (`io.github.edes_neves.NavePro`). Versão atual em `navepro/config.py` → `APP_VERSION`.
 - **Idioma do app:** português, com emojis na interface.
@@ -36,7 +38,8 @@ ruff check .
 ```
 
 - As suítes rodam **sem tela/servidor**; quando precisam da interface, recriam um
-  `Tk` falso e extraem o trecho do `NavePro.py` via `ast`.
+  `Tk` falso e extraem o trecho via `ast` — do `NavePro.py` ou do módulo de
+  `navepro/ui/` (ou `navepro/core/`) onde a função mora hoje.
 - **Windows:** prefixar os testes com `set PYTHONUTF8=1` (emojis quebram no cp1252).
 - CI (`.github/workflows/testes.yml`) roda a suíte em `ubuntu-latest` **e**
   `windows-latest` **e** o ruff (só em `ubuntu-latest`) a cada push/PR.
@@ -69,6 +72,10 @@ ruff check .
 ```
 NavePro.py          # interface + projeção + importadores (banco, Hinos, Bíblia, Anúncios, Ordem de Serviço)
 navepro/
+  ui/               # janelas grandes do painel (mixins herdados pela AppInterface)
+    apoio.py        # helpers de UI compartilhados (menu de contexto, seletor de arquivos)
+    janela_hinos.py janela_biblia.py janela_anuncios.py
+    janela_ordem_servico.py janela_transferencia.py gerenciador_midias.py
   config.py         # APP_VERSION, GITHUB_USER/REPO, BACKEND_PORT=5897, APP_ID_FLATPAK, EXTENSOES_*
   core/ambiente.py  # _eh_windows(), _tornar_dpi_aware()
   core/anuncios.py  # anúncios: JSON legado + CRUD SQLite, uploads, migração

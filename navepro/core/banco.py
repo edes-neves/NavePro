@@ -225,6 +225,28 @@ def db_execute(query: str, params: tuple = ()) -> int | None:
     """Executa INSERT/UPDATE/DELETE usando DatabaseManager (singleton)."""
     return DatabaseManager().execute(query, params)
 
+
+def _listar_midias_ativas(tipo: str | None = None) -> list[dict]:
+    """Lista as mídias ativas direto do SQLite, na ordem exibida na janela.
+
+    O Gerenciador de Banco consultava a própria API HTTP local, o que
+    bloqueava a thread do Tk na primeira abertura (servidor ainda subindo e
+    contexto SSL sendo inicializado). A consulta direta elimina essa corrida
+    e mantém a mesma ordenação usada pela API.
+    """
+    consulta = "SELECT * FROM midia WHERE ativo = 1"
+    parametros: list[object] = []
+    if tipo:
+        consulta += " AND tipo = ?"
+        parametros.append(tipo)
+    consulta += (
+        " ORDER BY"
+        " CASE WHEN nome_exibicao GLOB '[0-9]*' THEN 0 ELSE 1 END,"
+        " CAST(SUBSTR(nome_exibicao, 1, INSTR(nome_exibicao || ' ', ' ') - 1) AS INTEGER),"
+        " SUBSTR(nome_exibicao, INSTR(nome_exibicao || ' ', ' ') + 1) ASC"
+    )
+    return db_query(consulta, tuple(parametros))
+
 # ────────────────────────────────────────────────────────────────────
 # REUSO DE IDs (ID INTEGER PRIMARY KEY AUTOINCREMENT)
 # ────────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import types
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
-ARQ = os.path.join(RAIZ, 'NavePro.py')
+ARQ = os.path.join(RAIZ, 'navepro', 'ui', 'janela_biblia.py')
 src = open(ARQ, encoding='utf-8').read()
 nos = {n.name: n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)}
 

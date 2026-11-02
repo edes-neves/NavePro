@@ -29,11 +29,20 @@ def check(nome, cond, extra=""):
         falhas.append(nome)
 
 
+_ARQUIVOS = (
+    os.path.join(RAIZ, "NavePro.py"),
+    os.path.join(RAIZ, "navepro", "core", "banco.py"),
+    os.path.join(RAIZ, "navepro", "ui", "gerenciador_midias.py"),
+)
+
+
 def _fonte(nome: str):
-    for no in ast.walk(_TREE):
-        if isinstance(no, ast.FunctionDef) and no.name == nome:
-            return no, ast.get_source_segment(_SRC, no)
-    raise AssertionError(f"função {nome} não encontrada em NavePro.py")
+    for arquivo in _ARQUIVOS:
+        fonte = open(arquivo, encoding="utf-8").read()
+        for no in ast.walk(ast.parse(fonte)):
+            if isinstance(no, ast.FunctionDef) and no.name == nome:
+                return no, ast.get_source_segment(fonte, no)
+    raise AssertionError(f"função {nome} não encontrada em NavePro.py/banco.py")
 
 
 # ── 1) A janela não pode voltar a depender do servidor HTTP ──

@@ -17,7 +17,7 @@ import sys
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
-_SRC = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+_SRC = open(os.path.join(RAIZ, "navepro", "ui", "janela_ordem_servico.py"), encoding="utf-8").read()
 _TREE = ast.parse(_SRC)
 
 _AVISOS = {
