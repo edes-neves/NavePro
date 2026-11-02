@@ -71,23 +71,31 @@ ruff check .
 ## Estrutura
 
 ```
-NavePro.py          # interface + projeção + importadores (banco, Hinos, Bíblia, Anúncios, Ordem de Serviço)
+NavePro.py          # shell da interface: AppInterface herda os mixins de navepro/ui/
+                    # (projeção, relógio, player, busca do painel, importadores)
 navepro/
+  __init__.py
+  config.py         # APP_VERSION, GITHUB_USER/REPO, BACKEND_PORT=5897, APP_ID_FLATPAK, EXTENSOES_*
+  remoto_web.py     # página do controle remoto (HTML/CSS/JS servidos pelo servidor HTTP)
   ui/               # janelas grandes do painel (mixins herdados pela AppInterface)
     apoio.py        # helpers de UI compartilhados (menu de contexto, seletor de arquivos)
     navegacao.py    # closures compartilhadas: navegação de slides, indicador, A−/A+, busca com debounce
+    painel.py       # widgets do painel do operador (busca, lista, relógio, medidor, controles)
+    config_relogio.py    # configuração (cidade/estado, monitor do telão, player)
+    tema_painel.py       # tema claro/escuro do painel
     janela_hinos.py janela_biblia.py janela_anuncios.py
     janela_ordem_servico.py janela_transferencia.py gerenciador_midias.py
-    painel.py config_relogio.py tema_painel.py
     remoto.py       # controle remoto (token, despacho e handlers do celular)
     execucao_servico.py  # execução do próximo item da Ordem de Serviço
     atualizacao.py  # janelas/flow de atualização (download, flatpak, instruções)
-  config.py         # APP_VERSION, GITHUB_USER/REPO, BACKEND_PORT=5897, APP_ID_FLATPAK, EXTENSOES_*
   core/ambiente.py  # _eh_windows(), _tornar_dpi_aware()
   core/anuncios.py  # anúncios: JSON legado + CRUD SQLite, uploads, migração
+  core/apresentacao.py  # abertura de apresentações/PDF no app do sistema (PowerPoint/Impress)
   core/atualizacao.py  # verificação e atualização via GitHub Releases / Flatpak
   core/banco.py     # DatabaseManager (SQLite + cache), db_query/db_execute, reuso de IDs
+  core/busca.py     # SearchWorker: busca assíncrona (fila única) do campo de busca
   core/clima.py     # geolocalização (Nominatim) e temperatura
+  core/foco_apresentacao.py  # devolve o foco à apresentação em curso após projetar
   core/fontes_pil.py  # localização de fonte, caixas de texto e medição PIL (anúncios)
   core/icones.py    # emoji→PNG dos botões (fonte colorida + fallback icones/*.png)
   core/inicializacao.py  # init_db, inicializar_banco/config, uploads, _sincronizar_uploads_midia
@@ -100,10 +108,15 @@ navepro/
   core/servidor_http.py  # ServidorAsyncHTTP: API de mídia + controle remoto (asyncio)
   core/servicos.py  # Ordens de Serviço (servicos.json), migração e helpers de itens
   core/slides.py    # montagem de slides (letra/anúncio) e busca por termo
+  core/ssl_context.py  # contexto SSL com as CAs do sistema + helper _baixar()
   core/telao.py     # TelaoWindow: janela de projeção (monitor secundário)
+  core/tema.py      # mapa de cores do tema claro (conversão em runtime; telão intocado)
+  core/textos.py    # detecção de tipo de arquivo, acentos/normalização, _termo_like
+  core/transferencia.py  # exportação/importação portátil (.navepro, ZIP) com backup
   core/util_tk.py   # _centralizar_sobre, _normalizar_escala_tk
-assets/
-  Biblias/, NHA/, HASD/    # bíblias XML/TXT e hinários OpenLyrics para importação
+  core/widgets_arredondados.py  # BotaoArredondado/CampoArredondado + TkArredondado
+  sorteio/          # subsistema de sorteio vendorado (janela embutida, sons, shim ctk)
+Biblias/, NHA/, HASD/     # bíblias XML/TXT e hinários OpenLyrics para importação
 tests/                     # suítes headless (ver acima)
 flatpak/                   # manifests (local + flathub/) e metainfo
 img/                       # ícones (Icon.png, Icon.xbm, Icon.ico)

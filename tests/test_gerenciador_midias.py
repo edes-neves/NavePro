@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Testes do Gerenciador de Banco de Mídia (NavePro.py).
+"""Testes do Gerenciador de Banco de Mídia (navepro/ui/gerenciador_midias.py).
 
 A janela consultava a API HTTP local na thread do Tk. Na primeira abertura o
 servidor ainda estava subindo (e o contexto SSL era inicializado), então a
@@ -42,7 +42,8 @@ def _fonte(nome: str):
         for no in ast.walk(ast.parse(fonte)):
             if isinstance(no, ast.FunctionDef) and no.name == nome:
                 return no, ast.get_source_segment(fonte, no)
-    raise AssertionError(f"função {nome} não encontrada em NavePro.py/banco.py")
+    raise AssertionError(
+        f"função {nome} não encontrada em NavePro.py/banco.py/gerenciador_midias.py")
 
 
 # ── 1) A janela não pode voltar a depender do servidor HTTP ──

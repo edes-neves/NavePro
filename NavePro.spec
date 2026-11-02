@@ -26,7 +26,7 @@
 # config.json e midia.db NÃO são embutidos, de propósito.
 #
 # Os dois estão no .gitignore: são arquivos de trabalho de quem compila. O
-# inicial_banco()/inicializar_config() do NavePro.py tratam os dois como
+# inicial_banco()/inicializar_config() (navepro/core/inicializacao.py) tratam os dois como
 # OPCIONAIS — sem eles no pacote, o app cria o banco (init_db monta o schema) e
 # fica com os padrões de navepro/config.py.
 #

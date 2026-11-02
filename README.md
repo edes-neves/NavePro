@@ -398,10 +398,21 @@ carregar **os dois** — sem o do formato instalado, o aviso diz isso em vez de 
 ### Estrutura do projeto
 
 ```
-NavePro.py            # Aplicativo principal (interface + projeção + importadores)
-navepro/              # Infraestrutura reutilizável (config, caminhos, temas, textos, atualização)
+NavePro.py            # Aplicativo principal: AppInterface herda os mixins de navepro/ui/
+navepro/
   config.py           # APP_VERSION e constantes de configuração
-  core/player.py      # Player de mídia no Windows: acha o executável, IPC do mpv, posiciona a janela
+  remoto_web.py       # Página do controle remoto (HTML/CSS/JS)
+  ui/                 # Janelas e apoio do painel (mixins herdados pela AppInterface)
+    painel.py         #   painel do operador: busca, lista, relógio, medidor, controles
+    navegacao.py      #   navegação de slides, indicador, A−/A+ e busca com debounce (compartilhados)
+    apoio.py          #   menu de contexto e seletor de arquivos
+    janela_*.py       #   Hinos, Bíblia, Anúncios, Ordem de Serviço, Transferência
+    gerenciador_midias.py config_relogio.py tema_painel.py
+    remoto.py execucao_servico.py atualizacao.py
+  core/               # Infraestrutura fora do shell: banco, slides, players, servidor HTTP,
+                      # atualização, anúncios, clima, fontes, ícones, tema, textos,
+                      # transferência, SSL e inicialização
+  sorteio/            # Subsistema de sorteio embutido (janela, sons e shim do ctk)
 pyproject.toml        # Configuração do ruff (lint) — necessário para `ruff check`
 NavePro.spec          # Configuração do PyInstaller (fonte única do empacotamento)
 build-windows.bat     # Gera o dist\NavePro.exe
@@ -414,8 +425,6 @@ AGENTS.md             # Guia para agentes de IA (testes, build, release, conven�
 LICENSE               # GPLv3
 requirements.txt      # Dependências (runtime + pyinstaller)
 Biblias/              # Bíblias para importar (XML do Zefania e TXT): AS21, ARC, ACF, ARA…
-  AS21.xml            #   Bíblia Almeida Século 21 (XML Zefania)
-  biblia-em-txt.txt   #   Bíblia Almeida Revista e Corrigida (TXT)
 NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista
 HASD/                 # Hinário (OpenLyrics XML)
 tests/                # Suítes de teste headless (ver "Testes")
@@ -458,8 +467,9 @@ instalação, em vez de falhar calado.
 ### Testes
 
 As suítes ficam em `tests/` e rodam **sem tela e sem servidor** — quando precisam
-de interface, recriam um `Tk` falso e extraem do `NavePro.py` só o trecho testado
-(via `ast`).
+de interface, recriam um `Tk` falso e extraem via `ast` só o trecho testado, do
+`NavePro.py` ou do módulo de `navepro/ui/` (ou `navepro/core/`) onde a função
+mora hoje.
 
 ```bat
 set PYTHONUTF8=1
@@ -475,7 +485,7 @@ No GitHub Actions (`.github/workflows/testes.yml`) a suíte roda nos **dois**
 sistemas a cada push e pull request — `ubuntu-latest` e `windows-latest` — para
 que uma mudança de um lado não quebre o outro sem ninguém perceber. As suítes de
 bíblia/projeção apontam para `tests/fixture_biblia.py`, que monta um banco
-temporário com o schema real (`init_db` extraído do `NavePro.py`).
+temporário com o schema real (`init_db`, em `navepro/core/inicializacao.py`).
 
 | Suíte | O que cobre |
 |---|---|
@@ -490,6 +500,14 @@ temporário com o schema real (`init_db` extraído do `NavePro.py`).
 | `test_monitores.py` | Escolha do monitor do painel e do telão: nunca os dois no mesmo monitor |
 | `test_player_windows.py` | Player no Windows: descoberta de executáveis, pipe do mpv, flags (mpv sem `--fullscreen`; VLC com `--fullscreen`), posicionamento da janela, fim de faixa, aviso de pausa |
 | `test_atualizacao.py` | Detecção de instalação e escolha do asset do release |
+| `test_busca_like.py` | Busca com curingas (`%`, `_`) e barra invertida escapados no `LIKE` |
+| `test_espaco_busca.py` | Espaço no campo de busca: digitar não toca; só Enter/clique reproduzem |
+| `test_navegacao_slides.py` | Navegação de slides compartilhada entre as janelas (indicador, A−/A+) |
+| `test_remoto_despacho.py` | Despacho do controle remoto por tabela (um handler por ação) |
+| `test_seguranca_http.py` | Servidor HTTP: token, Host local (DNS rebinding), CORS e limites de corpo |
+| `test_transferencia.py` | Exportação/importação `.navepro` (zip-slip, backup e migração) |
+| `test_servicos_json.py` | Ordens de Serviço em `servicos.json` (migração e backup do corrompido) |
+| `test_tema_widget.py` | Tema claro/escuro do painel (mapa de cores em runtime) |
 
 Duas suítes de verificação ligam o código à máquina e servem quando o problema só
 aparece na tela:
