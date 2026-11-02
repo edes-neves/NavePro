@@ -283,14 +283,17 @@ check("avisa só depois de restaurar a tela",
                   "attr", "") == "_avisar_fim_projecao")
 
 src_nave = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+src_exec = open(os.path.join(RAIZ, "navepro", "ui", "execucao_servico.py"),
+                encoding="utf-8").read()
+src_nave_ui = src_nave + src_exec
 check("NavePro importa o foco da apresentação",
       "from navepro.core.foco_apresentacao import" in src_nave)
 check("NavePro cria o alvo ao abrir a apresentação",
-      "_criar_alvo_apresentacao(" in src_nave)
+      "_criar_alvo_apresentacao(" in src_nave_ui)
 check("NavePro agenda a captura na thread principal do Tk",
-      "_agendar_captura_janela_apresentacao" in src_nave
+      "_agendar_captura_janela_apresentacao" in src_nave_ui
       and "threading.Thread(target=_registrar_janela_apresentacao"
-      not in src_nave)
+      not in src_nave_ui)
 check("NavePro devolve o foco quando a projeção termina",
       "def _ao_encerrar_projecao" in src_nave
       and "_focar_apresentacao(alvo)" in src_nave)

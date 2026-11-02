@@ -8,9 +8,10 @@ Guia para agentes de IA que trabalham neste repositório. Idioma do projeto:
 - **O que é:** aplicativo desktop (Python/Tkinter) de projeção multimídia em **dois
   monitores** para igrejas — monitor 1 controla, monitor 2 é o telão.
 - **Repositório:** `github.com/edes-neves/NavePro` · Licença GPLv3.
-- **Principal:** `NavePro.py` (interface + projeção + importadores, ~6 mil linhas
-  após a extração das janelas). Infraestrutura em `navepro/` e as janelas
-  grandes do painel em `navepro/ui/` (mixins herdados pela `AppInterface`).
+- **Principal:** `NavePro.py` (interface + projeção + importadores, ~2,4 mil linhas
+  após a extração das janelas e dos blocos de tema/remoto/atualização).
+  Infraestrutura em `navepro/` e as janelas grandes do painel em `navepro/ui/`
+  (mixins herdados pela `AppInterface`).
 - **Distribuição:** `NavePro.exe` (Windows), `NavePro-<versão>.AppImage` (Linux) e
   Flatpak (`io.github.edes_neves.NavePro`). Versão atual em `navepro/config.py` → `APP_VERSION`.
 - **Idioma do app:** português, com emojis na interface.
@@ -77,7 +78,10 @@ navepro/
     navegacao.py    # closures compartilhadas: navegação de slides, indicador, A−/A+, busca com debounce
     janela_hinos.py janela_biblia.py janela_anuncios.py
     janela_ordem_servico.py janela_transferencia.py gerenciador_midias.py
-    painel.py config_relogio.py
+    painel.py config_relogio.py tema_painel.py
+    remoto.py       # controle remoto (token, despacho e handlers do celular)
+    execucao_servico.py  # execução do próximo item da Ordem de Serviço
+    atualizacao.py  # janelas/flow de atualização (download, flatpak, instruções)
   config.py         # APP_VERSION, GITHUB_USER/REPO, BACKEND_PORT=5897, APP_ID_FLATPAK, EXTENSOES_*
   core/ambiente.py  # _eh_windows(), _tornar_dpi_aware()
   core/anuncios.py  # anúncios: JSON legado + CRUD SQLite, uploads, migração

@@ -231,8 +231,10 @@ checar("título do YouTube só cai para a URL quando está vazio",
        "if not titulo:" in _bloco_youtube)
 checar("título do YouTube não usa mais a regra de busca (_usou_titulo_como_busca)",
        "_usou_titulo_como_busca" not in _bloco_youtube)
+_fonte_exec = open(os.path.join(RAIZ, "navepro", "ui", "execucao_servico.py"),
+                      encoding="utf-8").read()
 checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
-       "item.get('youtube_url')" in _fonte_app)
+       "item.get('youtube_url')" in _fonte_app + _fonte_exec)
 
 # ── 8. Item YouTube no controle remoto (_remoto_resolver_item) ────────
 # O editor do celular marca a caixinha "Vídeo do YouTube" sob o tipo Vídeo e
@@ -240,10 +242,14 @@ checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
 # tipo, validar a URL e não guardar caminho em disco — espelhando o desktop.
 
 
+_fonte_remoto = open(os.path.join(RAIZ, "navepro", "ui", "remoto.py"),
+                        encoding="utf-8").read()
+
+
 def _extrair_metodo_app(classe, metodo, ns):
-    _no = ast.parse(_fonte_app)
+    _no = ast.parse(_fonte_remoto)
     for _n in ast.walk(_no):
-        if isinstance(_n, ast.ClassDef) and _n.name == classe:
+        if isinstance(_n, ast.ClassDef) and _n.name in (classe, "ControleRemotoMixin"):
             for _sub in _n.body:
                 if isinstance(_sub, ast.FunctionDef) and _sub.name == metodo:
                     _mod = ast.Module(body=[_sub], type_ignores=[])
@@ -253,7 +259,7 @@ def _extrair_metodo_app(classe, metodo, ns):
     raise AssertionError(f"{classe}.{metodo} não encontrada")
 
 
-_resolver = _extrair_metodo_app("AppInterface", "_remoto_resolver_item",
+_resolver = _extrair_metodo_app("ControleRemotoMixin", "_remoto_resolver_item",
                                 {"os": os, "_eh_url": _eh_url})
 
 _ok, _err, _campos = _resolver(None, {

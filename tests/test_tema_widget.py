@@ -19,7 +19,8 @@ sys.path.insert(0, RAIZ)
 
 from navepro.core.tema import _OPCOES_COR_TK, _OPCOES_TEXTO, _cor_clara  # noqa: E402
 
-_SRC = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+_SRC = open(os.path.join(RAIZ, "navepro", "ui", "tema_painel.py"),
+            encoding="utf-8").read()
 _NOS = {
     n.name: n for n in ast.walk(ast.parse(_SRC)) if isinstance(n, ast.FunctionDef)
 }

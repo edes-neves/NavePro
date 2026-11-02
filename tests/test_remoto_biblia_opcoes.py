@@ -37,7 +37,7 @@ def db_query(sql, params=()):
         conn.close()
 
 
-src = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
+src = open(os.path.join(RAIZ, 'navepro', 'ui', 'remoto.py'), encoding='utf-8').read()
 tree = ast.parse(src)
 
 no = next(n for n in ast.walk(tree)

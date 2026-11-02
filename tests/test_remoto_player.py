@@ -14,7 +14,7 @@ _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
 
-src = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
+src = open(os.path.join(RAIZ, 'navepro', 'ui', 'remoto.py'), encoding='utf-8').read()
 tree = ast.parse(src)
 
 node = next(n for n in ast.walk(tree)

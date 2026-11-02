@@ -161,10 +161,13 @@ check('não monitora o PowerPoint no Windows',
 
 # ── Integração e descoberta no Windows ────────────────────────────────
 _src = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
+_src_exec = open(os.path.join(RAIZ, 'navepro', 'ui', 'execucao_servico.py'),
+                 encoding='utf-8').read()
+_src_app = _src + _src_exec
 check('NavePro.py usa o construtor de comando',
-      '_comando_apresentacao(' in _src)
+      '_comando_apresentacao(' in _src_app)
 check('NavePro.py usa o monitoramento novo',
-      '_monitorar_apresentacao(' in _src)
+      '_monitorar_apresentacao(' in _src_app)
 check('NavePro.py não chama mais o LibreOffice só pelo nome',
       "_cmd_apres = [_so, '--show'" not in _src)
 check('POWERPNT.EXE está nos candidatos do Windows',

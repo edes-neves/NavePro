@@ -285,10 +285,12 @@ assert "_navepro_tema_proprio = True" in _fonte_integ, "janela sem marca de tema
 
 # --- O NavePro sincroniza o tema e respeita a marca de tema próprio ---
 _fonte_navepro = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
-assert "_sorteio_sync_tema" in _fonte_navepro, (
+_fonte_tema = open(os.path.join(RAIZ, "navepro", "ui", "tema_painel.py"),
+                   encoding="utf-8").read()
+assert "_sorteio_sync_tema" in _fonte_navepro + _fonte_tema, (
     "NavePro não sincroniza o tema do sorteio"
 )
-assert "_navepro_tema_proprio" in _fonte_navepro, (
+assert "_navepro_tema_proprio" in _fonte_navepro + _fonte_tema, (
     "NavePro ignora a marca de tema próprio"
 )
 
