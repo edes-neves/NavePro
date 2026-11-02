@@ -546,6 +546,15 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
 
     def _clear_focus_timeout(self) -> None:
         """Remove o foco de campos para permitir atalhos globais."""
+        # Busca com termo digitado: o operador ainda está compondo o nome.
+        # Não rouba o foco no meio da digitação — reagenda a checagem
+        # enquanto houver termo; ao limpar o campo, o foco volta a ser
+        # liberado para os atalhos globais.
+        conteudo = self.entry_busca.get().strip()
+        if conteudo and conteudo != self.placeholder_busca:
+            self._focus_timer = self.root.after(
+                5000, self._clear_focus_timeout)
+            return
         self.root.focus_set()
         self._focus_timer = None
 
@@ -561,6 +570,13 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             if telao is not None and getattr(telao, '_em_slides', False):
                 telao.slide_proximo()
                 return "break"
+        # Termo digitado na busca = operador compondo o nome: o espaço é do
+        # texto, NUNCA Play/Pause — mesmo que o foco já tenha saído do campo
+        # (ex.: pausa longa na digitação). A reprodução só acontece no Enter
+        # ou no clique no resultado.
+        conteudo_busca = self.entry_busca.get().strip()
+        if conteudo_busca and conteudo_busca != self.placeholder_busca:
+            return "break"
         focused = self.root.focus_get()
         if focused == self.entry_busca:
             conteudo = self.entry_busca.get().strip()
