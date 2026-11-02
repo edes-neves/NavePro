@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Testes de segurança do servidor HTTP (navepro/core/servidor_http.py).
 
-Trava dois pontos:
+Trava quatro pontos:
 1. `_remoto_autorizado` — comparação do token com `hmac.compare_digest`
    (tempo constante; bytes, para não explodir com não-ASCII vindo da rede).
 2. `_handle_upload_bytes` — o `filename` do multipart vem do cliente e não
    pode escapar de UPLOAD_FOLDER (basename + recusa de "."/"..").
+3. DNS rebinding — a API de mídia exige Host local (`_host_local`/
+   `_midia_local`), além do peer loopback, e as respostas NÃO trazem
+   `Access-Control-Allow-Origin` (o navegador não pode ler cruzado).
+4. `_eh_loopback` reconhece o IPv4-mapeado (::ffff:127.0.0.1).
 """
 
 import ast
+import json
 import mimetypes
 import os
 import re
@@ -23,6 +28,7 @@ if RAIZ not in sys.path:
 
 import hmac  # noqa: E402
 
+from navepro.core.rede import _eh_loopback  # noqa: E402
 from navepro.core.textos import detectar_tipo_arquivo  # noqa: E402
 
 _SRC = open(os.path.join(RAIZ, "navepro", "core", "servidor_http.py"),
@@ -40,6 +46,15 @@ def _fonte_metodo(nome: str) -> str:
                     return ast.get_source_segment(_SRC, item)
     raise AssertionError(
         f"método {nome} não encontrado em navepro/core/servidor_http.py")
+
+
+def _fonte_modulo(nome: str) -> str:
+    """Pega uma função de módulo de servidor_http.py via AST."""
+    for no in _TREE.body:
+        if isinstance(no, ast.FunctionDef) and no.name == nome:
+            return ast.get_source_segment(_SRC, no)
+    raise AssertionError(
+        f"função {nome} não encontrada em navepro/core/servidor_http.py")
 
 
 def _carregar_autorizado():
@@ -177,6 +192,50 @@ def _rodar() -> int:
         checar("filename comum é aceito normalmente",
                os.listdir(uploads) == ["avisos.txt"]
                and self.ultima_resposta == (201, "json"))
+
+    # ── 3. DNS rebinding: Host local + sem CORS * ───────────────────
+    ns_host: dict = {}
+    exec(compile(_fonte_modulo("_host_local"), "<_host_local>", "exec"),
+         ns_host)  # noqa: S102
+    host_local = ns_host["_host_local"]
+    for bom in ("127.0.0.1", "127.0.0.1:5897", "localhost",
+                "localhost:5897", "[::1]", "[::1]:5897", "::1"):
+        checar(f"Host local aceito: {bom!r}", host_local(bom))
+    for ruim in ("", "evil.com", "evil.com:5897", "192.168.0.5:5897",
+                 "127.0.0.1.evil.com", "[evil]::1"):
+        checar(f"Host estrangeiro recusado: {ruim!r}", not host_local(ruim))
+
+    ns_ml: dict = {"_eh_loopback": _eh_loopback, "_host_local": host_local}
+    exec(compile(_fonte_metodo("_midia_local"), "<_midia_local>", "exec"),
+         ns_ml)  # noqa: S102
+    midia_local = ns_ml["_midia_local"]
+    self_ml = SimpleNamespace()
+    checar("loopback + Host local → API de mídia liberada",
+           midia_local(self_ml, {"host": "127.0.0.1:5897"}, "127.0.0.1"))
+    checar("Host estrangeiro no loopback → bloqueado (DNS rebinding)",
+           not midia_local(self_ml, {"host": "evil.com:5897"}, "127.0.0.1"))
+    checar("peer remoto → bloqueado",
+           not midia_local(self_ml, {"host": "127.0.0.1:5897"},
+                           "192.168.0.9"))
+    checar("sem cabeçalho Host → bloqueado",
+           not midia_local(self_ml, {}, "127.0.0.1"))
+
+    ns_json: dict = {"json": json, "Any": __import__("typing").Any}
+    exec(compile(_fonte_metodo("_responder_json_bytes"),
+                 "<_responder_json_bytes>", "exec"), ns_json)  # noqa: S102
+    resposta = ns_json["_responder_json_bytes"](None, {"a": "á"})
+    checar("respostas JSON não expõem Access-Control-Allow-Origin",
+           b"Access-Control-Allow-Origin" not in resposta)
+    fonte_process = _fonte_metodo("_process_request")
+    checar("_process_request exige Host local na API de mídia",
+           "_midia_local" in fonte_process
+           and "Access-Control-Allow-Origin" not in fonte_process)
+
+    # ── 4. Loopback IPv4-mapeado ─────────────────────────────────────
+    checar("::ffff:127.0.0.1 é loopback", _eh_loopback("::ffff:127.0.0.1"))
+    checar("::ffff:127.0.0.1 em caixa alta também",
+           _eh_loopback("::FFFF:127.0.0.1"))
+    checar("192.168.0.5 não é loopback", not _eh_loopback("192.168.0.5"))
 
     return falhas
 

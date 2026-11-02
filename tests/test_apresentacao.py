@@ -129,14 +129,23 @@ for ext in ('.ppt', '.pptx', '.pps', '.ppsx'):
 
 cmd = _comando_apresentacao(
     PPTX, windows=True, flatpak=False, localizar=localizador({}))
-check('Windows sem PowerPoint mantém a associação (cmd /c start)',
-      cmd == ['cmd', '/c', 'start', '', PPTX], str(cmd))
+check('Windows sem PowerPoint mantém a associação (cmd /c start citado)',
+      cmd == ['cmd', '/c', 'start', '', '"' + PPTX + '"'], str(cmd))
 
 cmd = _comando_apresentacao(
     'C:\\apresentacoes\\letra.pdf', windows=True, flatpak=False,
     localizar=localizador({'powerpnt': POWERPNT}))
 check('PDF no Windows NÃO recebe o switch /s',
-      cmd == ['cmd', '/c', 'start', '', 'C:\\apresentacoes\\letra.pdf'],
+      cmd == ['cmd', '/c', 'start', '', '"C:\\apresentacoes\\letra.pdf"'],
+      str(cmd))
+
+# Nome com metacaracteres do cmd.exe: & não pode virar separador de
+# comando e % não pode expandir variável (é duplicado).
+mal = 'C:\\culto & anuncio 100%.pdf'
+cmd = _comando_apresentacao(
+    mal, windows=True, flatpak=False, localizar=localizador({}))
+check('caminho do start é citado e o % é duplicado (sem injeção de comando)',
+      cmd == ['cmd', '/c', 'start', '', '"C:\\culto & anuncio 100%%.pdf"'],
       str(cmd))
 
 # ── Monitoramento do fim da apresentação ──────────────────────────────

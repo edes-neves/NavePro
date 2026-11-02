@@ -49,6 +49,7 @@ from navepro.core.ambiente import _eh_windows  # noqa: E402
 from navepro.core.mediaplayer import _eh_url  # noqa: E402
 from navepro.core.player import (  # noqa: E402
     ClienteMpvIpc,
+    _arquivo_para_cmd_start,
     encerrar_arvore,
     esconder_janelas_auxiliares,
     limpar_cache_executaveis,
@@ -76,6 +77,7 @@ def _extrair_metodo(classe: str, metodo: str) -> callable:
                                         "_eh_url": _eh_url,
                                         "localizar_executavel": localizar_executavel,
                                         "nome_pipe_mpv": nome_pipe_mpv,
+                                        "_arquivo_para_cmd_start": _arquivo_para_cmd_start,
                                         "log": log}
                             exec(compile(mod, f"<{classe}.{metodo}>", "exec"), ns)
                             return ns[metodo]
@@ -190,6 +192,8 @@ def _rodar() -> int:
                    not any(c.startswith("--autofit") for c in cmd))
             checar("o nome do arquivo é o último argumento",
                    cmd[-1] == "musica.mp3")
+            checar("mpv recebe -- antes do arquivo (nome com - não vira opção)",
+                   cmd[-2] == "--")
             checar("o pipe foi guardado para conectar depois",
                    fake._pipe_mpv.startswith("\\\\.\\pipe\\navepro-mpv-"))
             checar("lançamento NÃO é desanexado (mpv é chamado direto)",
@@ -209,6 +213,18 @@ def _rodar() -> int:
                        cmd3[0] != "cmd")
                 checar("player_em_uso passa a ser o do fallback",
                        fake3._player_em_uso == "mpv")
+
+            # Nenhum player instalado: o cmd /c start precisa CITAR o caminho
+            # (um nome com "&" ou "%" não pode virar comando separado).
+            fake_fb = _falso("mpv", **{
+                "_player_existe": staticmethod(lambda n: False)})
+            cmd_fb = montar(fake_fb, "C:\\culto & quem%.mp4",
+                            1920, 0, 1920, 1080)
+            checar("sem player, o caminho vai citado no cmd /c start",
+                   cmd_fb[:4] == ["cmd", "/c", "start", ""]
+                   and cmd_fb[4] == '"C:\\culto & quem%%.mp4"')
+            checar("sem player, lançamento é desanexado",
+                   fake_fb._lancamento_desanexado is True)
         else:
             print("   (mpv ausente: pulando os testes de comando do mpv)")
 

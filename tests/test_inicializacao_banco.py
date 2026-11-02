@@ -8,8 +8,10 @@ criação do esquema, idempotência e as duas migrações de `anuncios`
 """
 
 import ast
+import datetime
 import mimetypes
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -52,9 +54,13 @@ def _ns(db: str, uploads: str) -> dict:
         "os": os,
         "sqlite3": sqlite3,
         "mimetypes": mimetypes,
+        "shutil": shutil,
+        "datetime": datetime,
         "log": log,
         "DB_PATH": db,
         "UPLOAD_FOLDER": uploads,
+        "DB_EMBUTIDO": os.path.join(os.path.dirname(db),
+                                    "embutido_inexistente.db"),
         "SCHEMA_VERSION": _schema_version(),
         "detectar_tipo_arquivo": detectar_tipo_arquivo,
     }
@@ -264,6 +270,19 @@ def _rodar() -> int:
     checar("versão não avança quando uma migração falha",
            _user_version(db) == 0)
 
+    # ── 4d. Banco corrompido é preservado e recriado (app não trava) ─
+    raiz, db, uploads = novo_db()
+    with open(db, "wb") as f:
+        f.write(b"isto nao e sqlite" * 100)
+    _init_db(db, uploads)
+    checar("app abre mesmo com banco corrompido (recria o esquema)",
+           esperadas <= _tabelas(db))
+    checar("banco corrompido foi preservado para recuperação manual",
+           any(n.startswith("midia.db.corrompido-")
+               for n in os.listdir(raiz)))
+    checar("banco recriado fica íntegro (quick_check ok)",
+           _user_version(db) == versao_atual)
+
     # ── 5. `_sincronizar_uploads_midia` ─────────────────────────────
     raiz, db, uploads = novo_db()
     _init_db(db, uploads)
@@ -308,6 +327,39 @@ def _rodar() -> int:
            nomes == {"hino.mp3", "clipe.mp4", "notas.txt"})
     checar("2ª sincronização não duplica (nada novo)",
            ns["_sincronizar_uploads_midia"]() == 0)
+
+    # ── 6. Backup diário (rede de proteção) ──────────────────────────
+    raiz, db, uploads = novo_db()
+    _init_db(db, uploads)
+    servicos_path = os.path.join(raiz, "servicos.json")
+    with open(servicos_path, "w", encoding="utf-8") as f:
+        f.write("{}")
+    ns_b = _ns(db, uploads)
+    ns_b["DATA_USER_DIR"] = raiz
+    ns_b["SERVICOS_FILE"] = servicos_path
+    ns_b["_MAX_BACKUPS_DIARIOS"] = 30
+    exec(compile(_extrair("criar_backup_diario"), "<criar_backup_diario>",
+                 "exec"), ns_b)  # noqa: S102
+    ns_b["criar_backup_diario"]()
+    hoje = datetime.date.today().isoformat()
+    pasta = os.path.join(raiz, "backups")
+    checar("backup diário copia midia.db e servicos.json",
+           os.path.isdir(pasta)
+           and sorted(os.listdir(pasta))
+           == sorted([f"{hoje}_midia.db", f"{hoje}_servicos.json"]))
+    ns_b["criar_backup_diario"]()
+    checar("2º backup no mesmo dia não duplica",
+           sorted(os.listdir(pasta))
+           == sorted([f"{hoje}_midia.db", f"{hoje}_servicos.json"]))
+    # Limite de cópias: arquivos antigos do mesmo nome são podados.
+    for dia in range(1, 35):
+        velho = os.path.join(pasta, f"2020-01-{dia:02d}_midia.db")
+        open(velho, "w").close()
+    ns_b["criar_backup_diario"]()
+    restantes = sorted(n for n in os.listdir(pasta)
+                       if n.endswith("_midia.db"))
+    checar("backup diário poda as cópias antigas (mantém 30)",
+           len(restantes) == 30 and restantes[-1] == f"{hoje}_midia.db")
 
     return falhas
 

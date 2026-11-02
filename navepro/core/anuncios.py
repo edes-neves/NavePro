@@ -35,6 +35,19 @@ def _carregar_anuncios_json() -> list[dict]:
             return [d for d in dados if isinstance(d, dict)]
     except (OSError, ValueError):
         pass
+    # JSON ilegível/corrompido (ou com formato inesperado): preserva uma
+    # cópia antes que qualquer gravação sobrescreva a única versão dos
+    # dados. Se o arquivo não existir (primeiro uso), nada acontece.
+    if os.path.exists(ANUNCIOS_FILE):
+        preservado = ANUNCIOS_FILE + ".corrompido"
+        try:
+            os.replace(ANUNCIOS_FILE, preservado)
+            log.warning(f"⚠️ anuncios.json corrompido — preservado em "
+                        f"{preservado}; os anúncios anteriores não foram "
+                        "apagados.")
+        except OSError:
+            log.warning("⚠️ anuncios.json corrompido e não pôde ser "
+                        "renomeado; o próximo salvamento pode sobrescrever.")
     return []
 
 

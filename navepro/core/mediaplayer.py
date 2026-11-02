@@ -32,6 +32,7 @@ from navepro.core.monitores import (
 from navepro.core.player import (
     MPRIS_DESTS,
     ClienteMpvIpc,
+    _arquivo_para_cmd_start,
     destino_mpris,
     encerrar_arvore,
     esconder_janelas_auxiliares,
@@ -758,7 +759,10 @@ class MediaPlayer:
                       "Usando o aplicativo padrão")
                 self._lancamento_desanexado = True
                 if _eh_windows():
-                    return ['cmd', '/c', 'start', '', arquivo]
+                    # Caminho citado: sem isso um nome com "&" viraria
+                    # comando separado no cmd.exe (injeção de comando).
+                    return ['cmd', '/c', 'start', '',
+                            _arquivo_para_cmd_start(arquivo)]
                 return ['xdg-open', arquivo]
 
         # Player realmente usado (pode ter mudado pelo fallback acima). É
@@ -811,6 +815,7 @@ class MediaPlayer:
                     f'--input-ipc-server={self._pipe_mpv}',
                     '--keep-open=no',
                     f'--geometry={mw}x{mh}+{mx}+{my}',
+                    '--',
                     arquivo,
                 ]
             # Sem --geometry no Linux: sob XWayland (GNOME/Wayland) um
@@ -824,13 +829,17 @@ class MediaPlayer:
                 *_opcoes_telao_mpv(self._monitor_alvo().name,
                                    self._indice_screennumber()),
                 '--really-quiet', '--no-terminal',
+                '--',
                 arquivo,
             ]
         else:
             self._lancamento_desanexado = True
             if _eh_windows():
                 # Abre com o aplicativo padrão do Windows (sem console).
-                return ['cmd', '/c', 'start', '', arquivo]
+                # Caminho citado (ver o fallback acima): evita injeção de
+                # comando via metacaracteres no nome do arquivo.
+                return ['cmd', '/c', 'start', '',
+                        _arquivo_para_cmd_start(arquivo)]
             return ['xdg-open', arquivo]
 
     def _montar_comando_url(self, url: str, mx: int, my: int,

@@ -3,6 +3,7 @@
 Extraído de NavePro.py sem alterar o comportamento (ver AGENTS.md).
 """
 
+import datetime
 import mimetypes
 import os
 import shutil
@@ -16,9 +17,11 @@ from navepro.core.banco import DatabaseManager, db_execute, db_query
 from navepro.core.log import get_logger
 from navepro.core.paths import (
     CONFIG_FILE,
+    DATA_USER_DIR,
     DB_EMBUTIDO,
     DB_PATH,
     DIR_BASE,
+    SERVICOS_FILE,
     UPLOAD_FOLDER,
     UPLOADS_EMBUTIDO,
     _caminho_recurso,
@@ -34,12 +37,44 @@ log = get_logger("inicializacao")
 # degrau confere o estado real antes de agir, então reaplicar é inócuo.
 SCHEMA_VERSION = 2
 
+# Quantas cópias diárias de cada arquivo o backup de segurança mantém.
+_MAX_BACKUPS_DIARIOS = 30
+
 
 def init_db() -> None:
     """Cria a estrutura do banco de dados se não existir."""
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    # Banco corrompido (ou arquivo que nem é SQLite) não pode derrubar o
+    # app: preserva o arquivo renomeado e recomeça, em vez de não abrir.
+    try:
+        estado = cursor.execute("PRAGMA quick_check").fetchone()
+        integro = (estado is not None and estado[0] is not None
+                   and str(estado[0]).lower() == "ok")
+    except sqlite3.DatabaseError:
+        integro = False
+    if not integro:
+        conn.close()
+        backup = (DB_PATH + ".corrompido-"
+                  + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        try:
+            os.replace(DB_PATH, backup)
+        except OSError:
+            backup = ""
+        log.error(
+            f"⚠️ Banco de dados corrompido — preservado em {backup or DB_PATH}. "
+            "Os dados anteriores NÃO foram apagados; recupere o arquivo "
+            "preservado e importe o que for preciso.")
+        if os.path.exists(DB_EMBUTIDO):
+            # O bundle trouxe banco embutido (biblioteca pronta): restaura
+            # dele em vez de começar totalmente vazio.
+            shutil.copy2(DB_EMBUTIDO, DB_PATH)
+            log.error("📦 Banco recriado a partir do banco embutido.")
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS midia (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -238,12 +273,54 @@ def inicializar_banco() -> None:
     init_db()
 
 
+def criar_backup_diario() -> None:
+    """Backup leve e diário de midia.db e servicos.json (rede de proteção).
+
+    Roda no início do app, antes de qualquer migração: se os dados forem
+    corrompidos ou apagados por engano, a cópia do dia anterior continua em
+    ~/.navepro/backups/. Mantém no máximo _MAX_BACKUPS_DIARIOS por arquivo.
+    """
+    try:
+        pasta = os.path.join(DATA_USER_DIR, "backups")
+        os.makedirs(pasta, exist_ok=True)
+        hoje = datetime.date.today().isoformat()
+        for origem in (DB_PATH, SERVICOS_FILE):
+            if not os.path.isfile(origem):
+                continue
+            nome = os.path.basename(origem)
+            destino = os.path.join(pasta, f"{hoje}_{nome}")
+            if not os.path.exists(destino):
+                shutil.copy2(origem, destino)
+                log.info(f"🛡️ Backup diário criado: {destino}")
+            try:
+                copias = sorted(
+                    (e.path for e in os.scandir(pasta)
+                     if e.is_file() and e.name.endswith("_" + nome)),
+                    reverse=True)
+            except OSError:
+                continue
+            for velha in copias[_MAX_BACKUPS_DIARIOS:]:
+                try:
+                    os.unlink(velha)
+                except OSError:
+                    pass
+    except OSError as e:
+        log.warning(f"⚠️ Não foi possível criar o backup diário: {e}")
+
+
 def inicializar_config() -> None:
     """Copia config embutido para ~/.navepro/ se necessário."""
     config_embutido = _caminho_recurso("config.json")
     if not os.path.exists(CONFIG_FILE) and os.path.exists(config_embutido):
         log.info(f"📦 Copiando config embutido para {CONFIG_FILE}")
         shutil.copy2(config_embutido, CONFIG_FILE)
+    # O config.json guarda o token do controle remoto: restringe a leitura
+    # ao próprio usuário (no Windows a proteção real vem do perfil).
+    if os.path.exists(CONFIG_FILE):
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except OSError:
+            pass
 
 
 def garantir_pasta_uploads() -> bool:
@@ -336,7 +413,8 @@ def _sincronizar_uploads_midia() -> int:
             """, (ent.name, os.path.splitext(ent.name)[0], tipo, caminho,
                   tamanho, mime or ''))
             novos += 1
-        except Exception:
+        except Exception as e:
+            log.warning(f"⚠️ Falha ao sincronizar '{ent.name}': {e}")
             continue
     if novos:
         DatabaseManager().reload_cache()

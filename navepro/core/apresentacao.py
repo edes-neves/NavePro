@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 
-from navepro.core.player import localizar_executavel
+from navepro.core.player import _arquivo_para_cmd_start, localizar_executavel
 
 # Extensões que o item de Ordem de Serviço entrega ao aplicativo externo.
 EXTENSOES_APRESENTACAO = frozenset(
@@ -58,7 +58,9 @@ def _comando_apresentacao(
             powerpnt = localizar('powerpnt')
             if powerpnt:
                 return [powerpnt, '/s', caminho]
-        return ['cmd', '/c', 'start', '', caminho]
+        # Caminho citado: sem isso, um nome com "&" viraria comando
+        # separado no cmd.exe (injeção de comando).
+        return ['cmd', '/c', 'start', '', _arquivo_para_cmd_start(caminho)]
 
     if ext == '.pdf':
         # O LibreOffice em modo apresentação não serve para PDF.

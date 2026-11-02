@@ -21,6 +21,56 @@ from navepro.core.paths import SERVICOS_FILE
 log = get_logger("servicos")
 
 
+def _normalizar_servicos(dados: dict) -> dict:
+    """Aplica as normalizações de versão na estrutura lida do JSON."""
+    dados.setdefault("_proximo_id_servico", 1)
+    dados.setdefault("_proximo_id_item", 1)
+    # Remove a data automática (não editável) de versões anteriores.
+    for _s in dados.get("servicos", []):
+        if isinstance(_s, dict):
+            _s.pop("data_servico", None)
+            # Migração: "apresentacao" foi unificada com "sermao"
+            # (o tipo "sermao" agora aceita vídeo/áudio/apresentação).
+            for _it in _s.get("itens") or []:
+                if isinstance(_it, dict) and \
+                        (_it.get("tipo") or "").lower() == "apresentacao":
+                    _it["tipo"] = "sermao"
+    return dados
+
+
+def _recuperar_servicos_json() -> dict | None:
+    """Recupera servicos.json ilegível/corrompido (None se nada salvar).
+
+    Tenta primeiro o .tmp do último salvamento atômico. Se não der, o
+    arquivo corrompido é RENOMEADO para servicos.json.corrompido — sem
+    isso o próximo salvamento sobrescreveria a única cópia dos dados.
+    """
+    tmp = SERVICOS_FILE + ".tmp"
+    for origem in (tmp, SERVICOS_FILE):
+        try:
+            with open(origem, encoding="utf-8") as f:
+                dados = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(dados, dict) and isinstance(dados.get("servicos"), list):
+            if origem == tmp:
+                log.warning("⚠️ servicos.json ilegível — recuperado do "
+                            "arquivo temporário do último salvamento.")
+            return dados
+    if os.path.exists(SERVICOS_FILE):
+        preservado = SERVICOS_FILE + ".corrompido"
+        try:
+            os.replace(SERVICOS_FILE, preservado)
+            log.warning(
+                f"⚠️ servicos.json corrompido — preservado em {preservado}. "
+                "As ordens de serviço anteriores NÃO foram apagadas: "
+                "renomeie o arquivo de volta para recuperá-las.")
+        except OSError:
+            log.warning("⚠️ servicos.json corrompido — não foi possível "
+                        "renomeá-lo; o próximo salvamento pode sobrescrever.")
+    return None
+
+
 def _carregar_servicos_json() -> dict:
     """Lê ~/.navepro/servicos.json e devolve a estrutura de ordens de serviço.
 
@@ -34,21 +84,12 @@ def _carregar_servicos_json() -> dict:
         with open(SERVICOS_FILE, encoding="utf-8") as f:
             dados = json.load(f)
         if isinstance(dados, dict) and isinstance(dados.get("servicos"), list):
-            dados.setdefault("_proximo_id_servico", 1)
-            dados.setdefault("_proximo_id_item", 1)
-            # Remove a data automática (não editável) de versões anteriores.
-            for _s in dados.get("servicos", []):
-                if isinstance(_s, dict):
-                    _s.pop("data_servico", None)
-                    # Migração: "apresentacao" foi unificada com "sermao"
-                    # (o tipo "sermao" agora aceita vídeo/áudio/apresentação).
-                    for _it in _s.get("itens") or []:
-                        if isinstance(_it, dict) and \
-                                (_it.get("tipo") or "").lower() == "apresentacao":
-                            _it["tipo"] = "sermao"
-            return dados
+            return _normalizar_servicos(dados)
     except (OSError, ValueError):
         pass
+    recuperado = _recuperar_servicos_json()
+    if recuperado is not None:
+        return _normalizar_servicos(recuperado)
     return {"servicos": [], "_proximo_id_servico": 1, "_proximo_id_item": 1}
 
 
@@ -59,6 +100,8 @@ def _salvar_servicos_json(dados: dict) -> bool:
         tmp = SERVICOS_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(dados, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, SERVICOS_FILE)
         return True
     except OSError as e:

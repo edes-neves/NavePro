@@ -37,6 +37,17 @@ import time
 
 from navepro.core.ambiente import _ambiente_sem_appimage, _eh_windows
 
+
+def _arquivo_para_cmd_start(caminho: str) -> str:
+    """Cita o caminho para o `cmd /c start` sem interpretar metacaracteres.
+
+    O cmd.exe separa comandos por &/|/^ FORA de aspas e expande %VAR%
+    mesmo DENTRO delas: um nome de arquivo como "culto & quem.mp4" virava
+    dois comandos. Entre aspas (e com o % duplicado) tudo vira texto
+    literal para o `start` — nomes de arquivo do Windows nunca têm `"`.
+    """
+    return f'"{caminho.replace("%", "%%")}"'
+
 # Nomes de programa que o NavePro pode precisar localizar no Windows, com os
 # caminhos relativos de instalação padrão de cada um. A sintaxe é a do
 # Windows (%VAR%), que é a que o os.path.expandvars entende nesta plataforma.

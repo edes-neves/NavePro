@@ -8,6 +8,10 @@ import socket
 
 def _eh_loopback(ip: str) -> bool:
     """True se o endereço for o próprio computador (127.0.0.1 / ::1)."""
+    ip = (ip or '').lower()
+    # IPv4-mapeado (ex.: ::ffff:127.0.0.1) também é o próprio computador.
+    if ip.startswith('::ffff:'):
+        ip = ip[7:]
     return ip in ('127.0.0.1', '::1', 'localhost')
 
 

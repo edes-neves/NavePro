@@ -243,6 +243,9 @@ def _rodar() -> int:
         f.write("{lixo não json")
     checar("JSON corrompido → [] (não explode)",
            ns["_carregar_anuncios_json"]() == [])
+    checar("JSON corrompido é preservado em .corrompido (não sobrescrito)",
+           os.path.exists(anuncios_file + ".corrompido")
+           and not os.path.exists(anuncios_file))
 
     # ── 9. Migração única do anuncios.json legado ───────────────────
     raiz2, db2 = criar_biblia()

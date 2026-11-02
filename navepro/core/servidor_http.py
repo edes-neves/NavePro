@@ -50,6 +50,24 @@ _LIMITE_CABECALHO = 64 * 1024
 _LIMITE_CORPO = 200 * 1024 * 1024
 
 
+def _host_local(host: str) -> bool:
+    """True se o cabeçalho Host aponta para o próprio computador.
+
+    Aceita 127.0.0.1, localhost e ::1/[::1] (com ou sem porta). Qualquer
+    outro nome falha — inclusive um domínio que um site malicioso resolva
+    (DNS rebinding) para 127.0.0.1: o Host continua sendo o domínio dele.
+    """
+    valor = (host or '').strip().lower()
+    if valor.startswith('['):
+        # [::1] ou [::1]:5897
+        nome = valor[1:].split(']', 1)[0]
+    elif valor.count(':') == 1:
+        nome = valor.split(':', 1)[0]
+    else:
+        nome = valor
+    return nome in ('127.0.0.1', 'localhost', '::1')
+
+
 class ServidorAsyncHTTP:
     """Servidor HTTP assíncrono usando asyncio.
     
@@ -226,7 +244,6 @@ class ServidorAsyncHTTP:
             error_response = (
                 b"HTTP/1.1 500 Internal Server Error\r\n"
                 b"Content-Type: application/json; charset=utf-8\r\n"
-                b"Access-Control-Allow-Origin: *\r\n"
                 b"Connection: close\r\n"
                 b"\r\n"
                 b'{"erro": "Erro interno do servidor"}'
@@ -242,6 +259,16 @@ class ServidorAsyncHTTP:
             except Exception:
                 pass
 
+    def _midia_local(self, headers: dict, peer_ip: str) -> bool:
+        """True se a requisição da API de mídia vem mesmo do computador local.
+
+        Além do IP do peer ser loopback, o cabeçalho Host precisa apontar
+        para o próprio computador: sem isso, um site malicioso aberto no
+        navegador do operador resolve o domínio dele para 127.0.0.1 (DNS
+        rebinding) e conversa com a API usando um Host estrangeiro.
+        """
+        return _eh_loopback(peer_ip) and _host_local(headers.get('host', ''))
+
     async def _process_request(self, method: str, path_full: str,
                                 headers: dict, body: bytes,
                                 peer_ip: str = '') -> bytes:
@@ -251,19 +278,21 @@ class ServidorAsyncHTTP:
         params = dict(urllib.parse.parse_qsl(parsed.query))
 
         # A API de mídia (listar/upload/download/deletar) é do painel local:
-        # quando o servidor escuta na rede, ela NUNCA sai do loopback.
-        if path.startswith('/api/midia') and not _eh_loopback(peer_ip):
+        # quando o servidor escuta na rede, ela NUNCA sai do loopback, e o
+        # Host precisa ser local (ver _midia_local).
+        if path.startswith('/api/midia') and not self._midia_local(
+                headers, peer_ip):
             return self._responder_erro_bytes(
                 "API de mídia restrita ao computador local", 403)
 
-        # CORS preflight
+        # CORS preflight: o NavePro não serve nenhuma origem cruzada (a
+        # página do celular é do MESMO servidor), então não há cabeçalhos
+        # Access-Control-* na resposta — o navegador bloqueia a leitura.
         if method == 'OPTIONS':
             return (
                 b"HTTP/1.1 200 OK\r\n"
-                b"Access-Control-Allow-Origin: *\r\n"
-                b"Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n"
-                b"Access-Control-Allow-Headers: Content-Type, X-Token\r\n"
                 b"Content-Length: 0\r\n"
+                b"Connection: close\r\n"
                 b"\r\n"
             )
         
@@ -496,7 +525,6 @@ class ServidorAsyncHTTP:
             f"HTTP/1.1 200 OK\r\n"
             f"Content-Type: {mime or 'application/octet-stream'}\r\n"
             f"Content-Disposition: attachment; filename=\"{os.path.basename(caminho)}\"\r\n"
-            f"Access-Control-Allow-Origin: *\r\n"
             f"Content-Length: {len(conteudo)}\r\n"
             f"\r\n"
         ).encode()
@@ -634,9 +662,6 @@ class ServidorAsyncHTTP:
         header = (
             f"HTTP/1.1 {status} {status_text.get(status, 'OK')}\r\n"
             f"Content-Type: application/json; charset=utf-8\r\n"
-            f"Access-Control-Allow-Origin: *\r\n"
-            f"Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n"
-            f"Access-Control-Allow-Headers: Content-Type, X-Token\r\n"
             f"Content-Length: {len(body)}\r\n"
             f"Connection: close\r\n"
             f"\r\n"

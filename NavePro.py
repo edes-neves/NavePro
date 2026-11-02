@@ -106,6 +106,7 @@ from navepro.core.fontes_pil import (
 from navepro.core.icones import _carregar_emoji, _carregar_icone
 from navepro.core.inicializacao import (
     _sincronizar_uploads_midia,
+    criar_backup_diario,
     garantir_pasta_uploads,
     inicializar_banco,
     inicializar_config,
@@ -710,6 +711,7 @@ class AppInterface:
         log.info(f"🎮 Player: {self.player_cmd} | Monitor: {self.monitor_index}")
 
         # Garante recursos
+        criar_backup_diario()
         inicializar_banco()
         inicializar_config()
         garantir_pasta_uploads()
@@ -1120,15 +1122,22 @@ class AppInterface:
         if not ativo:
             remoto['token'] = ''
         try:
-            with open(CONFIG_FILE, "w") as f:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=2)
+            # O config.json guarda o token do controle remoto: restringe a
+            # leitura ao próprio usuário (no Windows a proteção real vem
+            # das permissões do perfil; o chmod não atrapalha).
+            os.chmod(CONFIG_FILE, 0o600)
         except Exception as e:
             log.exception(f"Erro ao salvar config de remoto: {e}")
         self._aplicar_acesso_remoto()
+        info = self.info_controle_remoto()
+        # Nunca loga a URL completa: ela carrega o token na query (?t=).
         log.info(('🌐 Controle remoto ATIVADO' if ativo
                else '📴 Controle remoto desativado')
-              + (f" — {self.info_controle_remoto()['url']}" if ativo else ''))
-        return self.info_controle_remoto()
+              + (f" — http://{info['ip']}:{BACKEND_PORT}/ (token protegido)"
+                 if ativo else ''))
+        return info
 
     def abrir_controle_remoto(self) -> None:
         """Abre Configurações já na aba 🌐 Controle Remoto.
