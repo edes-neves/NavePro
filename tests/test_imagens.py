@@ -15,6 +15,10 @@ _ARQ_APOIO = os.path.join(RAIZ, 'navepro', 'ui', 'apoio.py')
 _src_apoio = open(_ARQ_APOIO, encoding='utf-8').read()
 _nos_apoio = {n.name: n for n in ast.walk(ast.parse(_src_apoio))
               if isinstance(n, ast.FunctionDef)}
+_ARQ_CONFIG = os.path.join(RAIZ, 'navepro', 'ui', 'config_relogio.py')
+_src_config = open(_ARQ_CONFIG, encoding='utf-8').read()
+nos.update({n.name: n for n in ast.walk(ast.parse(_src_config))
+            if isinstance(n, ast.FunctionDef)})
 
 sys.path.insert(0, _AQUI)
 sys.path.insert(0, RAIZ)
@@ -61,7 +65,11 @@ for nome in ('_escolher_imagem_fundo', '_escolher_imagem_fundo_relogio'):
     ns2 = {'_escolher_arquivos_usuario': sel, 'cfg_win': cfg_win,
            'var_fundo_imagem': var, 'SUFIXOS_IMAGEM': SUFIXOS_IMAGEM,
            'tuple': tuple, 'sorted': sorted}
-    exec(compile(textwrap.dedent(ast.get_source_segment(src, nos[nome])), '<f>', 'exec'), ns2)
+    # _escolher_imagem_fundo é da projeção (NavePro.py); a variante _relogio
+    # foi extraída para navepro/ui/config_relogio.py.
+    fonte = _src_config if nome.endswith("_relogio") else src
+    exec(compile(textwrap.dedent(ast.get_source_segment(
+        fonte, nos[nome])), '<f>', 'exec'), ns2)
     func = ns2[nome]
 
     # cancelou: a variável não é mexida

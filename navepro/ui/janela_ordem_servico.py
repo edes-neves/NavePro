@@ -1222,36 +1222,10 @@ class JanelaOrdemServicoMixin:
                   ).pack(side='right', padx=3)
 
         # ── Navegação por teclado dos slides projetados (sem sair da janela) ──
-        def _slide_anterior(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            telao.slide_anterior()
-            return "break"
-
-        def _slide_proximo(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            telao.slide_proximo()
-            return "break"
-
-        def _parar_projecao(event: object = None):
-            if not getattr(self.player.telao, "mostrando_letra", False):
-                return None
-            self.player.telao.parar_projecao()
-            return "break"
-
-        janela.bind("<Left>", _slide_anterior)
-        janela.bind("<Up>", _slide_anterior)
-        janela.bind("<Right>", _slide_proximo)
-        janela.bind("<Down>", _slide_proximo)
-        janela.bind("<Escape>", _parar_projecao)
-        self.root.bind("<Left>", _slide_anterior)
-        self.root.bind("<Up>", _slide_anterior)
-        self.root.bind("<Right>", _slide_proximo)
-        self.root.bind("<Down>", _slide_proximo)
-        self.root.bind("<Escape>", _parar_projecao)
+        _slide_anterior, _slide_proximo, _parar_projecao = \
+            self._criar_navegacao_slides()
+        self._vincular_teclas_slides(janela, _slide_anterior, _slide_proximo,
+                                     _parar_projecao)
 
         _carregar_servicos()
         # Se há serviços, seleciona o primeiro

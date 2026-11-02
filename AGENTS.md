@@ -74,8 +74,10 @@ NavePro.py          # interface + projeção + importadores (banco, Hinos, Bíbl
 navepro/
   ui/               # janelas grandes do painel (mixins herdados pela AppInterface)
     apoio.py        # helpers de UI compartilhados (menu de contexto, seletor de arquivos)
+    navegacao.py    # closures compartilhadas: navegação de slides, indicador, A−/A+, busca com debounce
     janela_hinos.py janela_biblia.py janela_anuncios.py
     janela_ordem_servico.py janela_transferencia.py gerenciador_midias.py
+    painel.py config_relogio.py
   config.py         # APP_VERSION, GITHUB_USER/REPO, BACKEND_PORT=5897, APP_ID_FLATPAK, EXTENSOES_*
   core/ambiente.py  # _eh_windows(), _tornar_dpi_aware()
   core/anuncios.py  # anúncios: JSON legado + CRUD SQLite, uploads, migração

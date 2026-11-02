@@ -209,6 +209,8 @@ _SRC_UI = (_SRC
            + open(os.path.join(RAIZ, "navepro", "ui", "janela_ordem_servico.py"),
                   encoding="utf-8").read()
            + open(os.path.join(RAIZ, "navepro", "ui", "gerenciador_midias.py"),
+                  encoding="utf-8").read()
+           + open(os.path.join(RAIZ, "navepro", "ui", "config_relogio.py"),
                   encoding="utf-8").read())
 check(
     "diálogos grandes usam _limitar_ao_monitor",

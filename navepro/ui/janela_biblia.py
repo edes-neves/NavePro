@@ -954,114 +954,37 @@ class JanelaBibliaMixin:
                 pass
             _atualizar_indicador_slide()
 
-        def _slide_anterior(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            if telao.slide_anterior():
-                _refletir_telao_na_janela()
-            return "break"
-
-        def _slide_proximo(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            if telao.slide_proximo():
-                _refletir_telao_na_janela()
-            return "break"
-
-        def _parar_projecao(event: object = None):
-            if not getattr(self.player.telao, "mostrando_letra", False):
-                return None
-            self.player.telao.parar_projecao()
+        def _ao_parar_biblia():
             try:
                 biblia_text.tag_remove('verso_atual', '1.0', tk.END)
             except tk.TclError:
                 pass
             _atualizar_indicador_slide()
-            return "break"
+
+        _slide_anterior, _slide_proximo, _parar_projecao = \
+            self._criar_navegacao_slides(
+                ao_navegar=_refletir_telao_na_janela,
+                ao_parar=_ao_parar_biblia)
 
         def _ajustar_fonte(delta: float):
             """Aumenta/diminui a fonte da projeção e redesenha o que está ativo."""
-            telao = self.player.telao
-            cfg = getattr(telao, "_proj_cfg", None)
-            if cfg is None:
-                telao.configurar_projecao()
-                cfg = telao._proj_cfg
-            novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
-            cfg["tamanho_pct"] = novo
-            telao._proj_cfg = cfg
-            if getattr(telao, "_em_slides", False) and telao._slides:
-                telao._mostrar_slide(telao._slide_index)
-            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
-                telao._desenhar_texto_no_canvas(telao._current_text)
-            self.salvar_config_projecao(dict(cfg))
-            _atualizar_indicador_slide()
+            self._ajustar_fonte_projecao(delta, _atualizar_indicador_slide)
 
         def _restaurar_fonte():
             """Volta a fonte da projeção ao padrão, desfazendo o A−/A+ manual."""
-            telao = self.player.telao
-            cfg = getattr(telao, "_proj_cfg", None)
-            if cfg is None:
-                telao.configurar_projecao()
-                cfg = telao._proj_cfg
-            cfg["tamanho_pct"] = 5.0
-            telao._proj_cfg = cfg
-            if getattr(telao, "_em_slides", False) and telao._slides:
-                telao._mostrar_slide(telao._slide_index)
-            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
-                telao._desenhar_texto_no_canvas(telao._current_text)
-            self.salvar_config_projecao(dict(cfg))
-            _atualizar_indicador_slide()
+            self._restaurar_fonte_projecao(_atualizar_indicador_slide)
 
         # Setas do teclado e Esc (janela de bíblia).
         # No root substituímos a ligação a cada abertura para evitar acumular
         # handlers duplicados de chamadas repetidas a janela_biblia.
-        janela.bind("<Left>", _slide_anterior)
-        janela.bind("<Up>", _slide_anterior)
-        janela.bind("<Right>", _slide_proximo)
-        janela.bind("<Down>", _slide_proximo)
-        janela.bind("<Escape>", _parar_projecao)
-        self.root.bind("<Left>", _slide_anterior)
-        self.root.bind("<Up>", _slide_anterior)
-        self.root.bind("<Right>", _slide_proximo)
-        self.root.bind("<Down>", _slide_proximo)
-        self.root.bind("<Escape>", _parar_projecao)
+        self._vincular_teclas_slides(janela, _slide_anterior, _slide_proximo,
+                                     _parar_projecao)
 
         # Passador de slides (controle remoto): durante a projeção de
         # versículos, AvPag/RetPag, espaço, F5 e BackSpace navegam como as
-        # setas. Mesmo esquema da janela de anúncios.
-        def _foco_em_campo_texto() -> bool:
-            foco = janela.focus_get() or self.root.focus_get()
-            if foco is None:
-                return False
-            try:
-                return foco.winfo_class() in (
-                    "Entry", "TEntry", "Text", "Spinbox", "TCombobox")
-            except tk.TclError:
-                return False
-
-        def _navegar_passador_biblia(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            if _foco_em_campo_texto():
-                return None
-            keysym = str(getattr(event, 'keysym', '') or '').lower()
-            if keysym in ('next', 'page_next', 'page_down', 'space', 'f5'):
-                if telao.slide_proximo():
-                    _refletir_telao_na_janela()
-                return "break"
-            if keysym in ('prior', 'page_prior', 'page_up', 'backspace'):
-                if telao.slide_anterior():
-                    _refletir_telao_na_janela()
-                return "break"
-            return None
-
-        for _seq in ("<Next>", "<Prior>", "<F5>", "<BackSpace>", "<space>"):
-            janela.bind(_seq, _navegar_passador_biblia)
-        for _seq in ("<Next>", "<Prior>", "<F5>", "<BackSpace>"):
-            self.root.bind(_seq, _navegar_passador_biblia)
+        # setas (mesmo esquema da janela de anúncios).
+        self._criar_passador_slides(janela,
+                                    ao_navegar=_refletir_telao_na_janela)
 
         # Abre com João 3 a partir do versículo 16 (campo "V:" = 16)
         _carregar_capitulo()

@@ -36,6 +36,11 @@ from navepro.core.servicos import _extrair_texto_pdf
 from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
+from navepro.ui.navegacao import (
+    _configurar_estilo_treeview_escuro,
+    _ligar_busca_com_debounce,
+    _termo_da_busca,
+)
 
 log = get_logger("janela_anuncios")
 
@@ -84,19 +89,8 @@ class JanelaAnunciosMixin:
         entry_busca.pack(side='left', fill='x', expand=True, padx=5, ipady=4)
         entry_busca.insert(0, placeholder)
 
-        def _on_focus_entry():
-            if entry_busca.get().strip() == placeholder:
-                entry_busca.delete(0, tk.END)
-                entry_busca.config(fg='#f0c040')
-
-        def _on_focus_out_entry():
-            if not entry_busca.get().strip():
-                entry_busca.delete(0, tk.END)
-                entry_busca.insert(0, placeholder)
-                entry_busca.config(fg='#8b949e')
-
-        entry_busca.bind("<FocusIn>", lambda e: _on_focus_entry())
-        entry_busca.bind("<FocusOut>", lambda e: _on_focus_out_entry())
+        # O placeholder/foco/debounce da busca ficam no helper compartilhado
+        # (_ligar_busca_com_debounce, mais abaixo).
 
         # ── TreeView ──
         tree_frame = tk.Frame(main, bg='#161b22')
@@ -116,14 +110,7 @@ class JanelaAnunciosMixin:
         tree.pack(side='left', fill='both', expand=True)
         scroll_y.pack(side='right', fill='y')
 
-        style = ttk.Style()
-        style.theme_use('clam')
-        style.configure("Treeview", background="#21262d", foreground="#c9d1d9",
-                        fieldbackground="#21262d", font=("Arial", 10))
-        style.configure("Treeview.Heading", background="#161b22", foreground="#f0c040",
-                        font=("Arial", 10, "bold"))
-        style.map('Treeview', background=[('selected', '#6e40c9')],
-                  foreground=[('selected', '#ffffff')])
+        _configurar_estilo_treeview_escuro()
 
         def _carregar_anuncios(busca: str = ""):
             for item in tree.get_children():
@@ -151,10 +138,7 @@ class JanelaAnunciosMixin:
                                     a.get('categoria', ''), rotulo_tipo))
 
         def _buscar(event=None):
-            termo = entry_busca.get().strip()
-            if termo == placeholder or termo.startswith(placeholder):
-                termo = termo[len(placeholder):].strip()
-            _carregar_anuncios(termo)
+            _carregar_anuncios(_termo_da_busca(entry_busca, placeholder))
 
         def _buscar_e_projetar(event=None):
             """Enter na busca: filtra e já projeta o primeiro anúncio.
@@ -162,9 +146,7 @@ class JanelaAnunciosMixin:
             Mesmo efeito de buscar, selecionar a 1ª linha com o mouse e
             clicar em "📺 Projetar". Com o campo vazio não projeta nada.
             """
-            termo = entry_busca.get().strip()
-            if termo == placeholder or termo.startswith(placeholder):
-                termo = termo[len(placeholder):].strip()
+            termo = _termo_da_busca(entry_busca, placeholder)
             _carregar_anuncios(termo)
             if not termo:
                 return "break"
@@ -179,14 +161,8 @@ class JanelaAnunciosMixin:
             return "break"
 
         entry_busca.bind("<Return>", _buscar_e_projetar)
-        _debounce_id = [None]
-
-        def _on_key(event=None):
-            if _debounce_id[0]:
-                janela.after_cancel(_debounce_id[0])
-            _debounce_id[0] = janela.after(400, _buscar)
-
-        entry_busca.bind("<KeyRelease>", _on_key)
+        # Busca em tempo real com debounce
+        _ligar_busca_com_debounce(janela, entry_busca, placeholder, _buscar)
 
         # ── Importação TXT / PDF ──
         def _parsear_txt_anuncio(caminho: str) -> dict | None:
@@ -461,47 +437,12 @@ class JanelaAnunciosMixin:
                                font=("Arial", 11, "bold"), fg='#8b949e', bg='#161b22')
         label_slide.pack(side='right', padx=10)
 
-        def _atualizar_indicador_slide():
-            try:
-                if not label_slide.winfo_exists():
-                    return
-            except tk.TclError:
-                return
-            telao = self.player.telao
-            em_slides = getattr(telao, "_em_slides", False)
-            if em_slides and telao._slides:
-                label_slide.config(
-                    text=f"Slide {telao._slide_index + 1} de {len(telao._slides)}",
-                    fg='#3fb950', bg='#161b22')
-            elif getattr(telao, "_mostrando_imagem", False):
-                label_slide.config(text="🖼️ Imagem ativa", fg='#3fb950', bg='#161b22')
-            elif getattr(telao, "mostrando_letra", False):
-                label_slide.config(text="Projeção ativa", fg='#f0c040', bg='#161b22')
-            else:
-                label_slide.config(text="Sem projeção", fg='#8b949e', bg='#161b22')
-
-        def _slide_anterior(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            if telao.slide_anterior():
-                _atualizar_indicador_slide()
-            return "break"
-
-        def _slide_proximo(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            if telao.slide_proximo():
-                _atualizar_indicador_slide()
-            return "break"
-
-        def _parar_projecao(event: object = None):
-            if not getattr(self.player.telao, "mostrando_letra", False):
-                return None
-            self.player.telao.parar_projecao()
-            _atualizar_indicador_slide()
-            return "break"
+        _atualizar_indicador_slide = self._criar_atualizador_indicador_slide(
+            label_slide)
+        _slide_anterior, _slide_proximo, _parar_projecao = \
+            self._criar_navegacao_slides(
+                ao_navegar=_atualizar_indicador_slide,
+                ao_parar=_atualizar_indicador_slide)
 
         # Anúncio atualmente projetado (para gravar ao vivo o tamanho da fonte
         # em anúncios de imagem + texto, do mesmo jeito que o modo só-texto já
@@ -522,19 +463,7 @@ class JanelaAnunciosMixin:
                     self._persistir_escala_texto(float(telao._texto_escala))
                 _atualizar_indicador_slide()
                 return
-            cfg = getattr(telao, "_proj_cfg", None)
-            if cfg is None:
-                telao.configurar_projecao()
-                cfg = telao._proj_cfg
-            novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
-            cfg["tamanho_pct"] = novo
-            telao._proj_cfg = cfg
-            if getattr(telao, "_em_slides", False) and telao._slides:
-                telao._mostrar_slide(telao._slide_index)
-            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
-                telao._desenhar_texto_no_canvas(telao._current_text)
-            self.salvar_config_projecao(dict(cfg))
-            _atualizar_indicador_slide()
+            self._ajustar_fonte_projecao(delta, _atualizar_indicador_slide)
 
         def _restaurar_fonte():
             """Volta a fonte ao padrão, desfazendo o A−/A+ manual (ao vivo e salvo)."""
@@ -547,18 +476,7 @@ class JanelaAnunciosMixin:
                     self._persistir_escala_texto(1.0)
                 _atualizar_indicador_slide()
                 return
-            cfg = getattr(telao, "_proj_cfg", None)
-            if cfg is None:
-                telao.configurar_projecao()
-                cfg = telao._proj_cfg
-            cfg["tamanho_pct"] = 5.0
-            telao._proj_cfg = cfg
-            if getattr(telao, "_em_slides", False) and telao._slides:
-                telao._mostrar_slide(telao._slide_index)
-            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
-                telao._desenhar_texto_no_canvas(telao._current_text)
-            self.salvar_config_projecao(dict(cfg))
-            _atualizar_indicador_slide()
+            self._restaurar_fonte_projecao(_atualizar_indicador_slide)
 
         def _ajustar_imagem(aumentar: bool):
             """Redimensiona SOMENTE a imagem já projetada no telão (ao vivo).
@@ -578,52 +496,13 @@ class JanelaAnunciosMixin:
             self._persistir_escala_imagem(
                 float(getattr(telao, "_imagem_escala", 1.0) or 1.0))
 
-        # Setas do teclado e Esc (janela de anúncios), mesmo esquema da de hinos.
-        janela.bind("<Left>", _slide_anterior)
-        janela.bind("<Up>", _slide_anterior)
-        janela.bind("<Right>", _slide_proximo)
-        janela.bind("<Down>", _slide_proximo)
-        janela.bind("<Escape>", _parar_projecao)
-        self.root.bind("<Left>", _slide_anterior)
-        self.root.bind("<Up>", _slide_anterior)
-        self.root.bind("<Right>", _slide_proximo)
-        self.root.bind("<Down>", _slide_proximo)
-        self.root.bind("<Escape>", _parar_projecao)
+        # Setas do teclado e Esc (janela de anúncios e painel).
+        self._vincular_teclas_slides(janela, _slide_anterior, _slide_proximo,
+                                     _parar_projecao)
 
         # Passador de slides (controle remoto): AvPag/RetPag, espaço, F5 e
         # BackSpace também navegam os slides projetados (além das setas).
-        # Se o foco estiver num campo de texto, as teclas seguem normais.
-        def _foco_em_campo_texto() -> bool:
-            foco = janela.focus_get() or self.root.focus_get()
-            if foco is None:
-                return False
-            try:
-                return foco.winfo_class() in (
-                    "Entry", "TEntry", "Text", "Spinbox", "TCombobox")
-            except tk.TclError:
-                return False
-
-        def _navegar_passador(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            if _foco_em_campo_texto():
-                return None
-            keysym = str(getattr(event, 'keysym', '') or '').lower()
-            if keysym in ('next', 'page_next', 'page_down', 'space', 'f5'):
-                if telao.slide_proximo():
-                    _atualizar_indicador_slide()
-                return "break"
-            if keysym in ('prior', 'page_prior', 'page_up', 'backspace'):
-                if telao.slide_anterior():
-                    _atualizar_indicador_slide()
-                return "break"
-            return None
-
-        for _seq in ("<Next>", "<Prior>", "<F5>", "<BackSpace>", "<space>"):
-            janela.bind(_seq, _navegar_passador)
-        for _seq in ("<Next>", "<Prior>", "<F5>", "<BackSpace>"):
-            self.root.bind(_seq, _navegar_passador)
+        self._criar_passador_slides(janela, ao_navegar=_atualizar_indicador_slide)
 
         def _projetar_anuncio_selecionado():
             sel = tree.selection()

@@ -24,8 +24,11 @@ def check(nome, cond, extra=''):
         falhas.append(nome)
 
 # ── 1) toda chamada a _criar_botao_pill declara um PNG de fallback ──────────
-src = open(os.path.join(RAIZ, 'NavePro.py'), encoding='utf-8').read()
-chamadas = [n for n in ast.walk(ast.parse(src))
+_fontes_botoes = []
+for _arq in ('NavePro.py', os.path.join('navepro', 'ui', 'painel.py')):
+    _fontes_botoes.append(
+        open(os.path.join(RAIZ, _arq), encoding='utf-8').read())
+chamadas = [n for n in ast.walk(ast.parse('\n'.join(_fontes_botoes)))
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
             and n.func.id == '_criar_botao_pill']
 check('há botões-pílula para analisar', len(chamadas) >= 11, str(len(chamadas)))

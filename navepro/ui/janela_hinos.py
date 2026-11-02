@@ -21,6 +21,11 @@ from navepro.core.textos import _numero_do_titulo
 from navepro.core.util_tk import _centralizar_sobre
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
+from navepro.ui.navegacao import (
+    _configurar_estilo_treeview_escuro,
+    _ligar_busca_com_debounce,
+    _termo_da_busca,
+)
 
 log = get_logger("janela_hinos")
 
@@ -59,19 +64,8 @@ class JanelaHinosMixin:
         entry_busca.pack(side='left', fill='x', expand=True, padx=5, ipady=4)
         entry_busca.insert(0, placeholder)
 
-        def _on_focus_entry():
-            if entry_busca.get().strip() == placeholder:
-                entry_busca.delete(0, tk.END)
-                entry_busca.config(fg='#f0c040')
-
-        def _on_focus_out_entry():
-            if not entry_busca.get().strip():
-                entry_busca.delete(0, tk.END)
-                entry_busca.insert(0, placeholder)
-                entry_busca.config(fg='#8b949e')
-
-        entry_busca.bind("<FocusIn>", lambda e: _on_focus_entry())
-        entry_busca.bind("<FocusOut>", lambda e: _on_focus_out_entry())
+        # O placeholder/foco/debounce da busca ficam no helper compartilhado
+        # (_ligar_busca_com_debounce, mais abaixo).
 
         # ── TreeView ──
         tree_frame = tk.Frame(main, bg='#161b22')
@@ -92,15 +86,7 @@ class JanelaHinosMixin:
         tree.pack(side='left', fill='both', expand=True)
         scroll_y.pack(side='right', fill='y')
 
-        style = ttk.Style()
-        style.theme_use('clam')
-        style.configure("Treeview", background="#21262d", foreground="#c9d1d9",
-                        fieldbackground="#21262d", font=("Arial", 10))
-        style.configure("Treeview.Heading", background="#161b22", foreground="#f0c040",
-                        font=("Arial", 10, "bold"))
-        style.map('Treeview', background=[('selected', '#6e40c9')],
-                  foreground=[('selected', '#ffffff')])
-
+        _configurar_estilo_treeview_escuro()
         def _carregar_hinos(busca: str = ""):
             for item in tree.get_children():
                 tree.delete(item)
@@ -130,10 +116,7 @@ class JanelaHinosMixin:
                                     r['categoria'], r['ccli_numero']))
 
         def _buscar(event=None):
-            termo = entry_busca.get().strip()
-            if termo == placeholder or termo.startswith(placeholder):
-                termo = termo[len(placeholder):].strip()
-            _carregar_hinos(termo)
+            _carregar_hinos(_termo_da_busca(entry_busca, placeholder))
 
         def _buscar_e_projetar(event=None):
             """Enter na busca: filtra e já projeta o primeiro resultado.
@@ -141,9 +124,7 @@ class JanelaHinosMixin:
             Mesmo efeito de buscar, selecionar a 1ª linha com o mouse e
             clicar em "📺 Projetar". Com o campo vazio não projeta nada.
             """
-            termo = entry_busca.get().strip()
-            if termo == placeholder or termo.startswith(placeholder):
-                termo = termo[len(placeholder):].strip()
+            termo = _termo_da_busca(entry_busca, placeholder)
             _carregar_hinos(termo)
             if not termo:
                 return "break"
@@ -159,12 +140,7 @@ class JanelaHinosMixin:
 
         entry_busca.bind("<Return>", _buscar_e_projetar)
         # Busca em tempo real com debounce
-        _debounce_id = [None]
-        def _on_key(event=None):
-            if _debounce_id[0]:
-                janela.after_cancel(_debounce_id[0])
-            _debounce_id[0] = janela.after(400, _buscar)
-        entry_busca.bind("<KeyRelease>", _on_key)
+        _ligar_busca_com_debounce(janela, entry_busca, placeholder, _buscar)
 
         # ── Importação de letras (XML / TXT) ──
         _NS_OPENLYRICS = "http://openlyrics.info/namespace/2009/song"
@@ -392,94 +368,24 @@ class JanelaHinosMixin:
                                font=("Arial", 11, "bold"), fg='#8b949e', bg='#161b22')
         label_slide.pack(side='right', padx=10)
 
-        def _atualizar_indicador_slide():
-            try:
-                if not label_slide.winfo_exists():
-                    return
-            except tk.TclError:
-                return
-            telao = self.player.telao
-            em_slides = getattr(telao, "_em_slides", False)
-            if em_slides and telao._slides:
-                label_slide.config(
-                    text=f"Slide {telao._slide_index + 1} de {len(telao._slides)}",
-                    fg='#3fb950', bg='#161b22')
-            elif getattr(telao, "_mostrando_imagem", False):
-                label_slide.config(text="🖼️ Imagem ativa", fg='#3fb950', bg='#161b22')
-            elif getattr(telao, "mostrando_letra", False):
-                label_slide.config(text="Projeção ativa", fg='#f0c040', bg='#161b22')
-            else:
-                label_slide.config(text="Sem projeção", fg='#8b949e', bg='#161b22')
-
-        def _slide_anterior(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            if telao.slide_anterior():
-                _atualizar_indicador_slide()
-            return "break"
-
-        def _slide_proximo(event: object = None):
-            telao = self.player.telao
-            if not getattr(telao, "_em_slides", False):
-                return None
-            if telao.slide_proximo():
-                _atualizar_indicador_slide()
-            return "break"
-
-        def _parar_projecao(event: object = None):
-            if not getattr(self.player.telao, "mostrando_letra", False):
-                return None
-            self.player.telao.parar_projecao()
-            _atualizar_indicador_slide()
-            return "break"
+        _atualizar_indicador_slide = self._criar_atualizador_indicador_slide(
+            label_slide)
+        _slide_anterior, _slide_proximo, _parar_projecao = \
+            self._criar_navegacao_slides(
+                ao_navegar=_atualizar_indicador_slide,
+                ao_parar=_atualizar_indicador_slide)
 
         def _ajustar_fonte(delta: float):
             """Aumenta/diminui a fonte da projeção e redesenha o que está ativo."""
-            telao = self.player.telao
-            cfg = getattr(telao, "_proj_cfg", None)
-            if cfg is None:
-                telao.configurar_projecao()
-                cfg = telao._proj_cfg
-            novo = min(15.0, max(1.0, float(cfg.get("tamanho_pct", 5.0)) + delta))
-            cfg["tamanho_pct"] = novo
-            telao._proj_cfg = cfg
-            if getattr(telao, "_em_slides", False) and telao._slides:
-                telao._mostrar_slide(telao._slide_index)
-            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
-                telao._desenhar_texto_no_canvas(telao._current_text)
-            self.salvar_config_projecao(dict(cfg))
-            _atualizar_indicador_slide()
+            self._ajustar_fonte_projecao(delta, _atualizar_indicador_slide)
 
         def _restaurar_fonte():
             """Volta a fonte da projeção ao padrão, desfazendo o A−/A+ manual."""
-            telao = self.player.telao
-            cfg = getattr(telao, "_proj_cfg", None)
-            if cfg is None:
-                telao.configurar_projecao()
-                cfg = telao._proj_cfg
-            cfg["tamanho_pct"] = 5.0
-            telao._proj_cfg = cfg
-            if getattr(telao, "_em_slides", False) and telao._slides:
-                telao._mostrar_slide(telao._slide_index)
-            elif getattr(telao, "mostrando_letra", False) and telao._current_text:
-                telao._desenhar_texto_no_canvas(telao._current_text)
-            self.salvar_config_projecao(dict(cfg))
-            _atualizar_indicador_slide()
+            self._restaurar_fonte_projecao(_atualizar_indicador_slide)
 
-        # Setas do teclado e Esc (janela de hinos).
-        # No root substituímos a ligação a cada abertura para evitar acumular
-        # handlers duplicados de chamadas repetidas a janela_hinos.
-        janela.bind("<Left>", _slide_anterior)
-        janela.bind("<Up>", _slide_anterior)
-        janela.bind("<Right>", _slide_proximo)
-        janela.bind("<Down>", _slide_proximo)
-        janela.bind("<Escape>", _parar_projecao)
-        self.root.bind("<Left>", _slide_anterior)
-        self.root.bind("<Up>", _slide_anterior)
-        self.root.bind("<Right>", _slide_proximo)
-        self.root.bind("<Down>", _slide_proximo)
-        self.root.bind("<Escape>", _parar_projecao)
+        # Setas do teclado e Esc (janela de hinos e painel).
+        self._vincular_teclas_slides(janela, _slide_anterior, _slide_proximo,
+                                     _parar_projecao)
 
         def _projetar_hino_selecionado():
             """Inicia a projeção em slides (título + versos) no telão.
