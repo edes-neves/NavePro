@@ -60,11 +60,16 @@ def _montar_abrir(windows: bool):
 
 
 def _extraidos(temp_dir: str) -> set[str]:
-    """Nomes de arquivos extraídos dentro do temp_dir."""
+    """Nomes de arquivos extraídos dentro do temp_dir (sempre com "/").
+
+    No Windows o `os.path.relpath` devolve "\\"; normalizamos para comparar
+    com os nomes do ZIP, que usam "/".
+    """
     nomes = set()
     for raiz, _, arquivos in os.walk(temp_dir):
         for nome in arquivos:
-            nomes.add(os.path.relpath(os.path.join(raiz, nome), temp_dir))
+            rel = os.path.relpath(os.path.join(raiz, nome), temp_dir)
+            nomes.add(rel.replace(os.sep, "/"))
     return nomes
 
 
@@ -105,20 +110,26 @@ def _rodar() -> int:
         shutil.rmtree(resultado["temp_dir"], ignore_errors=True)
 
         # ── 2. Linux: "\" é caractere literal — comportamento de sempre ─
-        abrir_linux = _montar_abrir(windows=False)
-        resultado = abrir_linux(pacote)
-        extraidos = _extraidos(resultado["temp_dir"])
-        checar("Linux: membro com barra invertida continua contido",
-               "midia/..\\..\\" + escape_win in extraidos
-               and "midia/ok.mp4" in extraidos)
-        checar("Linux: o ../ de barra normal continua filtrado",
-               escape_abs not in extraidos)
-        fora = os.path.dirname(resultado["temp_dir"])
-        vazou_linux = (os.path.exists(os.path.join(fora, escape_win))
-                       or os.path.exists(os.path.join(fora, escape_abs)))
-        checar("Linux: nada escapa do temp_dir",
-               not vazou_linux)
-        shutil.rmtree(resultado["temp_dir"], ignore_errors=True)
+        # No Windows o host trata "\" como separador, então esta simulação
+        # não representa o Linux de verdade: pulamos para não dar falso
+        # negativo. O caso crítico (Windows) já foi coberto acima.
+        if os.name == "nt":
+            print("--  Linux: simulação de separador pulada no Windows")
+        else:
+            abrir_linux = _montar_abrir(windows=False)
+            resultado = abrir_linux(pacote)
+            extraidos = _extraidos(resultado["temp_dir"])
+            checar("Linux: membro com barra invertida continua contido",
+                   "midia/..\\..\\" + escape_win in extraidos
+                   and "midia/ok.mp4" in extraidos)
+            checar("Linux: o ../ de barra normal continua filtrado",
+                   escape_abs not in extraidos)
+            fora = os.path.dirname(resultado["temp_dir"])
+            vazou_linux = (os.path.exists(os.path.join(fora, escape_win))
+                           or os.path.exists(os.path.join(fora, escape_abs)))
+            checar("Linux: nada escapa do temp_dir",
+                   not vazou_linux)
+            shutil.rmtree(resultado["temp_dir"], ignore_errors=True)
 
     return falhas
 
