@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.2.12.AppImage
-   ./NavePro-2.2.12.AppImage
+   chmod +x NavePro-2.3.0.AppImage
+   ./NavePro-2.3.0.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.2.12          # gera NavePro-2.2.12.AppImage
+./build.sh 2.3.0          # gera NavePro-2.3.0.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.2.12
+   ./build.sh 2.3.0
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.2.12: ..."
-   git tag v2.2.12
-   git push origin main v2.2.12
+   git add -A && git commit -m "NavePro 2.3.0: ..."
+   git tag v2.3.0
+   git push origin main v2.3.0
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.2.12 NavePro-2.2.12.AppImage \
-     --title "NavePro 2.2.12" --notes "O que mudou nesta versão..."
+   gh release create v2.3.0 NavePro-2.3.0.AppImage \
+     --title "NavePro 2.3.0" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -554,6 +554,24 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.3.0
+
+- **Segurança — controle remoto e servidor local**: validação do `Host` (bloqueia
+  DNS rebinding), token fora do log com `config.json` restrito, abertura de
+  arquivos sem injeção de comando e download de atualização verificado (nome de
+  arquivo/URL e `.sha256` quando publicado).
+- **Proteção de dados**: JSON e banco corrompidos são preservados
+  (`.corrompido`) e recuperados, backup diário do banco e gravação da Ordem de
+  Serviço com `fsync`.
+- **Importação/exportação**: bloqueio de zip-slip no `.navepro` e limites de
+  tamanho/tempo no servidor contra conexões maliciosas.
+- **Busca**: o espaço no campo de busca não toca mais o primeiro resultado no
+  meio da digitação — a reprodução acontece só no Enter ou no clique no hino.
+- **Correções**: curingas (`%`, `_`) e `\` escapados na busca por texto; falhas
+  registradas no log em vez de `print_exc`.
+- **Interno**: `NavePro.py` dividido em módulos (`navepro/ui/` e
+  `navepro/core/`), sem mudança de comportamento; documentação atualizada.
 
 ### 2.2.12
 

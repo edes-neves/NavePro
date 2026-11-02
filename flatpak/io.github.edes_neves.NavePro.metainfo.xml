@@ -40,6 +40,18 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.3.0" date="2026-11-02">
+      <description>
+        <ul>
+          <li>Segurança: validação de Host no servidor local (DNS rebinding), token fora do log com config.json restrito, abertura de arquivos sem injeção de comando e download de atualização verificado</li>
+          <li>Proteção de dados: JSON/banco corrompidos preservados e recuperados, backup diário do banco e gravação da Ordem de Serviço com fsync</li>
+          <li>Importação/exportação: bloqueio de zip-slip no .navepro e limites de tamanho/tempo no servidor</li>
+          <li>Busca: espaço não toca mais o primeiro resultado no meio da digitação; reprodução só no Enter ou no clique no hino</li>
+          <li>Correções: curingas (% e _) escapados na busca por texto; falhas registradas no log</li>
+          <li>Interno: NavePro.py dividido em módulos (navepro/ui e navepro/core), sem mudança de comportamento</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.2.12" date="2026-11-01">
       <description>
         <ul>

@@ -40,6 +40,87 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.3.0" date="2026-11-02">
+      <description>
+        <ul>
+          <li>Segurança: validação de Host no servidor local (DNS rebinding), token fora do log com config.json restrito, abertura de arquivos sem injeção de comando e download de atualização verificado</li>
+          <li>Proteção de dados: JSON/banco corrompidos preservados e recuperados, backup diário do banco e gravação da Ordem de Serviço com fsync</li>
+          <li>Importação/exportação: bloqueio de zip-slip no .navepro e limites de tamanho/tempo no servidor</li>
+          <li>Busca: espaço não toca mais o primeiro resultado no meio da digitação; reprodução só no Enter ou no clique no hino</li>
+          <li>Correções: curingas (% e _) escapados na busca por texto; falhas registradas no log</li>
+          <li>Interno: NavePro.py dividido em módulos (navepro/ui e navepro/core), sem mudança de comportamento</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.2.12" date="2026-11-01">
+      <description>
+        <ul>
+          <li>Controle remoto — aba Serviço: itens em cartões legíveis no celular, com título, tipo, duração, detalhe e prévia da letra; botões de ação em linha própria</li>
+          <li>O botão Executar de cada item usa o mesmo fluxo do Executar geral, começa pelo item tocado e destaca o item em execução</li>
+          <li>Windows: os ícones de Bíblia e Configurações não são mais cortados no canto esquerdo</li>
+          <li>Windows: vídeos do YouTube por URL entram em tela cheia no telão, aguardando o yt-dlp e estabilizando a janela</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.1.11" date="2026-10-30">
+      <description>
+        <ul>
+          <li>Controle remoto — Bíblia no celular: ao digitar o versículo no campo V:, a projeção espera 600 ms após a última tecla (1,2 s quando o número ainda pode crescer, como 1 → 10/16), evitando projetar o versículo errado no meio da digitação</li>
+          <li>Ao sair do campo/Enter, a projeção é feita em 600 ms; a interface do computador não mudou</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.1.10" date="2026-10-26">
+      <description>
+        <ul>
+          <li>Apresentações da Ordem de Serviço abrem no PowerPoint/Impress e devolvem o foco ao programa ao terminar a projeção (também no Flatpak)</li>
+          <li>YouTube no Windows: vídeo por URL abre em tela cheia no monitor do telão, como o vídeo local</li>
+          <li>Diálogos são centralizados no monitor do operador e os avisos do editor de item aparecem por cima dele</li>
+          <li>Desempenho: Gerenciador de Mídia consulta o SQLite em background, a lista de hinos não carrega a letra inteira e a sincronização de uploads não trava mais a abertura</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.1.9" date="2026-10-19">
+      <description>
+        <ul>
+          <li>YouTube no telão: o 2º vídeo da Ordem de Serviço agora abre sempre no monitor 2 (usa --fs-screen/nome de saída em vez de só --screen)</li>
+          <li>Contagem regressiva permanece no telão ao terminar um slide (ou música/vídeo): a frase volta em vez da temperatura</li>
+          <li>Aba Relógio: o botão Salvar só aplica as configurações e mantém a janela aberta (era preciso reabrir a cada ajuste); o nome/frase da contagem é preservado ao salvar as cores</li>
+          <li>Botão "Ocultar relógio do telão": esconde hora e temperatura mantendo o fundo, sem afetar projeções nem a contagem/cronômetro</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.1.8" date="2026-10-18">
+      <description>
+        <ul>
+          <li>Controle remoto pelo celular com novas abas YouTube e Sorteio, botão Fechar no sorteio e combos de livros/capítulos/versículos na Bíblia</li>
+          <li>Aba Bíblia projeta sozinha ao preencher o V: e navega com Anterior/Próximo (o Próximo encerra e volta ao relógio no fim, como nos Slides)</li>
+          <li>Campo "V:" com um único número (ex.: 17) projeta somente aquele versículo</li>
+          <li>Flatpak: o fade de áudio (play/pausar/parar) passa a funcionar também dentro do sandbox e o runtime foi atualizado para 25.08 (fim do aviso de "sem atualizações")</li>
+          <li>Correções: leitura de respostas HTTP grandes no servidor embutido, endurecimento do servidor e versionamento do esquema do banco</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.1.7" date="2026-10-15">
+      <description>
+        <ul>
+          <li>Tema claro do Sorteio e hierarquia de cores mais clara no painel do NavePro (janelas, cartões e campos)</li>
+          <li>Janelas responsivas: diálogos grandes se ajustam à tela (resolução mínima suportada 1024x768)</li>
+          <li>Fade de áudio no play/pausar/parar e menu de clique direito na lista de mídias</li>
+          <li>Correções: campos Cidade/UF e da busca no tema escuro, título do item YouTube mantido ao salvar e detecção de vídeo/áudio</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.1.6" date="2026-10-13">
+      <description>
+        <ul>
+          <li>Sorteio Profissional integrado ao NavePro: sorteio de números e de nomes (modo Nomes), com janela pública para o telão, animação, histórico, atalhos e temas</li>
+          <li>Botões e campos de digitação com cantos arredondados em todo o app (painel e Sorteio)</li>
+          <li>Painel do administrador com tema claro em cinza, deixando clara apenas a barra de menu superior</li>
+          <li>Som do Sorteio reproduzido por players nativos (sem depender do pygame) e arquivos de áudio embutidos nos pacotes .exe e AppImage</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.5" date="2026-10-12">
       <description>
         <ul>
