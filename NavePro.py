@@ -76,9 +76,14 @@ from navepro.core.atualizacao import (
     _buscar_release_latest,
     _comando_atualizacao_flatpak,
     _formato_instalado,
+    _ler_checksum_sha256,
+    _nome_arquivo_seguro,
     _pasta_downloads,
     _procurar_asset_instalador,
+    _procurar_checksum_sha256,
     _rotulo_instalador,
+    _sha256_do_arquivo,
+    _url_asset_valida,
     _versao_nova,
 )
 from navepro.core.banco import (
@@ -4107,6 +4112,7 @@ class AppInterface:
             versao,
             str(asset.get('browser_download_url', '')),
             str(asset.get('name', f'NavePro-{versao}{rotulo}')),
+            release,
         )
 
     def _atualizar_como_flatpak(self, versao: str) -> None:
@@ -4186,8 +4192,13 @@ class AppInterface:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _baixar_atualizacao(self, versao: str, url: str,
-                            nome_arquivo: str) -> None:
+                            nome_arquivo: str,
+                            release: dict | None = None) -> None:
         """Baixa o novo instalador para ~/Downloads com barra de progresso."""
+        # O nome vem do JSON da API: sem basename, um nome "..\..\evil"
+        # escaparia de ~/Downloads (path traversal).
+        nome_arquivo = (_nome_arquivo_seguro(nome_arquivo)
+                        or f'NavePro-{versao}{_rotulo_instalador()}')
         destino = os.path.join(_pasta_downloads(), nome_arquivo)
 
         janela = tk.Toplevel(self.root)
@@ -4219,10 +4230,27 @@ class AppInterface:
 
         def _worker() -> None:
             try:
+                if not _url_asset_valida(url):
+                    raise ValueError(
+                        "A URL do instalador é inválida (não é HTTPS).")
+                # Verificação de integridade opcional e retroativa: se o
+                # release publicar um .sha256 ao lado do instalador, o
+                # arquivo baixado é conferido; releases sem .sha256 seguem
+                # como antes (HTTPS verificado, sem execução automática).
+                hex_esperado = None
+                url_checksum = _procurar_checksum_sha256(
+                    release, nome_arquivo)
+                if url_checksum:
+                    hex_esperado = _ler_checksum_sha256(url_checksum)
                 req = urllib.request.Request(url, headers={
                     "User-Agent": f"NavePro/{APP_VERSION}"})
                 with urllib.request.urlopen(req, timeout=120,
                                             context=_ssl_context()) as resp:
+                    if not str(getattr(resp, 'url', '')).lower().startswith(
+                            'https://'):
+                        raise ValueError(
+                            "O download foi redirecionado para fora do "
+                            "HTTPS; atualização cancelada.")
                     total = int(resp.headers.get('Content-Length', 0) or 0)
                     temporario = destino + '.part'
                     baixado = 0
@@ -4238,11 +4266,20 @@ class AppInterface:
                                 self.root.after(
                                     0, lambda p=pct, b=baixado, t=total:
                                     _atualizar_progresso(p, b, t))
-                    os.replace(temporario, destino)
-                    if not _eh_windows():
-                        os.chmod(destino, 0o744)
-                    self.root.after(0, lambda: self._instrucoes_troca_instalador(
-                        destino))
+                if hex_esperado is not None and \
+                        _sha256_do_arquivo(temporario) != hex_esperado:
+                    try:
+                        os.remove(temporario)
+                    except OSError:
+                        pass
+                    raise ValueError(
+                        "A verificação de integridade do arquivo baixado "
+                        "falhou; a atualização foi cancelada.")
+                os.replace(temporario, destino)
+                if not _eh_windows():
+                    os.chmod(destino, 0o744)
+                self.root.after(0, lambda: self._instrucoes_troca_instalador(
+                    destino))
             except Exception as e:
                 log.exception(f"⚠️  Erro ao baixar atualização: {e}")
                 self.root.after(0, lambda e=e: (janela.destroy(),

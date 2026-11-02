@@ -1,5 +1,7 @@
+import hashlib
 import os
 import sys
+import tempfile
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -124,6 +126,46 @@ with Cenario():
     cmd = at._comando_atualizacao_flatpak()
     check('sem FLATPAK_ID cai no ID canônico',
           cmd[-1] == 'io.github.edes_neves.NavePro', str(cmd))
+
+# ── 6) segurança do download do instalador ──
+check('nome de asset limpo é aceito',
+      at._nome_arquivo_seguro('NavePro-2.2.13.AppImage')
+      == 'NavePro-2.2.13.AppImage')
+check('nome com ../ é reduzido ao basename',
+      at._nome_arquivo_seguro('../../evil.AppImage') == 'evil.AppImage')
+check('nome com backslash é reduzido ao basename',
+      at._nome_arquivo_seguro('..\\..\\evil.exe') == 'evil.exe')
+check('nome absoluto é reduzido ao basename',
+      at._nome_arquivo_seguro('/tmp/NavePro.AppImage') == 'NavePro.AppImage')
+check('nome vazio/nulo vira ""',
+      at._nome_arquivo_seguro('') == '' and at._nome_arquivo_seguro(None) == '')
+check('URL https é válida',
+      at._url_asset_valida('https://github.com/x/NavePro.AppImage'))
+check('URL http é recusada', not at._url_asset_valida('http://github.com/x'))
+check('URL vazia é recusada', not at._url_asset_valida('')
+      and not at._url_asset_valida(None))
+
+rel_ck = {'assets': [
+    {'name': 'NavePro-2.2.13.AppImage',
+     'browser_download_url': 'https://u/appimage'},
+    {'name': 'NavePro-2.2.13.AppImage.sha256',
+     'browser_download_url': 'https://u/sha256'},
+]}
+check('encontra o .sha256 publicado ao lado do asset',
+      at._procurar_checksum_sha256(rel_ck, 'NavePro-2.2.13.AppImage')
+      == 'https://u/sha256')
+check('release sem .sha256 → None',
+      at._procurar_checksum_sha256(RELEASE, 'NavePro-2.1.0.AppImage') is None)
+check('release None → None',
+      at._procurar_checksum_sha256(None, 'x.AppImage') is None)
+
+with tempfile.TemporaryDirectory() as tmp:
+    arq = os.path.join(tmp, 'instalador.AppImage')
+    with open(arq, 'wb') as f:
+        f.write(b'conteudo do instalador')
+    esperado = hashlib.sha256(b'conteudo do instalador').hexdigest()
+    check('sha256 do arquivo baixado é calculado certo',
+          at._sha256_do_arquivo(arq) == esperado)
 
 print('\n' + ('TODOS OS CASOS PASSARAM' if not falhas else f'FALHAS: {falhas}'))
 sys.exit(1 if falhas else 0)

@@ -45,9 +45,21 @@ _ACOES_POST_REMOTO: dict = {
 }
 
 # Limites do parser HTTP: evitam memória ilimitada com cabeçalho/corpo
-# gigantes. O corpo comporta uploads de mídia (vídeo) com folga.
+# gigantes. O corpo comporta uploads de mídia (vídeo) com folga; as rotas
+# do controle remoto só recebem JSON pequeno, então têm limite próprio.
 _LIMITE_CABECALHO = 64 * 1024
 _LIMITE_CORPO = 200 * 1024 * 1024
+_LIMITE_CORPO_REMOTO = 1 * 1024 * 1024
+
+# Slowloris: sem timeout, uma conexão aberta que não envia nada segura a
+# corrotina indefinidamente e esgota o loop. Idle de 30 s até o fim dos
+# cabeçalhos e de 60 s entre blocos do corpo são folgados para a LAN.
+_TIMEOUT_CABECALHO = 30.0
+_TIMEOUT_CORPO = 60.0
+
+# Teto de conexões simultâneas: acima disso a conexão é fechada na hora,
+# sem deixar a rede local esgotar o loop/memória com conexões penduradas.
+_MAX_CONEXOES = 64
 
 
 def _host_local(host: str) -> bool:
@@ -92,6 +104,8 @@ class ServidorAsyncHTTP:
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._server: asyncio.AbstractServer | None = None
+        # Contador de conexões em andamento (só a thread do loop toca).
+        self._conexoes: int = 0
 
     def iniciar(self) -> None:
         """Inicia o servidor em uma thread separada com event loop asyncio."""
@@ -177,7 +191,11 @@ class ServidorAsyncHTTP:
         """
         dados = b''
         while b'\r\n\r\n' not in dados:
-            bloco = await reader.read(65536)
+            try:
+                bloco = await asyncio.wait_for(
+                    reader.read(65536), _TIMEOUT_CABECALHO)
+            except asyncio.TimeoutError:
+                return None
             if not bloco:
                 return None
             dados += bloco
@@ -197,15 +215,26 @@ class ServidorAsyncHTTP:
                 chave, valor = linha.split(':', 1)
                 headers[chave.strip().lower()] = valor.strip()
 
+        # O upload de mídia pode chegar a centenas de MB; as rotas do
+        # controle remoto só recebem JSON pequeno, então têm limite menor.
+        alvo = path_line.split('?', 1)[0] if path_line else ''
+        limite_corpo = (_LIMITE_CORPO_REMOTO
+                        if alvo.startswith('/api/remoto')
+                        else _LIMITE_CORPO)
         try:
             tamanho = int(headers.get('content-length') or 0)
         except ValueError:
             tamanho = 0
-        if tamanho < 0 or tamanho > _LIMITE_CORPO:
+        if tamanho < 0 or tamanho > limite_corpo:
             return self._responder_erro_bytes("Corpo muito grande", 413)
 
         while len(corpo) < tamanho:
-            bloco = await reader.read(min(65536, tamanho - len(corpo)))
+            try:
+                bloco = await asyncio.wait_for(
+                    reader.read(min(65536, tamanho - len(corpo))),
+                    _TIMEOUT_CORPO)
+            except asyncio.TimeoutError:
+                break
             if not bloco:
                 break
             corpo += bloco
@@ -217,43 +246,51 @@ class ServidorAsyncHTTP:
     async def _handle_connection(self, reader: asyncio.StreamReader, 
                                   writer: asyncio.StreamWriter) -> None:
         """Handler de conexão HTTP assíncrono."""
+        self._conexoes += 1
         try:
-            requisicao = await self._ler_requisicao(reader)
-            if requisicao is None:
+            if self._conexoes > _MAX_CONEXOES:
+                # Muitas conexões em andamento: fecha a nova na hora, sem
+                # deixar a LAN esgotar o loop com conexões penduradas.
                 writer.close()
                 return
-            if isinstance(requisicao, bytes):
-                writer.write(requisicao)
-                await writer.drain()
-                return
-
-            method, path_line, headers, body_bytes = requisicao
-
-            # Endereço do cliente (para restringir API de mídia ao loopback)
-            peer = writer.get_extra_info('peername')
-            peer_ip = peer[0] if isinstance(peer, tuple) and peer else ''
-
-            # Processar requisição
-            response = await self._process_request(
-                method, path_line, headers, body_bytes, peer_ip)
-            
-            writer.write(response)
-            await writer.drain()
-        except Exception as e:
-            log.exception(f"Erro ao processar requisição: {e}")
-            error_response = (
-                b"HTTP/1.1 500 Internal Server Error\r\n"
-                b"Content-Type: application/json; charset=utf-8\r\n"
-                b"Connection: close\r\n"
-                b"\r\n"
-                b'{"erro": "Erro interno do servidor"}'
-            )
             try:
-                writer.write(error_response)
+                requisicao = await self._ler_requisicao(reader)
+                if requisicao is None:
+                    writer.close()
+                    return
+                if isinstance(requisicao, bytes):
+                    writer.write(requisicao)
+                    await writer.drain()
+                    return
+
+                method, path_line, headers, body_bytes = requisicao
+
+                # Endereço do cliente (para restringir API de mídia ao loopback)
+                peer = writer.get_extra_info('peername')
+                peer_ip = peer[0] if isinstance(peer, tuple) and peer else ''
+
+                # Processar requisição
+                response = await self._process_request(
+                    method, path_line, headers, body_bytes, peer_ip)
+                
+                writer.write(response)
                 await writer.drain()
-            except Exception:
-                pass
+            except Exception as e:
+                log.exception(f"Erro ao processar requisição: {e}")
+                error_response = (
+                    b"HTTP/1.1 500 Internal Server Error\r\n"
+                    b"Content-Type: application/json; charset=utf-8\r\n"
+                    b"Connection: close\r\n"
+                    b"\r\n"
+                    b'{"erro": "Erro interno do servidor"}'
+                )
+                try:
+                    writer.write(error_response)
+                    await writer.drain()
+                except Exception:
+                    pass
         finally:
+            self._conexoes -= 1
             try:
                 writer.close()
             except Exception:

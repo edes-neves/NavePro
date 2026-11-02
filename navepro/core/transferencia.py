@@ -30,6 +30,7 @@ import zipfile
 from collections.abc import Callable
 from datetime import datetime
 
+from navepro.core.ambiente import _eh_windows
 from navepro.core.log import get_logger
 from navepro.core.paths import DATA_USER_DIR
 from navepro.core.textos import normalizar_texto
@@ -271,6 +272,11 @@ def _abrir_pacote(arquivo: str) -> dict:
                 # Só extrai o que está dentro de midia/ (sem ".." nem
                 # caminho absoluto) para nunca escrever fora da pasta.
                 relativo = membro[len(PASTA_MIDIA) + 1:]
+                # Zip-slip: no Windows "\" também é separador de caminho —
+                # "midia/..\..\evil" escaparia da pasta temporária. Só
+                # normaliza lá para não mudar nomes com "\" no Linux.
+                if _eh_windows():
+                    relativo = relativo.replace('\\', '/')
                 if not relativo or os.path.isabs(relativo) \
                         or ".." in relativo.split("/"):
                     continue

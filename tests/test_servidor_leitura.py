@@ -39,11 +39,15 @@ def _carregar():
     for no in _TREE.body:
         if isinstance(no, ast.Assign) \
                 and isinstance(no.targets[0], ast.Name) \
-                and no.targets[0].id in ("_LIMITE_CABECALHO", "_LIMITE_CORPO"):
+                and no.targets[0].id in ("_LIMITE_CABECALHO", "_LIMITE_CORPO",
+                                         "_LIMITE_CORPO_REMOTO",
+                                         "_TIMEOUT_CABECALHO",
+                                         "_TIMEOUT_CORPO"):
             exec(ast.get_source_segment(_SRC, no), ns)
     exec(compile(_fonte_metodo("_ler_requisicao"),
                  "<_ler_requisicao>", "exec"), ns)
-    return ns["_ler_requisicao"], ns["_LIMITE_CABECALHO"], ns["_LIMITE_CORPO"]
+    return (ns["_ler_requisicao"], ns["_LIMITE_CABECALHO"],
+            ns["_LIMITE_CORPO"], ns["_LIMITE_CORPO_REMOTO"])
 
 
 class ServidorFake:
@@ -68,7 +72,7 @@ def _requisicao(method, path, headers=None, body=b"") -> bytes:
 
 
 def _rodar() -> int:
-    ler, limite_cab, limite_corpo = _carregar()
+    ler, limite_cab, limite_corpo, limite_remoto = _carregar()
     servidor = ServidorFake()
     falhas = 0
 
@@ -123,6 +127,28 @@ def _rodar() -> int:
         {"Content-Length": str(limite_corpo + 1)}, b"x"))
     checar("Content-Length > limite → 413",
            isinstance(req, bytes) and req.startswith(b"ERRO:413:"))
+
+    # ── Limite de corpo específico do controle remoto (DoS) ─────────
+    req = _executar(ler, servidor, _requisicao(
+        "POST", "/api/remoto/slide",
+        {"Content-Length": str(limite_remoto + 1)}, b"x"))
+    checar("corpo > 1 MB nas rotas /api/remoto → 413",
+           isinstance(req, bytes) and req.startswith(b"ERRO:413:"))
+    req = _executar(ler, servidor, _requisicao(
+        "POST", "/api/midia/upload",
+        {"Content-Length": str(limite_remoto + 1)}, b"x" * 1024))
+    checar("o mesmo tamanho no upload de mídia NÃO é recusado",
+           isinstance(req, tuple))
+
+    # ── Slowloris: leituras com timeout (conexão pendurada é fechada) ─
+    fonte_ler = _fonte_metodo("_ler_requisicao")
+    checar("_ler_requisicao usa asyncio.wait_for (timeout de leitura)",
+           "asyncio.wait_for" in fonte_ler
+           and "_TIMEOUT_CABECALHO" in fonte_ler
+           and "_TIMEOUT_CORPO" in fonte_ler)
+    fonte_conn = _fonte_metodo("_handle_connection")
+    checar("_handle_connection limita conexões simultâneas",
+           "_MAX_CONEXOES" in fonte_conn and "_conexoes" in fonte_conn)
 
     # ── Content-Length inválido é tratado como 0 ────────────────────
     req = _executar(ler, servidor, _requisicao(

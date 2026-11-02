@@ -129,6 +129,63 @@ def _procurar_asset_instalador(release: dict) -> dict | None:
     return None
 
 
+def _nome_arquivo_seguro(nome: str | None) -> str:
+    """Basename do nome de asset do release (recusa .. e caminho absoluto).
+
+    O nome vem do JSON da API: sem isto, um nome como "../../evil" ou
+    "..\\..\\evil" escaparia de ~/Downloads na hora de salvar o instalador.
+    """
+    nome = (nome or '').replace('\\', '/')
+    nome = os.path.basename(nome)
+    return '' if nome in ('.', '..') else nome
+
+
+def _url_asset_valida(url: str | None) -> bool:
+    """True se a URL do asset é HTTPS (recusa downgrade de esquema)."""
+    return bool(url) and str(url).lower().startswith('https://')
+
+
+def _procurar_checksum_sha256(
+        release: dict | None, nome_asset: str) -> str | None:
+    """URL do .sha256 publicado ao lado do asset (None se o release não tiver).
+
+    Opcional e retroativo: releases antigos sem .sha256 continuam baixando
+    como antes; releases que publicarem o arquivo passam a ser verificados.
+    """
+    for asset in (release or {}).get('assets', []) or []:
+        if str(asset.get('name', '')) == f"{nome_asset}.sha256":
+            url = str(asset.get('browser_download_url', ''))
+            return url if _url_asset_valida(url) else None
+    return None
+
+
+def _ler_checksum_sha256(url: str) -> str | None:
+    """Baixa o .sha256 do release e devolve o hex (None se inválido/falhar)."""
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": f"NavePro/{APP_VERSION}"})
+        with _baixar(req, timeout=15) as resp:
+            texto = resp.read(2048).decode('utf-8', errors='replace')
+        encontrado = re.search(r'([0-9a-fA-F]{64})', texto)
+        return encontrado.group(1).lower() if encontrado else None
+    except Exception as e:
+        log.warning(f"⚠️ Não foi possível obter o checksum do release: {e}")
+        return None
+
+
+def _sha256_do_arquivo(caminho: str) -> str:
+    """SHA-256 de um arquivo, em hex minúsculo (lido em blocos)."""
+    import hashlib
+    digesto = hashlib.sha256()
+    with open(caminho, 'rb') as f:
+        while True:
+            bloco = f.read(1024 * 1024)
+            if not bloco:
+                break
+            digesto.update(bloco)
+    return digesto.hexdigest()
+
+
 def _pasta_downloads() -> str:
     """Retorna ~/Downloads (ou ~ como fallback) para salvar o instalador."""
     downloads = os.path.join(os.path.expanduser("~"), "Downloads")
