@@ -7,7 +7,7 @@ import re
 import unicodedata
 
 from navepro.core.banco import db_query
-from navepro.core.textos import _numero_do_titulo
+from navepro.core.textos import _numero_do_titulo, _termo_like
 
 
 def _montar_slides_letra(titulo: str, letra_completa: str) -> list:
@@ -71,11 +71,26 @@ def _buscar_hino_por_termo(termo: str) -> list[dict]:
                 if _numero_do_titulo(r["titulo"]) == num]
         if rows:
             return rows
-    busca_like = f"%{termo}%"
+    busca_like = f"%{_termo_like(termo)}%"
     return db_query(
         "SELECT * FROM letras WHERE ativo = 1 AND "
-        "(titulo LIKE ? OR artista LIKE ? OR letra_completa LIKE ?) "
+        "(titulo LIKE ? ESCAPE '\\' OR artista LIKE ? ESCAPE '\\' "
+        "OR letra_completa LIKE ? ESCAPE '\\') "
         "ORDER BY titulo", (busca_like, busca_like, busca_like))
+
+
+def _buscar_hino_por_termo_ou_id(termo: str) -> list[dict]:
+    """Hino por número/título/artista/letra, com fallback para o id.
+
+    Usado pelo editor da Ordem de Serviço e pelo controle remoto: quando o
+    termo é só um número e a busca não acha, tenta como id da tabela.
+    """
+    rows = _buscar_hino_por_termo(termo)
+    if not rows and (termo or "").strip().isdigit():
+        rows = db_query(
+            "SELECT * FROM letras WHERE id = ? AND ativo = 1",
+            ((termo or "").strip(),))
+    return rows
 
 
 def _buscar_midia_por_termo(termo: str, tipo: str = 'video') -> list[dict]:
@@ -101,8 +116,38 @@ def _buscar_midia_por_termo(termo: str, tipo: str = 'video') -> list[dict]:
                 "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND id = ?",
                 (tipo, num))
         return rows
-    busca_like = f"%{unicodedata.normalize('NFC', termo).casefold()}%"
+    busca_like = f"%{_termo_like(unicodedata.normalize('NFC', termo).casefold())}%"
     return db_query(
         "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND ("
-        "LOWER(nome_exibicao) LIKE ? OR LOWER(nome_original) LIKE ?"
+        "LOWER(nome_exibicao) LIKE ? ESCAPE '\\' "
+        "OR LOWER(nome_original) LIKE ? ESCAPE '\\'"
         ") ORDER BY nome_exibicao", (tipo, busca_like, busca_like))
+
+
+def _buscar_midia_por_termo_ou_id(termo: str, tipo: str = 'video') -> list[dict]:
+    """Mídia por número/nome, com fallback para o id da tabela.
+
+    Mesma regra do hino (editor da Ordem de Serviço e controle remoto):
+    termo numérico sem correspondência de nome tenta como id.
+    """
+    rows = _buscar_midia_por_termo(termo, tipo=tipo)
+    if not rows and (termo or "").strip().isdigit():
+        rows = db_query(
+            "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND id = ?",
+            (tipo, (termo or "").strip()))
+    return rows
+
+
+def _buscar_versiculos_por_texto(versao: str, termo: str) -> list[dict]:
+    """Versículos da versão cujo texto contém o termo (LIKE, máx. 50).
+
+    Consulta compartilhada entre a busca por texto da janela Bíblia e a
+    busca do controle remoto — mesma ordenação e limite.
+    """
+    termo = (termo or "").strip()
+    if not termo:
+        return []
+    return db_query(
+        "SELECT * FROM versiculos WHERE versao = ? AND texto LIKE ? ESCAPE '\\' "
+        "ORDER BY livro, capitulo, versiculo LIMIT 50",
+        (versao, f"%{_termo_like(termo)}%"))

@@ -245,12 +245,11 @@ class JanelaTransferenciaMixin:
             res: dict[str, Any] = {}
 
             def _trabalho():
-                import traceback as _tb
                 try:
                     res["valor"] = acao(
                         lambda msg: res.__setitem__("progresso", msg))
                 except Exception as e:  # noqa: BLE001 - mostra na interface
-                    _tb.print_exc()
+                    log.exception(f"Erro na transferência: {e}")
                     res["erro"] = e
 
             def _conferir():

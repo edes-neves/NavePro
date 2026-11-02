@@ -81,3 +81,14 @@ def _numero_do_titulo(titulo: str) -> int | None:
     """Extrai o número inicial do título de um hino ("11 - Nome")."""
     m = re.match(r"^\s*(\d+)", titulo or "")
     return int(m.group(1)) if m else None
+
+
+def _termo_like(termo: str) -> str:
+    """Termo pronto para LIKE: % e _ do usuário viram texto literal.
+
+    Sem isso, buscar "100%" ou "a_b" usa os curingas do SQLite e encontra
+    qualquer coisa. O "\\" também é duplicado porque é o caractere de
+    escape usado nas consultas (ESCAPE '\\').
+    """
+    return (str(termo or '')
+            .replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_'))

@@ -31,7 +31,11 @@ from navepro.core.servicos import (
     _reordenar_itens_servico,
     _salvar_servicos_json,
 )
-from navepro.core.slides import _buscar_hino_por_termo, _buscar_midia_por_termo
+from navepro.core.slides import (
+    _buscar_hino_por_termo,
+    _buscar_hino_por_termo_ou_id,
+    _buscar_midia_por_termo_ou_id,
+)
 from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import (
@@ -957,10 +961,7 @@ class JanelaOrdemServicoMixin:
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_display
                 elif tipo == "hino":
-                    rows_match = _buscar_hino_por_termo(termo)
-                    if not rows_match and termo.isdigit():
-                        rows_match = db_query(
-                            "SELECT * FROM letras WHERE id = ? AND ativo = 1", (termo,))
+                    rows_match = _buscar_hino_por_termo_ou_id(termo)
                     if not rows_match:
                         tkinter.messagebox.showwarning(
                             "Busca", f"Nenhum hino encontrado para: \"{termo}\".",
@@ -981,10 +982,7 @@ class JanelaOrdemServicoMixin:
                         titulo = (os.path.splitext(os.path.basename(caminho_arquivo))[0]
                                   or f"Item ({tipo.title()})")
                 elif tipo in ("video", "audio"):
-                    rows_match = _buscar_midia_por_termo(termo, tipo=tipo)
-                    if not rows_match and termo.isdigit():
-                        rows_match = db_query(
-                            "SELECT * FROM midia WHERE id = ? AND ativo = 1", (termo,))
+                    rows_match = _buscar_midia_por_termo_ou_id(termo, tipo=tipo)
                     if not rows_match:
                         tkinter.messagebox.showwarning(
                             "Busca", f"Nenhuma {tipo.title()} encontrada para: \"{termo}\".",

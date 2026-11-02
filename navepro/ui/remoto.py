@@ -37,7 +37,9 @@ from navepro.core.servicos import (
 )
 from navepro.core.slides import (
     _buscar_hino_por_termo,
-    _buscar_midia_por_termo,
+    _buscar_hino_por_termo_ou_id,
+    _buscar_midia_por_termo_ou_id,
+    _buscar_versiculos_por_texto,
     _montar_slides_letra,
     _previa_slide,
 )
@@ -287,74 +289,59 @@ class ControleRemotoMixin:
         """
         dados = dados if isinstance(dados, dict) else {}
         try:
-            # ── Leituras (GET) ──
-            if acao == 'estado':
-                return self._remoto_estado()
-            if acao == 'buscar_hino':
-                return self._remoto_buscar_hino(str(dados.get('busca') or ''))
-            if acao == 'buscar_midia':
-                return self._remoto_buscar_midia(str(dados.get('busca') or ''))
-            if acao == 'buscar_biblia':
-                return self._remoto_buscar_biblia(
-                    str(dados.get('q') or ''),
-                    str(dados.get('versao') or ''))
-            if acao == 'buscar_biblia_ref':
-                return self._remoto_buscar_biblia_ref(dados)
-            if acao == 'biblia_opcoes':
-                return self._remoto_biblia_opcoes(dados)
-            if acao == 'livros_biblia':
-                return {'ok': True, 'livros': list(self.LIVROS_BIBLIA)}
-            if acao == 'listar_anuncios':
-                return {'ok': True, 'anuncios': [
+            handlers = {
+                # ── Leituras (GET) ──
+                'estado': lambda d: self._remoto_estado(),
+                'buscar_hino': lambda d: self._remoto_buscar_hino(
+                    str(d.get('busca') or '')),
+                'buscar_midia': lambda d: self._remoto_buscar_midia(
+                    str(d.get('busca') or '')),
+                'buscar_biblia': lambda d: self._remoto_buscar_biblia(
+                    str(d.get('q') or ''), str(d.get('versao') or '')),
+                'buscar_biblia_ref': lambda d: self._remoto_buscar_biblia_ref(d),
+                'biblia_opcoes': lambda d: self._remoto_biblia_opcoes(d),
+                'livros_biblia': lambda d: {'ok': True,
+                                            'livros': list(self.LIVROS_BIBLIA)},
+                'listar_anuncios': lambda d: {'ok': True, 'anuncios': [
                     {'id': a.get('id'), 'titulo': a.get('titulo') or '',
                      'tipo': a.get('tipo_midia') or 'slide'}
-                    for a in _listar_anuncios_db()]}
-            if acao == 'listar_servicos':
-                servicos = (_carregar_servicos_json().get('servicos') or [])
-                return {'ok': True, 'servicos': [
+                    for a in _listar_anuncios_db()]},
+                'listar_servicos': lambda d: {'ok': True, 'servicos': [
                     {'id': s.get('id'), 'nome': s.get('nome') or '',
                      'itens': len(s.get('itens') or [])}
-                    for s in servicos]}
-            if acao == 'servico_itens':
-                return self._remoto_servico_itens(dados)
-            if acao == 'sorteio_estado':
-                return self._remoto_sorteio_estado()
-            # ── Ações (POST) ──
-            if acao == 'slide':
-                return self._remoto_slide(str(dados.get('acao') or ''))
-            if acao == 'tamanho':
-                return self._remoto_tamanho(dados)
-            if acao == 'projetar_hino':
-                return self._remoto_projetar_hino(dados)
-            if acao == 'projetar_biblia':
-                return self._remoto_projetar_biblia(dados)
-            if acao == 'executar_midia':
-                return self._remoto_executar_midia(dados)
-            if acao == 'controle_player':
-                return self._remoto_controle_player(dados)
-            if acao == 'projetar_anuncio':
-                self.player._garantir_telao()
-                return self.projetar_anuncio(int(dados.get('id') or 0))
-            if acao == 'executar_servico':
-                return self._remoto_executar_servico(dados)
-            if acao == 'servico_item':
-                return self._remoto_servico_item(dados)
-            if acao == 'medidor':
-                return self._remoto_medidor(dados)
-            if acao == 'sorteio_abrir':
-                return self._remoto_sorteio_abrir()
-            if acao == 'sorteio_fechar':
-                return self._remoto_sorteio_fechar()
-            if acao == 'sorteio_configurar':
-                return self._remoto_sorteio_configurar(dados)
-            if acao == 'sorteio_sortear':
-                return self._remoto_sorteio_sortear()
-            if acao == 'sorteio_reiniciar':
-                return self._remoto_sorteio_reiniciar()
-            return {'ok': False, 'erro': f'Ação desconhecida: {acao}'}
+                    for s in (_carregar_servicos_json().get('servicos') or [])]},
+                'servico_itens': lambda d: self._remoto_servico_itens(d),
+                'sorteio_estado': lambda d: self._remoto_sorteio_estado(),
+                # ── Ações (POST) ──
+                'slide': lambda d: self._remoto_slide(str(d.get('acao') or '')),
+                'tamanho': lambda d: self._remoto_tamanho(d),
+                'projetar_hino': lambda d: self._remoto_projetar_hino(d),
+                'projetar_biblia': lambda d: self._remoto_projetar_biblia(d),
+                'executar_midia': lambda d: self._remoto_executar_midia(d),
+                'controle_player': lambda d: self._remoto_controle_player(d),
+                'projetar_anuncio': lambda d: self._remoto_projetar_anuncio(d),
+                'executar_servico': lambda d: self._remoto_executar_servico(d),
+                'servico_item': lambda d: self._remoto_servico_item(d),
+                'medidor': lambda d: self._remoto_medidor(d),
+                'sorteio_abrir': lambda d: self._remoto_sorteio_abrir(),
+                'sorteio_fechar': lambda d: self._remoto_sorteio_fechar(),
+                'sorteio_configurar': lambda d: self._remoto_sorteio_configurar(d),
+                'sorteio_sortear': lambda d: self._remoto_sorteio_sortear(),
+                'sorteio_reiniciar': lambda d: self._remoto_sorteio_reiniciar(),
+            }
+            handler = handlers.get(acao)
+            if handler is None:
+                return {'ok': False, 'erro': f'Ação desconhecida: {acao}'}
+            return handler(dados)
         except Exception as exc:  # noqa: BLE001 — vira JSON de erro
             log.exception(f"❌ Erro na ação remota '{acao}': {exc}")
             return {'ok': False, 'erro': str(exc) or type(exc).__name__}
+
+    def _remoto_projetar_anuncio(self, dados: dict) -> dict:
+        """Projeta anúncio pedido pelo celular (garante o telão antes)."""
+        self.player._garantir_telao()
+        return self.projetar_anuncio(int(dados.get('id') or 0))
+
     def _remoto_sorteio_estado(self) -> dict:
         """Estado do Sorteio Profissional (para o controle remoto)."""
         from navepro.sorteio.integracao import estado_sorteio
@@ -469,10 +456,7 @@ class ControleRemotoMixin:
         if not q.strip():
             return {'ok': True, 'versao': versao, 'versoes': versoes,
                     'resultados': []}
-        rows = db_query(
-            "SELECT * FROM versiculos WHERE versao = ? AND texto LIKE ? "
-            "ORDER BY livro, capitulo, versiculo LIMIT 50",
-            (versao, f"%{q.strip()}%"))
+        rows = _buscar_versiculos_por_texto(versao, q)
         return {'ok': True, 'versao': versao, 'versoes': versoes,
                 'resultados': [
                     {'livro': r.get('livro'), 'capitulo': r.get('capitulo'),
@@ -774,10 +758,7 @@ class ControleRemotoMixin:
 
         if tipo == 'hino':
             buscar = hino_termo if _usou_painel_hino else termo
-            rows = _buscar_hino_por_termo(buscar)
-            if not rows and buscar.isdigit():
-                rows = db_query(
-                    "SELECT * FROM letras WHERE id = ? AND ativo = 1", (buscar,))
+            rows = _buscar_hino_por_termo_ou_id(buscar)
             if not rows:
                 return (False, f'Nenhum hino encontrado para: "{buscar}".', {})
             h = rows[0]
@@ -792,10 +773,7 @@ class ControleRemotoMixin:
                 titulo = (os.path.splitext(os.path.basename(caminho_arquivo))[0]
                           or f'Item ({tipo.title()})')
         elif tipo in ('video', 'audio'):
-            rows = _buscar_midia_por_termo(termo, tipo=tipo)
-            if not rows and termo.isdigit():
-                rows = db_query(
-                    "SELECT * FROM midia WHERE id = ? AND ativo = 1", (termo,))
+            rows = _buscar_midia_por_termo_ou_id(termo, tipo=tipo)
             if not rows:
                 return (False,
                         f'Nenhuma {tipo.title()} encontrada para: "{termo}".', {})

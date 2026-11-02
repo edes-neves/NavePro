@@ -21,7 +21,7 @@ from navepro.core.banco import DatabaseManager, db_execute, db_query
 from navepro.core.log import get_logger
 from navepro.core.paths import UPLOAD_FOLDER
 from navepro.core.rede import _eh_loopback
-from navepro.core.textos import detectar_tipo_arquivo, remover_acentos
+from navepro.core.textos import _termo_like, detectar_tipo_arquivo, remover_acentos
 
 log = get_logger("servidor_http")
 
@@ -497,11 +497,11 @@ class ServidorAsyncHTTP:
                 ])
             else:
                 busca_nfc = unicodedata.normalize('NFC', busca)
-                busca_like = busca_nfc.casefold()
+                busca_like = _termo_like(busca_nfc.casefold())
                 query += (
                     " AND (\n"
-                    "    LOWER(nome_exibicao) LIKE ? OR\n"
-                    "    LOWER(nome_original) LIKE ?\n"
+                    "    LOWER(nome_exibicao) LIKE ? ESCAPE '\\' OR\n"
+                    "    LOWER(nome_original) LIKE ? ESCAPE '\\'\n"
                     ")"
                 )
                 query_params.extend([f"%{busca_like}%", f"%{busca_like}%"])

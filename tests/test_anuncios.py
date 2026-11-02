@@ -28,7 +28,7 @@ from navepro.config import (  # noqa: E402
     EXTENSOES_VIDEO,
     SUFIXOS_IMAGEM,
 )
-from navepro.core.textos import _numero_do_titulo, remover_acentos  # noqa: E402
+from navepro.core.textos import _numero_do_titulo, _termo_like, remover_acentos  # noqa: E402
 
 _MOD = os.path.join(RAIZ, "navepro", "core", "anuncios.py")
 _SRC = open(_MOD, encoding="utf-8").read()
@@ -60,6 +60,7 @@ def _montar_ns(conn, anuncios_file, uploads):
         "SUFIXOS_IMAGEM": SUFIXOS_IMAGEM,
         "_numero_do_titulo": _numero_do_titulo,
         "remover_acentos": remover_acentos,
+        "_termo_like": _termo_like,
     }
     for no in _TREE.body:
         if isinstance(no, ast.FunctionDef):

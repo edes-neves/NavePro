@@ -313,10 +313,11 @@ def _inserir_com_id_reuso(tabela: str, colunas: tuple, valores: tuple) -> int:
     Sem lacuna disponível, o AUTOINCREMENT segue o comportamento padrão.
     Retorna o id do registro inserido.
     """
-    assert tabela in _TABELAS_REUSO_ID, f"Tabela inválida: {tabela}"
-    assert all(
-        isinstance(c, str) and _PADRAO_COL_INSERCAO.match(c) for c in colunas
-    ), "Colunas inválidas para INSERT"
+    if tabela not in _TABELAS_REUSO_ID:
+        raise ValueError(f"Tabela inválida: {tabela}")
+    if not all(isinstance(c, str) and _PADRAO_COL_INSERCAO.match(c)
+               for c in colunas):
+        raise ValueError("Colunas inválidas para INSERT")
     cols = ", ".join(colunas)
     marks = ", ".join(["?"] * len(colunas))
     valores = tuple(valores)

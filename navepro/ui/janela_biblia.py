@@ -22,6 +22,7 @@ from navepro.core.banco import _gerador_id_livre, db_query
 from navepro.core.log import get_logger
 from navepro.core.paths import DB_PATH
 from navepro.core.servicos import _analisar_faixa_versiculos
+from navepro.core.slides import _buscar_versiculos_por_texto
 from navepro.core.util_tk import _centralizar_sobre
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
@@ -137,10 +138,7 @@ class JanelaBibliaMixin:
             if not termo or termo == "Buscar versículo por texto...":
                 return None
             versao = versao_var.get()
-            rows = db_query(
-                "SELECT * FROM versiculos WHERE versao = ? AND texto LIKE ? "
-                "ORDER BY livro, capitulo, versiculo LIMIT 50",
-                (versao, f"%{termo}%"))
+            rows = _buscar_versiculos_por_texto(versao, termo)
             biblia_text.config(state='normal')
             biblia_text.delete('1.0', tk.END)
             if rows:

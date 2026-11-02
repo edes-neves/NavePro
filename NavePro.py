@@ -891,9 +891,7 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             self._anuncio_proj["config"] = cfg_dic
             _atualizar_anuncio_db(pid, dados_proj)
         except Exception as _e_persist:
-            import traceback as _tb_persist
-            _tb_persist.print_exc()
-            log.warning(f"⚠️ Falha ao autosalvar escala do anúncio {pid}: {_e_persist}")
+            log.exception(f"⚠️ Falha ao autosalvar escala do anúncio {pid}: {_e_persist}")
 
     def _persistir_escala_imagem(self, escala: float) -> None:
         """Grava a nova escala de imagem ('img_escala') no anúncio em projeção.
@@ -941,9 +939,7 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             self._anuncio_proj["config"] = cfg_dic
             _atualizar_anuncio_db(pid, dados_proj)
         except Exception as _e_persist_img:
-            import traceback as _tb_persist_img
-            _tb_persist_img.print_exc()
-            log.warning(f"⚠️ Falha ao autosalvar escala da imagem do anúncio "
+            log.exception(f"⚠️ Falha ao autosalvar escala da imagem do anúncio "
                   f"{pid}: {_e_persist_img}")
 
     def _tamanho_projecao(self) -> dict:

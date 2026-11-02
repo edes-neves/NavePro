@@ -17,7 +17,7 @@ from navepro.config import EXTENSOES_AUDIO, EXTENSOES_VIDEO, SUFIXOS_IMAGEM
 from navepro.core.banco import db_execute, db_query
 from navepro.core.log import get_logger
 from navepro.core.paths import ANUNCIOS_FILE, UPLOAD_FOLDER
-from navepro.core.textos import _numero_do_titulo, remover_acentos
+from navepro.core.textos import _numero_do_titulo, _termo_like, remover_acentos
 
 log = get_logger("anuncios")
 
@@ -114,10 +114,12 @@ def _listar_anuncios_db(busca: str = "") -> list[dict]:
     termo = (busca or "").strip().lower()
     try:
         if termo:
-            como = f"%{termo}%"
+            como = f"%{_termo_like(termo)}%"
             rows = db_query(
                 "SELECT * FROM anuncios WHERE ativo = 1 AND "
-                "(LOWER(titulo) LIKE ? OR LOWER(categoria) LIKE ? OR LOWER(texto) LIKE ?) "
+                "(LOWER(titulo) LIKE ? ESCAPE '\\' "
+                "OR LOWER(categoria) LIKE ? ESCAPE '\\' "
+                "OR LOWER(texto) LIKE ? ESCAPE '\\') "
                 "ORDER BY id DESC", (como, como, como))
         else:
             rows = db_query("SELECT * FROM anuncios WHERE ativo = 1 ORDER BY id DESC")
