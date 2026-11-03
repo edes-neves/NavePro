@@ -346,7 +346,7 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             _monitor_cfg if isinstance(_monitor_cfg, int) and _monitor_cfg > 0
             else None)
         self.player_cmd: str = self.config_data.get("player", PLAYER_PADRAO)
-        self.placeholder_busca: str = "Buscar hino... [BD]"
+        self.placeholder_busca: str = "Buscar música no [BD]"
         self.arquivos_encontrados: list[str] = []
         self.arquivo_atual: str | None = None
         # Estado do anúncio projetado (compartilhado entre a janela de

@@ -569,7 +569,7 @@ class ControleRemotoMixin:
                 'primeiro': slides[inicio][1]}
     def _remoto_buscar_midia(self, busca: str) -> dict:
         """Busca músicas/vídeos na tabela `midia`, como o campo da tela
-        principal do app ("Buscar hino... [BD]")."""
+        principal do app ("Buscar música no [BD]")."""
         termo = (busca or '').strip()
         if not termo:
             return {'ok': True, 'midias': []}
