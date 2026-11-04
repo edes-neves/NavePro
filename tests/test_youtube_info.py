@@ -48,6 +48,7 @@ def _rodar() -> int:
     # ── Metadados via yt-dlp (subprocess simulado) ────────────────
     original_localizar = yt.localizar_executavel
     original_run = yt.subprocess.run
+    original_flatpak = yt._eh_flatpak
 
     def _run_ok(*_args, **_kwargs):
         return SimpleNamespace(
@@ -88,6 +89,37 @@ def _rodar() -> int:
     checar("yt-dlp ausente vira None", _obter_info_youtube(
         "https://youtu.be/abc123") is None)
 
+    # ── Flatpak: o yt-dlp do host roda via flatpak-spawn ──────────
+    # Dentro do sandbox o Python do runtime não enxerga o yt_dlp instalado
+    # no host (apt ou pipx de outra versão). Rodar no host resolve.
+    capturado = {}
+
+    def _run_host(*args, **kwargs):
+        capturado["cmd"] = args[0]
+        capturado["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0, stdout='{"title": "Culto", "duration": 10}',
+            stderr="")
+
+    yt._eh_flatpak = lambda: True
+    yt.localizar_executavel = lambda _nome: "/run/host/usr/bin/yt-dlp"
+    yt.subprocess.run = _run_host
+    info = _obter_info_youtube("https://youtu.be/abc123")
+    checar("no Flatpak o yt-dlp roda no host via flatpak-spawn",
+           capturado["cmd"][:3] == [
+               "flatpak-spawn", "--host", "/usr/bin/yt-dlp"])
+    checar("no Flatpak o /run/host é traduzido para o caminho do host",
+           info and info["titulo"] == "Culto")
+    checar("consulta ao yt-dlp usa CREATE_NO_WINDOW (sem console no Windows)",
+           "creationflags" in capturado["kwargs"])
+
+    yt.localizar_executavel = lambda _nome: os.path.expanduser(
+        "~/.local/bin/yt-dlp")
+    _obter_info_youtube("https://youtu.be/abc123")
+    checar("no Flatpak o caminho do pipx é mantido (mesmo no host)",
+           capturado["cmd"][2] == os.path.expanduser("~/.local/bin/yt-dlp"))
+
+    yt._eh_flatpak = original_flatpak
     yt.localizar_executavel = original_localizar
     yt.subprocess.run = original_run
 

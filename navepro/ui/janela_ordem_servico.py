@@ -972,10 +972,14 @@ class JanelaOrdemServicoMixin:
 
             tk.Label(add_main, text="Título:", fg='#f0c040', bg='#0d1117',
                      font=("Arial", 11, "bold")).pack(anchor='w', pady=(8, 0))
-            titulo_entry = tk.Entry(add_main, font=("Arial", 11), bg='#21262d',
+            titulo_var = tk.StringVar(
+                value=(item_edit or {}).get("titulo_custom") or "")
+            titulo_entry = tk.Entry(add_main, textvariable=titulo_var,
+                                    font=("Arial", 11), bg='#21262d',
                                     fg='#f0c040', insertbackground='#f0c040',
                                     readonlybackground='#161b22')
-            titulo_entry.insert(0, (item_edit or {}).get("titulo_custom") or "")
+            # Sem referência viva o GC apaga a variável Tcl e o campo fica vazio.
+            titulo_entry._navepro_titulo_var = titulo_var
             titulo_entry.pack(fill='x', ipady=3, pady=2)
             # Quando o item é um vídeo do YouTube, a URL é exibida aqui,
             # logo abaixo do título capturado automaticamente.
@@ -1419,17 +1423,17 @@ class JanelaOrdemServicoMixin:
                 "duracao": int((item_edit or {}).get(
                     "duracao_estimada_segundos") or 0) if youtube_var.get() else 0,
                 "token": 0, "timer": None, "pendente": False,
-                "pendente_url": ""}
+                "pendente_url": "",
+                # O título é sempre editável. Quando o operador digita, o
+                # metadado do yt-dlp não pode mais sobrescrever o texto.
+                "editado": bool(_yt_titulo_inicial),
+                "preenchendo": False}
 
-            def _aplicar_estado_titulo_youtube():
-                """No YouTube o título é capturado; não pode ser digitado."""
-                try:
-                    if youtube_var.get():
-                        titulo_entry.configure(state='readonly')
-                    else:
-                        titulo_entry.configure(state='normal')
-                except tk.TclError:
-                    pass
+            def _titulo_digitado(*_args):
+                if not _yt_info.get("preenchendo"):
+                    _yt_info["editado"] = True
+
+            titulo_var.trace_add("write", _titulo_digitado)
 
             def _atualizar_url_abaixo_titulo():
                 url = youtube_url_var.get().strip()
@@ -1444,13 +1448,16 @@ class JanelaOrdemServicoMixin:
                     pass
 
             def _definir_titulo_youtube(texto: str):
+                """Preenche o título automaticamente sem apagar texto digitado."""
+                if _yt_info.get("editado"):
+                    return
+                _yt_info["preenchendo"] = True
                 try:
-                    titulo_entry.configure(state='normal')
-                    titulo_entry.delete(0, tk.END)
-                    titulo_entry.insert(0, texto)
+                    titulo_var.set(texto)
                 except tk.TclError:
                     pass
-                _aplicar_estado_titulo_youtube()
+                finally:
+                    _yt_info["preenchendo"] = False
 
             def _aplicar_info_youtube(info, url: str, token: int):
                 if token != _yt_info.get("token"):
@@ -1463,9 +1470,7 @@ class JanelaOrdemServicoMixin:
                 _yt_info["pendente"] = False
                 _yt_info["pendente_url"] = ""
                 if not info or not info.get("titulo"):
-                    # Não deixa um título antigo parecendo ser da URL nova.
-                    if url != _yt_info.get("url"):
-                        _definir_titulo_youtube("")
+                    # Metadado indisponível não apaga o que o operador digitou.
                     return
                 _yt_info["url"] = url
                 _yt_info["titulo"] = str(info.get("titulo") or "")
@@ -1495,7 +1500,6 @@ class JanelaOrdemServicoMixin:
 
             def _agendar_info_youtube(*_args):
                 _atualizar_url_abaixo_titulo()
-                _aplicar_estado_titulo_youtube()
                 timer = _yt_info.get("timer")
                 if timer is not None:
                     try:
@@ -1505,12 +1509,22 @@ class JanelaOrdemServicoMixin:
                     _yt_info["timer"] = None
                 url = youtube_url_var.get().strip()
                 if not youtube_var.get() or not url or not _eh_url_youtube(url):
+                    # Ao desmarcar o YouTube ou limpar a URL, o título (auto
+                    # ou digitado) é mantido: o operador pode salvá-lo assim.
                     _yt_info["token"] = int(_yt_info.get("token") or 0) + 1
                     _yt_info["pendente"] = False
                     _yt_info["pendente_url"] = ""
-                    if not youtube_var.get() or url != _yt_info.get("url"):
-                        _definir_titulo_youtube("")
                     return
+                if url != _yt_info.get("url"):
+                    url_anterior = str(_yt_info.get("url") or "")
+                    _yt_info["url"] = url
+                    _yt_info["titulo"] = ""
+                    _yt_info["duracao"] = 0
+                    if url_anterior:
+                        # Trocou de vídeo: o título era do vídeo anterior.
+                        _yt_info["editado"] = False
+                        _definir_titulo_youtube("")
+                    # Se ainda não havia URL, preserva o título digitado.
                 if _yt_info.get("url") == url and _yt_info.get("titulo"):
                     return
                 if (_yt_info.get("pendente")
@@ -1519,8 +1533,6 @@ class JanelaOrdemServicoMixin:
                 # Invalida qualquer consulta antiga antes de agendar a nova.
                 _yt_info["token"] = int(_yt_info.get("token") or 0) + 1
                 token = int(_yt_info["token"])
-                if url != _yt_info.get("url"):
-                    _definir_titulo_youtube("")
 
                 def _disparar():
                     _yt_info["timer"] = None
@@ -1622,8 +1634,10 @@ class JanelaOrdemServicoMixin:
                 caminho_arquivo = arquivo_path_var.get().strip()
                 # Caixinha "YouTube": quando marcada, o item vira um vídeo do
                 # YouTube e guarda a URL (em vez de um arquivo em disco).
-                # O título (e a duração) vêm do próprio vídeo, nunca do campo
-                # digitado pelo operador.
+                # O título é sempre editável: o metadado do yt-dlp só preenche
+                # o campo quando ele está vazio, e uma falha do yt-dlp (ou a
+                # ausência dele, como no sandbox do Flatpak) NÃO impede salvar
+                # a URL com o título que o operador digitou.
                 youtube_url = ""
                 if youtube_var.get():
                     youtube_url = youtube_url_var.get().strip()
@@ -1653,22 +1667,26 @@ class JanelaOrdemServicoMixin:
                                 add_win.configure(cursor="")
                             except tk.TclError:
                                 pass
-                    if not info or not info.get("titulo"):
-                        tkinter.messagebox.showwarning(
-                            "YouTube",
-                            "Não foi possível obter o título do vídeo do "
-                            "YouTube. Verifique a URL, a conexão e o yt-dlp.",
-                            parent=add_win)
-                        return
-                    _yt_info["url"] = youtube_url
-                    _yt_info["titulo"] = str(info.get("titulo") or "")
-                    try:
-                        _yt_info["duracao"] = int(round(
-                            float(info.get("duracao") or 0)))
-                    except (TypeError, ValueError):
-                        _yt_info["duracao"] = 0
-                    titulo = str(_yt_info["titulo"])
-                    duracao = int(_yt_info["duracao"])
+                        if info:
+                            _yt_info["url"] = youtube_url
+                            _yt_info["titulo"] = str(info.get("titulo") or "")
+                            try:
+                                _yt_info["duracao"] = int(round(
+                                    float(info.get("duracao") or 0)))
+                            except (TypeError, ValueError):
+                                _yt_info["duracao"] = 0
+                    # O campo digitado é a fonte da verdade; o metadado só
+                    # entra quando o operador não escreveu nada.
+                    if not titulo and info and info.get("titulo"):
+                        titulo = str(info.get("titulo") or "").strip()
+                    if info:
+                        try:
+                            duracao_info = int(round(
+                                float(info.get("duracao") or 0)))
+                        except (TypeError, ValueError):
+                            duracao_info = 0
+                        if duracao_info > 0:
+                            duracao = duracao_info
                 if tipo == "youtube" and not youtube_url:
                     # Caixinha desmarcada num item que era YouTube: evita
                     # salvar "youtube" sem URL (que ficaria sem mídia).

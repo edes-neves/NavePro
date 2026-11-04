@@ -109,6 +109,7 @@ def _versao_mpv_cacheada() -> tuple[int, int] | None:
         exe = localizar_executavel("mpv") or "mpv"
         resp = subprocess.run(
             [exe, '--version'], timeout=5, capture_output=True, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             env=_ambiente_sem_appimage())
         m = re.search(r'mpv\s+v?(\d+)\.(\d+)', resp.stdout or '')
         if m:
@@ -483,6 +484,7 @@ class MediaPlayer:
                  'format=duration', '-of',
                  'default=noprint_wrappers=1:nokey=1', arquivo],
                 capture_output=True, text=True, timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 env=_ambiente_sem_appimage()
             )
             if resultado.returncode == 0 and resultado.stdout.strip():
@@ -680,7 +682,9 @@ class MediaPlayer:
         try:
             r = subprocess.run(
                 [exe, "--version"], capture_output=True, text=True,
-                timeout=5, env=_ambiente_sem_appimage())
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                env=_ambiente_sem_appimage())
             saida = (r.stdout or "").strip().splitlines()
             self._ytdlp_versao = saida[0].strip() if saida else ""
         except (subprocess.SubprocessError, OSError):

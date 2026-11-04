@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.3.1.AppImage
-   ./NavePro-2.3.1.AppImage
+   chmod +x NavePro-2.3.2.AppImage
+   ./NavePro-2.3.2.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.3.1          # gera NavePro-2.3.1.AppImage
+./build.sh 2.3.2          # gera NavePro-2.3.2.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.3.1
+   ./build.sh 2.3.2
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.3.1: ..."
-   git tag v2.3.1
-   git push origin main v2.3.1
+   git add -A && git commit -m "NavePro 2.3.2: ..."
+   git tag v2.3.2
+   git push origin main v2.3.2
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.3.1 NavePro-2.3.1.AppImage \
-     --title "NavePro 2.3.1" --notes "O que mudou nesta versão..."
+   gh release create v2.3.2 NavePro-2.3.2.AppImage \
+     --title "NavePro 2.3.2" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -554,6 +554,19 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.3.2
+
+- **Flatpak — YouTube**: corrigido o salvamento de vídeos por URL no Flatpak.
+  O yt-dlp do sistema agora é executado fora do sandbox (`flatpak-spawn --host`),
+  então o título e a duração voltam a ser capturados.
+- **Título editável**: no editor da Ordem de Serviço e no controle remoto, o
+  título do YouTube voltou a ser digitável. O texto manual prevalece e não é
+  sobrescrito pela captura automática.
+- **Salvamento sem metadados**: se o yt-dlp falhar, o item ainda pode ser salvo
+  com o título digitado (ou com a URL como rótulo).
+- **Windows**: yt-dlp, ffprobe e as consultas de versão do mpv não abrem mais
+  janelas de console extras.
 
 ### 2.3.1
 

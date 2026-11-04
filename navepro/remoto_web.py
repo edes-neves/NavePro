@@ -524,6 +524,7 @@ var YT_INFO_URL = '';     // URL cujas informações do YouTube já foram confir
 var YT_INFO_PENDING = ''; // URL da consulta em andamento
 var YT_INFO_TOKEN = 0;    // invalida respostas atrasadas ao trocar a URL
 var YT_INFO_TIMER = null; // debounce da consulta ao yt-dlp
+var YT_TITULO_MANUAL = false; // operador digitou o título: não sobrescrever
 var ITENS_SERVICO = [];   // itens do serviço aberto
 var ITEM_EDIT_ID = null;  // id em edição (null = novo item)
 var EXECUCAO = null;      // {servico, item, indice, titulo} do último executado
@@ -766,6 +767,10 @@ function ehUrlYoutube(url) {
   } catch (e) { return false; }
 }
 
+function tituloItemDigitado() {
+  YT_TITULO_MANUAL = true;
+}
+
 function agendarInfoYoutube(url) {
   if (YT_INFO_TIMER) { clearTimeout(YT_INFO_TIMER); YT_INFO_TIMER = null; }
   var abaixo = document.getElementById('item_titulo_url');
@@ -775,13 +780,15 @@ function agendarInfoYoutube(url) {
     YT_INFO_TOKEN++;
     YT_INFO_URL = '';
     YT_INFO_PENDING = '';
-    titulo.value = '';
     return;
   }
   if (url === YT_INFO_URL) return;
   if (url === YT_INFO_PENDING) return;
-  // Título/duração de outra URL não podem ficar parecendo ser deste vídeo.
-  if (url !== YT_INFO_URL) {
+  // Trocou de vídeo: o título automático anterior não serve mais. Um título
+  // digitado antes de escolher a URL é preservado; depois da URL, o operador
+  // pode digitar e o metadado não sobrescreve mais.
+  if (YT_INFO_URL) {
+    YT_TITULO_MANUAL = false;
     titulo.value = '';
     document.getElementById('item_duracao').value = '';
   }
@@ -795,20 +802,22 @@ function agendarInfoYoutube(url) {
         YT_INFO_PENDING = '';
         if (j && j.ok && j.titulo) {
           YT_INFO_URL = url;
-          titulo.value = j.titulo;
-          document.getElementById('item_duracao').value =
-            j.duracao ? String(Math.round(j.duracao)) : '';
+          if (!YT_TITULO_MANUAL) titulo.value = j.titulo;
+          var dur = document.getElementById('item_duracao');
+          if (!dur.value) {
+            dur.value = j.duracao ? String(Math.round(j.duracao)) : '';
+          }
         } else {
-          if (url !== YT_INFO_URL) titulo.value = '';
           aviso((j && j.erro) ||
-                'Não foi possível obter o título do vídeo do YouTube.');
+                'Não foi possível obter o título do vídeo do YouTube. ' +
+                'Digite o título manualmente se quiser.');
         }
       })
       .catch(function() {
         if (token !== YT_INFO_TOKEN) return;
         YT_INFO_PENDING = '';
-        if (url !== YT_INFO_URL) titulo.value = '';
-        aviso('Não foi possível consultar o YouTube.');
+        aviso('Não foi possível consultar o YouTube. ' +
+              'Digite o título manualmente se quiser.');
       });
   }, 700);
 }
@@ -819,9 +828,10 @@ function youtubeMudou() {
   var abaixo = document.getElementById('item_titulo_url');
   document.getElementById('item_youtube_url').style.display =
     marcado ? 'block' : 'none';
-  titulo.readOnly = marcado;
-  titulo.placeholder = marcado ? 'Título capturado do YouTube'
-                               : 'Título (opcional)';
+  titulo.readOnly = false;
+  titulo.placeholder = marcado
+    ? 'Título (opcional; capturado do YouTube se vazio)'
+    : 'Título (opcional)';
   abaixo.style.display = marcado ? 'block' : 'none';
   if (!marcado) {
     YT_INFO_TOKEN++;
@@ -900,6 +910,7 @@ function abrirFormItem(item) {
   YT_INFO_TOKEN++;
   YT_INFO_PENDING = '';
   var ytitulo = item ? String(item.titulo || '').trim() : '';
+  YT_TITULO_MANUAL = !!(ehYoutube && ytitulo && ytitulo !== yurl);
   YT_INFO_URL = (ehYoutube && ytitulo && ytitulo !== yurl) ? yurl : '';
   tipoItemMudou();
   document.getElementById('serv_form').scrollIntoView({block: 'start'});
@@ -930,14 +941,11 @@ function salvarItem() {
       aviso('URL inválida! Insira uma URL do YouTube');
       return;
     }
-    var ytitulo = document.getElementById('item_titulo').value.trim();
-    if (!ytitulo || YT_INFO_URL !== yurl) {
-      aviso('Aguarde a captura do título do vídeo do YouTube.');
-      return;
-    }
+    // O título pode ser o capturado automaticamente ou o digitado pelo
+    // operador. Se o yt-dlp falhar, salva assim mesmo: a URL é a mídia e o
+    // título (ou a própria URL) é só o rótulo do item.
     dados.tipo = 'youtube';
     dados.youtube_url = yurl;
-    dados.titulo = ytitulo;
     dados.caminho_arquivo = '';
   }
   if (tipo === 'hino') {
@@ -1307,7 +1315,8 @@ PAGINA = """<!DOCTYPE html>
   </div>
   <div class="card" id="serv_form" style="display:none">
     <h3 id="serv_form_titulo">Adicionar item</h3>
-    <input id="item_titulo" placeholder="T&iacute;tulo (opcional)">
+    <input id="item_titulo" placeholder="T&iacute;tulo (opcional)"
+           oninput="tituloItemDigitado()">
     <div id="item_titulo_url" style="display:none;font-size:12px;color:#58a6ff;
          margin:2px 0 4px;word-break:break-all"></div>
     <select id="item_tipo" onchange="tipoItemMudou()"></select>

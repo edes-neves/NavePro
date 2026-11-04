@@ -219,7 +219,8 @@ checar("sandbox também cobre /run/host/usr/bin (mpv do apt)",
 
 # ── 7. Título/URL/duração do item YouTube no editor ───────────────────
 # No editor "Ad. Item" o título do YouTube é capturado do próprio vídeo
-# (yt-dlp), o campo fica read-only, a URL aparece logo abaixo do título e a
+# (yt-dlp), mas continua editável: o operador pode corrigir/acrescentar
+# anotações e o texto digitado prevalece. A URL aparece logo abaixo e a
 # duração também vem dos metadados. A lista preenche a coluna "Duração" de
 # itens antigos consultando o yt-dlp em segundo plano.
 _fonte_app = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
@@ -229,8 +230,15 @@ checar("título do YouTube é capturado pelo yt-dlp no salvamento",
        "_obter_info_youtube(youtube_url)" in _fonte_os)
 checar("URL fora do YouTube é recusada com a mensagem pedida",
        "URL inválida! Insira uma URL do YouTube" in _fonte_os)
-checar("no YouTube o título não é digitável (readonly)",
-       "titulo_entry.configure(state='readonly')" in _fonte_os)
+checar("no YouTube o título continua editável",
+       "textvariable=titulo_var" in _fonte_os
+       and "titulo_entry.configure(state='readonly')" not in _fonte_os)
+checar("o metadado não sobrescreve o título digitado pelo operador",
+       'if _yt_info.get("editado")' in _fonte_os
+       and "titulo_var.trace_add" in _fonte_os)
+checar("falha do yt-dlp não bloqueia o salvamento da URL",
+       "Não foi possível obter o título" not in _fonte_os
+       and 'if not titulo and info and info.get("titulo")' in _fonte_os)
 checar("a URL aparece abaixo do título no editor",
        "after=titulo_entry" in _fonte_os and "youtube_titulo_url_lbl" in _fonte_os)
 checar("a lista busca a duração do YouTube sem baixar o vídeo",
@@ -265,6 +273,14 @@ checar("servidor: endpoint de metadados fora da thread do Tk",
 checar("web: a lista também mostra a URL abaixo do título",
        "it.tipo === 'youtube' && it.youtube_url" in _fonte_web
        and "item-url" in _fonte_web)
+checar("web: título do YouTube continua editável",
+       "titulo.readOnly = false" in _fonte_web
+       and "tituloItemDigitado()" in _fonte_web)
+checar("web: metadado não sobrescreve o título digitado",
+       "YT_TITULO_MANUAL" in _fonte_web
+       and "if (!YT_TITULO_MANUAL)" in _fonte_web)
+checar("web: salvar YouTube não espera o yt-dlp",
+       "Aguarde a captura do título" not in _fonte_web)
 
 
 def _extrair_metodo_app(classe, metodo, ns):

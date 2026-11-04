@@ -40,6 +40,16 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.3.2" date="2026-11-04">
+      <description>
+        <ul>
+          <li>Flatpak: adicionar vídeos do YouTube pela URL voltou a funcionar; o yt-dlp é executado no host via flatpak-spawn</li>
+          <li>Ordem de Serviço — YouTube: o título volta a ser editável no app e no controle remoto e o texto digitado não é sobrescrito pela captura automática</li>
+          <li>Salvar item do YouTube não depende mais do yt-dlp: se a captura falhar, a URL e o título digitado são preservados</li>
+          <li>Windows: yt-dlp, ffprobe e consultas de versão do mpv não abrem mais janelas de console</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.1" date="2026-11-03">
       <description>
         <ul>

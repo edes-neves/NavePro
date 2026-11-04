@@ -8,10 +8,11 @@ e pelo controle remoto.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from urllib.parse import urlparse
 
-from navepro.core.ambiente import _ambiente_sem_appimage
+from navepro.core.ambiente import _ambiente_sem_appimage, _eh_flatpak
 from navepro.core.log import get_logger
 from navepro.core.player import localizar_executavel
 
@@ -38,6 +39,30 @@ def _eh_url_youtube(url: str) -> bool:
                for dominio in _DOMINIOS_YOUTUBE)
 
 
+def _comando_info_youtube(executavel: str, url: str) -> list[str]:
+    """Monta o comando que consulta os metadados do vídeo.
+
+    Dentro do Flatpak o yt-dlp do host não roda direito no sandbox: o pacote
+    da distro importa módulos de /usr/lib/python3/dist-packages (invisível
+    aqui) e o venv do pipx costuma ter sido criado com outra versão do
+    Python. Por isso o yt-dlp é executado no HOST com `flatpak-spawn --host`,
+    do mesmo jeito que os wrappers de mpv/smplayer já fazem. O caminho
+    /run/host/... é traduzido para o caminho equivalente do sistema.
+    """
+    caminho = executavel
+    if _eh_flatpak():
+        if caminho.startswith("/run/host/"):
+            caminho = caminho[len("/run/host"):]
+        elif caminho.startswith("/app/"):
+            # /app só existe no sandbox; no host vale o nome no PATH.
+            caminho = os.path.basename(caminho)
+        return ["flatpak-spawn", "--host", caminho,
+                "--no-playlist", "--skip-download", "--no-warnings",
+                "--dump-single-json", url]
+    return [caminho, "--no-playlist", "--skip-download", "--no-warnings",
+            "--dump-single-json", url]
+
+
 def _obter_info_youtube(url: str, timeout: float = 15.0) -> dict | None:
     """Obtém título e duração de um vídeo do YouTube via yt-dlp.
 
@@ -55,10 +80,10 @@ def _obter_info_youtube(url: str, timeout: float = 15.0) -> dict | None:
         return None
     try:
         resultado = subprocess.run(
-            [executavel, "--no-playlist", "--skip-download",
-             "--no-warnings", "--dump-single-json", url],
+            _comando_info_youtube(executavel, url),
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             env=_ambiente_sem_appimage())
     except (subprocess.TimeoutExpired, OSError) as exc:
         log.warning("⚠️ Falha ao consultar o YouTube (%s): %s", url, exc)
