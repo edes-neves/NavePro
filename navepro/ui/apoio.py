@@ -257,15 +257,22 @@ def _criar_faixa_secao(parent, topo: bool = True):
     return faixa
 
 
-def _marcar_area_cinza_clara(widget, escuro: str = '#21262d'):
+def _marcar_area_cinza_clara(widget, escuro: str = '#21262d',
+                             claro: str | None = None):
     """Marca um widget para ficar cinza no tema CLARO (no escuro usa `escuro`).
 
     Usado na faixa inferior de controles do painel do operador, que deve virar
     um bloco cinza apenas no tema claro. A cor é aplicada em
     ``_aplicar_tema_widget`` (atributo ``_navepro_area_cinza_clara``).
+
+    `claro` define um tom próprio para o tema claro (ex.: a faixa de controles
+    e o campo de resultados usam ``COR_AREA_CONTROLES_CLARA``). Sem ele, usa a
+    equivalência clara de `escuro`, preservando o comportamento anterior.
     """
     widget._navepro_area_cinza_clara = True
     widget._navepro_area_cinza_escuro = escuro
+    if claro is not None:
+        widget._navepro_area_cinza_claro = claro
     # Campos arredondados desenham um Entry interno por cima: ele precisa
     # acompanhar a mesma cor, senão o miolo do campo fica com outra cor no
     # tema claro (o frame vira cinza e o Entry interno permanece).
@@ -273,4 +280,6 @@ def _marcar_area_cinza_clara(widget, escuro: str = '#21262d'):
     if interno is not None:
         interno._navepro_area_cinza_clara = True
         interno._navepro_area_cinza_escuro = escuro
+        if claro is not None:
+            interno._navepro_area_cinza_claro = claro
     return widget

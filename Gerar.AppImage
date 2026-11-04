@@ -19,8 +19,8 @@ passada. O `APP_VERSION` que o app exibe/compara fica em `navepro/config.py`:
 grave lá a mesma versão do release antes de gerar o binário:
 
 ```bash
-./build.sh 2.1.4           # usa o .venv do projeto; gera NavePro-2.1.4.AppImage
-./NavePro-2.1.4.AppImage   # testar
+./build.sh 2.3.1           # usa o .venv do projeto; gera NavePro-2.3.1.AppImage
+./NavePro-2.3.1.AppImage   # testar
 ```
 
 > ⚠️ **Sempre passe a mesma versão do release que vai criar.** Se o nº do
@@ -68,16 +68,16 @@ grave lá a mesma versão do release antes de gerar o binário:
 3. **Gerar o AppImage**:
 
    ```bash
-   rm -f NavePro-2.1.4.AppImage
-   ARCH=x86_64 appimagetool AppDir NavePro-2.1.4.AppImage
+   rm -f NavePro-2.3.1.AppImage
+   ARCH=x86_64 appimagetool AppDir NavePro-2.3.1.AppImage
    ```
    Use `ARCH=$(uname -m)` se a máquina não for x86_64.
 
 4. **Testar**:
 
    ```bash
-   chmod +x NavePro-2.1.4.AppImage
-   ./NavePro-2.1.4.AppImage
+   chmod +x NavePro-2.3.1.AppImage
+   ./NavePro-2.3.1.AppImage
    ```
 
 ## Publicação
@@ -88,7 +88,7 @@ release precisa carregar **os dois assets que o app baixa** — sem eles, a
 atualização avisa "o release não contém um arquivo ..." em vez de falhar:
 
 ```bash
-gh release create v2.1.4 NavePro-2.1.4.AppImage --title "NavePro 2.1.4" --notes "O que mudou nesta versão..."
+gh release create v2.3.1 NavePro-2.3.1.AppImage --title "NavePro 2.3.1" --notes "O que mudou nesta versão..."
 ```
 
 O `.exe` e os bundles `.flatpak` não são mais anexados à mão: o push da tag

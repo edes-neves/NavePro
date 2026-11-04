@@ -7,16 +7,24 @@ existente. As cores de projeção/relógio do TELÃO NÃO são tocadas.
 """
 
 
+# Tom cinza próprio da faixa de controles (botões do rodapé) e do campo de
+# resultados da busca no tema CLARO. Serve de referência: o restante do painel
+# usa tons um pouco mais escuros que este, para que essas duas áreas se
+# destaquem.
+COR_AREA_CONTROLES_CLARA: str = '#c2cad3'
+
 # Mapa: cor ESCURA atual -> cor equivalente no tema CLARO.
 MAPA_COR_CLARA: dict[str, str] = {
     # Superfícies: mesma hierarquia do tema ESCURO (janela < cartões <
-    # entradas), só que em tons CLAROS — a janela é a base cinza-clara, os
-    # cartões sobem para o quase-branco e as entradas/lista viram branco.
-    '#0d1117': '#eaeef2',   # fundo principal da janela (base)
-    '#161b22': '#f6f8fa',   # cards/containers (um pouco mais claro)
-    '#1c2128': '#f6f8fa',   # linha alternada (par) da lista
-    '#21262d': '#ffffff',   # entradas/botões neutros/lista (mais claro)
-    '#30363d': '#d0d7de',   # bordas/separadores/hover (mais escuro que a base)
+    # entradas), em tons de cinza mais escuros que a faixa de controles/lista
+    # (#c2cad3) — a janela é a base, os cartões sobem um tom e as entradas
+    # ficam um pouco mais claras.
+    '#0d1117': '#aeb9c4',   # fundo principal da janela (base)
+    '#161b22': '#b5c0ca',   # cards/containers (um pouco mais claro)
+    '#1c2128': '#b5c0ca',   # linha alternada (par) da lista
+    '#21262d': '#bcc6d0',   # entradas/botões neutros/lista (mais claro)
+    '#30363d': '#93a0ac',   # bordas/separadores/hover (mais escuro que a base)
+    '#eaeef2': '#bcc6d0',   # campos Cidade/UF (fundo claro fixo no escuro)
     # Roxos (accent)
     '#6e40c9': '#8250df',
     '#8b5cf6': '#8250df',
@@ -36,7 +44,7 @@ MAPA_COR_CLARA: dict[str, str] = {
     '#f85149': '#f85149',
     # Textos fixos
     '#c9d1d9': '#1f2328',   # texto normal
-    '#8b949e': '#656d76',   # texto secundário/muted
+    '#8b949e': '#4b5563',   # texto secundário/muted
 }
 
 _MAPA_COR_CLARA_UP: dict[str, str] = {
@@ -51,12 +59,13 @@ _CORES_FORTES_CLARO: frozenset = frozenset({
     '#cf222e', '#da3633', '#f85149',                                   # vermelhos
 })
 
-# Fundos claros (texto branco fica ilegível em cima). No tema claro agora as
-# superfícies usam a hierarquia '#eaeef2', '#f6f8fa', '#ffffff' com
-# '#d0d7de' para bordas; também mantém cores legadas (#8b949e/#6e7681) por
-# compatibilidade.
+# Fundos claros (texto branco fica ilegível em cima). As superfícies do tema
+# claro usam a hierarquia '#aeb9c4', '#b5c0ca', '#bcc6d0' com '#93a0ac' para
+# bordas e '#c2cad3' para a faixa de controles/lista; também mantém cores
+# legadas (#ffffff/#f6f8fa/#eaeef2/#8b949e/#6e7681) por compatibilidade.
 _FUNDOS_CLAROS: frozenset = frozenset({
-    '#ffffff', '#f6f8fa', '#eaeef2', '#d0d7de', '#8b949e', '#6e7681',
+    '#ffffff', '#f6f8fa', '#eaeef2', '#8b949e', '#6e7681',
+    '#aeb9c4', '#b5c0ca', '#bcc6d0', '#93a0ac', '#c2cad3',
 })
 
 # Opções de cor do Tk que o tema pode recolorir por widget
@@ -66,6 +75,7 @@ _OPCOES_COR_TK: tuple[str, ...] = (
     'highlightbackground', 'highlightcolor',
     'selectcolor', 'insertbackground',
     'selectbackground', 'selectforeground',
+    'readonlybackground',
     'troughcolor', 'arrowcolor',
 )
 

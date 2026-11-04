@@ -203,11 +203,12 @@ check(
 
 
 # ── 3) Diálogos maiores que 1024x768 usam o helper ──
+_SRC_OS = open(os.path.join(RAIZ, "navepro", "ui", "janela_ordem_servico.py"),
+               encoding="utf-8").read()
 _SRC_UI = (_SRC
            + open(os.path.join(RAIZ, "navepro", "ui", "janela_anuncios.py"),
                   encoding="utf-8").read()
-           + open(os.path.join(RAIZ, "navepro", "ui", "janela_ordem_servico.py"),
-                  encoding="utf-8").read()
+           + _SRC_OS
            + open(os.path.join(RAIZ, "navepro", "ui", "gerenciador_midias.py"),
                   encoding="utf-8").read()
            + open(os.path.join(RAIZ, "navepro", "ui", "config_relogio.py"),
@@ -238,6 +239,38 @@ check(
 check(
     "árvore tem o helper da área do monitor do operador",
     "_area_monitor_operador" in _NOS,
+)
+
+# ── 3b) Ordem de Serviço responsiva e maximizável ──
+check(
+    "OS: lista fica com o espaço extra do grid",
+    "main.rowconfigure(2, weight=1)" in _SRC_OS,
+)
+check(
+    "OS: barra de botões fixa embaixo (grid row 3)",
+    "btn_frame.grid(row=3, column=0, sticky='ew'" in _SRC_OS,
+)
+check(
+    "OS: barra de botões se reorganiza quando a janela estreita",
+    "def _reorganizar_botoes" in _SRC_OS
+    and 'btn_frame.bind("<Configure>", _reorganizar_botoes)' in _SRC_OS,
+)
+check(
+    "OS: janela pode ser maximizada/restaurada",
+    "attributes('-zoomed', True)" in _SRC_OS
+    and "attributes('-zoomed', False)" in _SRC_OS,
+)
+check(
+    "OS: mínimo cabe em telas 800x600",
+    "minsize(800, 540)" in _SRC_OS,
+)
+check(
+    "OS: coluna Título acompanha a largura da janela",
+    'tree.column("Título", width=350, stretch=True)' in _SRC_OS,
+)
+check(
+    "OS: mantém viva a StringVar do seletor de serviço",
+    "combo_servico._navepro_servico_var = servico_var" in _SRC_OS,
 )
 
 

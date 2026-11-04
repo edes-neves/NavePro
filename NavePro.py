@@ -425,6 +425,7 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
 
         # Relógio/temperatura ocultos no telão pelo operador (só na sessão).
         self._relogio_oculto_telao = False
+        self._temperatura_oculta_telao = False
 
         # Quando o telão for fechado (Esc/Ctrl+Q) e recriado pelo player,
         # reaplica a aparência configurada e volta a mostrar a hora inicial.
@@ -435,6 +436,8 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                 novo_telao.configurar_relogio(
                     self.config_data.get("relogio", {}))
                 novo_telao.definir_relogio_oculto(self._relogio_oculto_telao)
+                novo_telao.definir_temperatura_oculta(
+                    self._temperatura_oculta_telao)
                 novo_telao._exibir_hora_inicial()
                 self._registrar_foco_apresentacao_telao(novo_telao)
             except Exception as _e_reap:
@@ -2171,6 +2174,49 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             btn.config(text="✅ Mostrar relógio no telão"
                        if self._relogio_oculto_telao
                        else "🚫 Ocultar relógio do telão")
+        except tk.TclError:
+            pass
+
+    def alternar_temperatura_telao(self) -> None:
+        """Oculta/mostra somente a temperatura no telão (monitor 2).
+
+        A hora continua visível. Afeta só o modo relógio: projeções e
+        medidores em andamento não são interrompidos (a escolha é aplicada
+        quando o telão voltar ao relógio). Vale só na sessão.
+        """
+        novo = not self._temperatura_oculta_telao
+        self._temperatura_oculta_telao = novo
+        telao = getattr(self.player, "telao", None)
+        if telao is not None:
+            try:
+                telao.definir_temperatura_oculta(novo)
+            except Exception as e:
+                log.exception(
+                    f"Erro ao ocultar/mostrar a temperatura no telão: {e}")
+        # Força o redesenho imediato: o cache de hora impediria a atualização.
+        self._ultima_hora_telao = None
+        try:
+            if telao is not None and getattr(telao, "mostrando_relogio", False):
+                hora_atual = datetime.now().strftime("%H:%M")
+                temp_display = (self.temperatura_atual
+                                if self._temperatura_valida() else "")
+                self._ultima_hora_telao = hora_atual
+                self.player.mostrar_relogio(hora_atual, temp_display)
+        except Exception as e:
+            log.exception(f"Erro ao atualizar o relógio do telão: {e}")
+        self._atualizar_botao_temperatura_telao()
+
+    def _atualizar_botao_temperatura_telao(self) -> None:
+        """Atualiza o rótulo do botão de mostrar/ocultar a temperatura."""
+        btn = getattr(self, "_btn_temperatura_telao", None)
+        if btn is None:
+            return
+        try:
+            if not btn.winfo_exists():
+                return
+            btn.config(text="✅ Mostrar temperatura no telão"
+                       if self._temperatura_oculta_telao
+                       else "🌡️ Ocultar temperatura do telão")
         except tk.TclError:
             pass
 

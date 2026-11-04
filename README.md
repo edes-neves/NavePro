@@ -17,7 +17,7 @@ com atualização automática.
 | **📖 Hinos / Letras** | CRUD de hinos (artista, CCLI, categoria, letra completa), importação XML/TXT (OpenLyrics), busca e projeção por slides. |
 | **✝️ Bíblia** | Importação em XML (Zefania), TXT e JSON (4 formatos), seleção versão/livro/capítulo/versículo com carga automática, busca e projeção sincronizada com o telão. |
 | **📢 Anúncios** | Texto, imagem (com ou sem texto por cima), vídeo e áudio; importação TXT/PDF/mídia; editor de imagem + texto; redimensionamento ao vivo. |
-| **📋 Ordem de Serviço** | Roteiro de culto com itens (hinos, mídias, sermão), letras em snapshot e tempo estimado; arquivos locais transferíveis. |
+| **📋 Ordem de Serviço** | Roteiro de culto com itens (hinos, mídias, sermão e YouTube), letras em snapshot, duração estimada/real e contagem regressiva; reordenação por arrastar e janela responsiva/maximizável. |
 | **🔄 Transferir** | Exporta/importa anúncios e ordens de serviço num arquivo `.navepro` para levar a outro computador (inclui ou não as mídias). |
 | **🎨 Tema claro/escuro** | Painel do operador alterna com o menu **Visualizar** ou **Ctrl+T**; o telão não é afetado. |
 | **📦 Gerenciar Banco de Mídia** | Organização das mídias do acervo com busca. |
@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.3.0.AppImage
-   ./NavePro-2.3.0.AppImage
+   chmod +x NavePro-2.3.1.AppImage
+   ./NavePro-2.3.1.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.3.0          # gera NavePro-2.3.0.AppImage
+./build.sh 2.3.1          # gera NavePro-2.3.1.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.3.0
+   ./build.sh 2.3.1
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.3.0: ..."
-   git tag v2.3.0
-   git push origin main v2.3.0
+   git add -A && git commit -m "NavePro 2.3.1: ..."
+   git tag v2.3.1
+   git push origin main v2.3.1
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.3.0 NavePro-2.3.0.AppImage \
-     --title "NavePro 2.3.0" --notes "O que mudou nesta versão..."
+   gh release create v2.3.1 NavePro-2.3.1.AppImage \
+     --title "NavePro 2.3.1" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -554,6 +554,28 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.3.1
+
+- **Ordem de Serviço — YouTube**: a URL agora é validada (somente domínios do
+  YouTube), o título e a duração são capturados pelo **yt-dlp** e o título não é
+  mais digitável. A URL aparece abaixo do título no editor, na lista do app e no
+  controle remoto; salvar só é liberado depois da captura.
+- **Duração e contagem**: a coluna **Duração** mostra o tempo real formatado
+  (`m:ss`/`h:mm:ss`) e, durante a reprodução, vira uma contagem regressiva com
+  pausa/continuar. Itens antigos consultam a duração em segundo plano e a
+  guardam para as próximas aberturas.
+- **Ordem de Serviço — janela**: layout responsivo que mantém os botões sempre
+  visíveis, reorganiza a barra em uma ou duas linhas, permite **maximizar/
+  restaurar** (botão e **F11**) e reordenar itens por **arrastar e soltar** com
+  indicador animado. Corrigido também o seletor de serviço que podia ficar em
+  branco.
+- **Telão — temperatura**: nova opção em **Configurações → Relógio** para ocultar
+  **somente a temperatura**, mantendo a hora no telão. Vale só na sessão e não
+  interrompe projeções nem a contagem/cronômetro.
+- **Tema claro**: ajuste de contraste e hierarquia das superfícies, faixas de
+  seção, menu e textos secundários; o campo de título readonly do YouTube e a
+  lista de resultados agora acompanham o tema corretamente.
 
 ### 2.3.0
 

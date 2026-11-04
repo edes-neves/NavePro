@@ -134,6 +134,33 @@ check(
     str(_w.cfg),
 )
 
+# --- Campo readonly (título do YouTube) também muda no tema claro ---
+class _FakeReadonly(_FakeWidget):
+    def keys(self):
+        return ["background", "foreground", "readonlybackground"]
+
+    def cget(self, op):
+        if op == "readonlybackground":
+            return "#161b22"
+        return super().cget(op)
+
+
+_ro = _FakeReadonly()
+_host.tema = "claro"
+_APLICAR(_host, _ro)
+check(
+    "tema claro troca o readonlybackground do campo de título",
+    _ro.cfg.get("readonlybackground") == _cor_clara("#161b22"),
+    str(_ro.cfg),
+)
+_host.tema = "escuro"
+_APLICAR(_host, _ro)
+check(
+    "tema escuro restaura o readonlybackground",
+    _ro.cfg.get("readonlybackground") == "#161b22",
+    str(_ro.cfg),
+)
+
 # --- Faixas de seção: carvão no claro, cor do cartão no escuro ---
 class _FakeFaixa:
     _navepro_faixa_secao = True
@@ -151,7 +178,8 @@ class _FakeFaixa:
 _faixa = _FakeFaixa()
 _host.tema = "claro"
 _APLICAR(_host, _faixa)
-check("faixa de seção fica carvão no tema claro", _faixa.cfg.get("bg") == "#30363d", str(_faixa.cfg))
+check("faixa de seção fica azul (da temperatura) no tema claro",
+      _faixa.cfg.get("bg") == _cor_clara("#58a6ff"), str(_faixa.cfg))
 
 _faixa2 = _FakeFaixa()
 _host.tema = "escuro"

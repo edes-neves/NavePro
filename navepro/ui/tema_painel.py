@@ -16,7 +16,12 @@ from tkinter import ttk
 
 from navepro.core.log import get_logger
 from navepro.core.paths import CONFIG_FILE
-from navepro.core.tema import _OPCOES_COR_TK, _OPCOES_TEXTO, _cor_clara
+from navepro.core.tema import (
+    _OPCOES_COR_TK,
+    _OPCOES_TEXTO,
+    COR_AREA_CONTROLES_CLARA,
+    _cor_clara,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 
 log = get_logger("tema_painel")
@@ -143,11 +148,11 @@ class TemaPainelMixin:
         if not menus:
             return
         if self.tema == 'claro':
-            menubar_cfg = dict(bg='#f6f8fa', fg='#24292f',
-                               activebackground='#eaeef2',
+            menubar_cfg = dict(bg='#b5c0ca', fg='#24292f',
+                               activebackground=COR_AREA_CONTROLES_CLARA,
                                activeforeground='#24292f')
-            menu_cfg = dict(bg='#ffffff', fg='#1f2328',
-                            activebackground='#eaeef2',
+            menu_cfg = dict(bg='#bcc6d0', fg='#1f2328',
+                            activebackground=COR_AREA_CONTROLES_CLARA,
                             activeforeground='#24292f')
         else:
             menubar_cfg = dict(bg='#161b22', fg='#f0c040',
@@ -221,13 +226,14 @@ class TemaPainelMixin:
             # o cinza claro da lista não "escorregar" a cada visita.
             if getattr(widget, '_navepro_tema_ignorar', False):
                 return
-            # Faixas que delimitam as seções do painel: cor própria por tema
-            # (carvão no claro; igual ao cartão no escuro, isto é, invisível).
+            # Faixas que delimitam as seções do painel: azul da temperatura no
+            # claro; igual ao cartão no escuro, isto é, invisível.
             if getattr(widget, '_navepro_faixa_secao', False):
                 if not capturar:
                     try:
                         widget.configure(
-                            bg='#30363d' if self.tema == 'claro' else '#161b22'
+                            bg=(_cor_clara('#58a6ff')
+                                if self.tema == 'claro' else '#161b22')
                         )
                     except tk.TclError:
                         pass
@@ -237,10 +243,14 @@ class TemaPainelMixin:
                 if not capturar:
                     escuro = getattr(
                         widget, '_navepro_area_cinza_escuro', '#161b22')
+                    claro = getattr(
+                        widget, '_navepro_area_cinza_claro', None)
                     try:
-                        widget.configure(
-                            bg=(_cor_clara(escuro) if self.tema == 'claro' else escuro)
-                        )
+                        if self.tema == 'claro':
+                            bg = claro or _cor_clara(escuro)
+                        else:
+                            bg = escuro
+                        widget.configure(bg=bg)
                     except tk.TclError:
                         pass
                 return
@@ -387,16 +397,17 @@ class TemaPainelMixin:
     def _pintar_lista_cores(self) -> None:
         """Recolore o campo de resultados (lista de hinos/músicas) no tema atual.
 
-        No tema claro o campo usa o mesmo cinza da faixa de botões do rodapé
-        (``#8b949e``). As cores claras saem sempre das cores ESCURAS originais
-        (via ``_cor_clara``), sem reler a cor já clareada — reler fazia o cinza
-        "escorregar" para ``#656d76`` a cada visita do tema.
+        No tema claro o campo usa o mesmo tom cinza da faixa de botões do
+        rodapé (``COR_AREA_CONTROLES_CLARA``), que se destaca do fundo geral
+        (mais escuro) do painel. As cores claras saem sempre das cores
+        ESCURAS originais (via ``_cor_clara``), sem reler a cor já clareada —
+        reler fazia o cinza "escorregar" para ``#656d76`` a cada visita do tema.
         """
         claro = self.tema == 'claro'
 
         # No tema claro o campo usa a mesma cor da faixa de botões do rodapé
         # ("por baixo dos botões"), lida direto do frame dos controles.
-        face_clara = _cor_clara('#161b22')
+        face_clara = COR_AREA_CONTROLES_CLARA
         if claro:
             barra = getattr(self, 'controls_frame', None)
             if barra is not None:

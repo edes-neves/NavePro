@@ -38,7 +38,7 @@
 
 ## Atualizar versão
 
-Quando lançar uma nova versão (ex: v2.1.4):
+Quando lançar uma nova versão (ex: v2.3.1):
 1. Atualize o `tag` e `commit` no manifesto
 2. Faça commit e push no repo `flathub/io.github.edes_neves.NavePro`
 3. O buildbot reconstrói automaticamente

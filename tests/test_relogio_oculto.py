@@ -16,7 +16,8 @@ tree = ast.parse(src)
 nos = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 
 _metodos = ('mostrar_relogio', '_esconder_textos_relogio',
-            'definir_relogio_oculto', '_desativar_topmost_projecao')
+            'definir_relogio_oculto', 'definir_temperatura_oculta',
+            '_desativar_topmost_projecao')
 _corpo = "\n".join(ast.get_source_segment(src, nos[n]) for n in _metodos)
 
 ns = {}
@@ -54,11 +55,12 @@ class Root:
 
 class Stub(Telao):
     def __init__(self, oculto=False, mostrando_relogio=True, projetando=False,
-                 vivo=True, visible=True):
+                 vivo=True, visible=True, temp_oculta=False):
         self.rodando = True
         self._vivo = vivo
         self._is_visible = visible
         self._relogio_oculto = oculto
+        self._temperatura_oculta = temp_oculta
         self.mostrando_relogio = mostrando_relogio
         self._current_alpha = 0.55
         self._current_text = ""
@@ -155,6 +157,48 @@ t.mostrar_relogio("10:00", "25°")
 check('relógio: topmost desligado', t._topmost_projecao is False)
 check('relógio: -topmost=False aplicado',
       ('-topmost', False) in t.root.attrs, str(t.root.attrs))
+
+# 8) ocultar só a temperatura: a hora continua sendo desenhada
+t = Stub(oculto=False)
+t.mostrar_relogio("10:00", "25°")
+t.definir_temperatura_oculta(True)
+check('só temperatura: flag ligado', t._temperatura_oculta is True)
+check('só temperatura: temperatura escondida',
+      ultimo('TEMP').get('state') == 'hidden', str(ultimo('TEMP')))
+check('só temperatura: hora intacta',
+      ultimo('HORA').get('text') == '10:00', str(ultimo('HORA')))
+t.mostrar_relogio("10:01", "25°")
+check('só temperatura: hora continua atualizando',
+      ultimo('HORA').get('text') == '10:01', str(ultimo('HORA')))
+check('só temperatura: não redesenha a temperatura',
+      ultimo('TEMP').get('text') in (None, ''), str(ultimo('TEMP')))
+
+# 9) mostrar a temperatura de novo volta a desenhá-la
+t.definir_temperatura_oculta(False)
+t.mostrar_relogio("10:01", "25°")
+check('só temperatura: flag desligado', t._temperatura_oculta is False)
+check('só temperatura: temperatura redesenhada',
+      ultimo('TEMP').get('text') == '25°', str(ultimo('TEMP')))
+
+# 10) com o relógio todo oculto, a temperatura continua escondida
+t = Stub(oculto=True, temp_oculta=False)
+t.mostrar_relogio("10:00", "25°")
+check('relógio oculto: temperatura continua escondida',
+      ultimo('TEMP').get('state') == 'hidden', str(ultimo('TEMP')))
+
+# 11) definir_temperatura_oculta durante projeção: não mexe no canvas
+t = Stub(oculto=False, mostrando_relogio=False)
+t.definir_temperatura_oculta(True)
+check('projetando: flag da temperatura ligado',
+      t._temperatura_oculta is True)
+check('projetando: canvas da temperatura intacto',
+      not t.canvas.chamadas, str(t.canvas.chamadas))
+
+# 12) telão morto: definir_temperatura_oculta não quebra
+t = Stub(oculto=False, vivo=False)
+t.definir_temperatura_oculta(True)
+check('telão morto: temperatura sem chamadas de canvas',
+      not t.canvas.chamadas, str(t.canvas.chamadas))
 
 print('\n' + ('TODOS OS CASOS PASSARAM' if not falhas else f'FALHAS: {falhas}'))
 sys.exit(1 if falhas else 0)

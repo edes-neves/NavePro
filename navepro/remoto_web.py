@@ -118,6 +118,8 @@ _REMOTO_CSS = """
                           overflow: visible; text-overflow: clip; }
   .item-servico .item-titulo { font-size: 15px; line-height: 1.4; }
   .item-servico .item-titulo .ordem { color: #f0c040; font-weight: 800; }
+  .item-servico .item-url { font-size: 12px; color: #58a6ff; line-height: 1.35;
+    margin: 2px 0 0; word-break: break-all; }
   .item-servico .item-meta { display: flex; flex-wrap: wrap; gap: 6px;
                              margin-top: 7px; }
   .item-servico .item-detalhe { color: #8b949e; font-size: 13px;
@@ -518,6 +520,10 @@ function carregarAnuncios() {
 
 // ── Serviço ──
 var SERVICO_SEL = null;   // {id, nome} do serviço aberto
+var YT_INFO_URL = '';     // URL cujas informações do YouTube já foram confirmadas
+var YT_INFO_PENDING = ''; // URL da consulta em andamento
+var YT_INFO_TOKEN = 0;    // invalida respostas atrasadas ao trocar a URL
+var YT_INFO_TIMER = null; // debounce da consulta ao yt-dlp
 var ITENS_SERVICO = [];   // itens do serviço aberto
 var ITEM_EDIT_ID = null;  // id em edição (null = novo item)
 var EXECUCAO = null;      // {servico, item, indice, titulo} do último executado
@@ -666,6 +672,12 @@ function carregarItensServico() {
         titulo.innerHTML = '<span class="ordem">' + (i + 1) + '.</span> ' +
           emojiTipo(it.tipo) + ' <b>' + esc(it.titulo) + '</b>';
         info.appendChild(titulo);
+        if (it.tipo === 'youtube' && it.youtube_url) {
+          var urlEl = document.createElement('div');
+          urlEl.className = 'item-url';
+          urlEl.textContent = it.youtube_url;
+          info.appendChild(urlEl);
+        }
         var meta = document.createElement('div');
         meta.className = 'item-meta';
         meta.appendChild(pill(rotuloTipo(it.tipo)));
@@ -743,10 +755,83 @@ function tipoItemMudou() {
   youtubeMudou();
 }
 
+function ehUrlYoutube(url) {
+  try {
+    var u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    var h = u.hostname.toLowerCase();
+    return h === 'youtu.be' || h === 'youtube.com' ||
+      h.endsWith('.youtube.com') || h === 'youtube-nocookie.com' ||
+      h.endsWith('.youtube-nocookie.com');
+  } catch (e) { return false; }
+}
+
+function agendarInfoYoutube(url) {
+  if (YT_INFO_TIMER) { clearTimeout(YT_INFO_TIMER); YT_INFO_TIMER = null; }
+  var abaixo = document.getElementById('item_titulo_url');
+  var titulo = document.getElementById('item_titulo');
+  abaixo.textContent = url || '';
+  if (!url || !ehUrlYoutube(url)) {
+    YT_INFO_TOKEN++;
+    YT_INFO_URL = '';
+    YT_INFO_PENDING = '';
+    titulo.value = '';
+    return;
+  }
+  if (url === YT_INFO_URL) return;
+  if (url === YT_INFO_PENDING) return;
+  // Título/duração de outra URL não podem ficar parecendo ser deste vídeo.
+  if (url !== YT_INFO_URL) {
+    titulo.value = '';
+    document.getElementById('item_duracao').value = '';
+  }
+  var token = ++YT_INFO_TOKEN;
+  YT_INFO_PENDING = url;
+  YT_INFO_TIMER = setTimeout(function() {
+    YT_INFO_TIMER = null;
+    apiGet('/api/remoto/youtube_info?url=' + encodeURIComponent(url))
+      .then(function(j) {
+        if (token !== YT_INFO_TOKEN) return;
+        YT_INFO_PENDING = '';
+        if (j && j.ok && j.titulo) {
+          YT_INFO_URL = url;
+          titulo.value = j.titulo;
+          document.getElementById('item_duracao').value =
+            j.duracao ? String(Math.round(j.duracao)) : '';
+        } else {
+          if (url !== YT_INFO_URL) titulo.value = '';
+          aviso((j && j.erro) ||
+                'Não foi possível obter o título do vídeo do YouTube.');
+        }
+      })
+      .catch(function() {
+        if (token !== YT_INFO_TOKEN) return;
+        YT_INFO_PENDING = '';
+        if (url !== YT_INFO_URL) titulo.value = '';
+        aviso('Não foi possível consultar o YouTube.');
+      });
+  }, 700);
+}
+
 function youtubeMudou() {
   var marcado = document.getElementById('item_youtube').checked;
+  var titulo = document.getElementById('item_titulo');
+  var abaixo = document.getElementById('item_titulo_url');
   document.getElementById('item_youtube_url').style.display =
     marcado ? 'block' : 'none';
+  titulo.readOnly = marcado;
+  titulo.placeholder = marcado ? 'Título capturado do YouTube'
+                               : 'Título (opcional)';
+  abaixo.style.display = marcado ? 'block' : 'none';
+  if (!marcado) {
+    YT_INFO_TOKEN++;
+    YT_INFO_URL = '';
+    if (YT_INFO_TIMER) { clearTimeout(YT_INFO_TIMER); YT_INFO_TIMER = null; }
+    abaixo.textContent = '';
+    return;
+  }
+  var url = document.getElementById('item_youtube_url').value.trim();
+  agendarInfoYoutube(url);
 }
 
 function carregarSelectsItem() {
@@ -805,9 +890,17 @@ function abrirFormItem(item) {
   // guardando a URL — o mesmo arranjo do editor do aplicativo.
   var ehYoutube = !!(item && item.tipo === 'youtube');
   document.getElementById('item_youtube').checked = ehYoutube;
-  document.getElementById('item_youtube_url').value =
-    (item && item.youtube_url) || '';
+  var yurl = (item && item.youtube_url) || '';
+  document.getElementById('item_youtube_url').value = yurl;
   if (ehYoutube) document.getElementById('item_tipo').value = 'video';
+  // Um item já salvo tem título confirmado para a URL; só consulta de novo
+  // se o título estiver vazio ou for a própria URL (itens antigos).
+  YT_INFO_TIMER && clearTimeout(YT_INFO_TIMER);
+  YT_INFO_TIMER = null;
+  YT_INFO_TOKEN++;
+  YT_INFO_PENDING = '';
+  var ytitulo = item ? String(item.titulo || '').trim() : '';
+  YT_INFO_URL = (ehYoutube && ytitulo && ytitulo !== yurl) ? yurl : '';
   tipoItemMudou();
   document.getElementById('serv_form').scrollIntoView({block: 'start'});
 }
@@ -833,9 +926,18 @@ function salvarItem() {
   // Vídeo do YouTube: guarda a URL em vez do arquivo (como no aplicativo).
   if (tipo === 'video' && document.getElementById('item_youtube').checked) {
     var yurl = document.getElementById('item_youtube_url').value.trim();
-    if (!yurl) { aviso('Informe a URL do v\u00eddeo do YouTube.'); return; }
+    if (!ehUrlYoutube(yurl)) {
+      aviso('URL inválida! Insira uma URL do YouTube');
+      return;
+    }
+    var ytitulo = document.getElementById('item_titulo').value.trim();
+    if (!ytitulo || YT_INFO_URL !== yurl) {
+      aviso('Aguarde a captura do título do vídeo do YouTube.');
+      return;
+    }
     dados.tipo = 'youtube';
     dados.youtube_url = yurl;
+    dados.titulo = ytitulo;
     dados.caminho_arquivo = '';
   }
   if (tipo === 'hino') {
@@ -1206,6 +1308,8 @@ PAGINA = """<!DOCTYPE html>
   <div class="card" id="serv_form" style="display:none">
     <h3 id="serv_form_titulo">Adicionar item</h3>
     <input id="item_titulo" placeholder="T&iacute;tulo (opcional)">
+    <div id="item_titulo_url" style="display:none;font-size:12px;color:#58a6ff;
+         margin:2px 0 4px;word-break:break-all"></div>
     <select id="item_tipo" onchange="tipoItemMudou()"></select>
     <input id="item_termo" placeholder="Buscar por n&uacute;mero/nome (opcional)">
     <div id="painel_hino" style="display:none">
@@ -1232,7 +1336,8 @@ PAGINA = """<!DOCTYPE html>
         <input type="checkbox" id="item_youtube" onchange="youtubeMudou()" style="width:auto">
         <span>V&iacute;deo do YouTube (usar URL)</span>
       </label>
-      <input id="item_youtube_url" placeholder="https://youtu.be/..." style="display:none">
+      <input id="item_youtube_url" placeholder="https://youtu.be/..."
+             oninput="youtubeMudou()" style="display:none">
     </div>
     <input id="item_duracao" inputmode="numeric" placeholder="Dura&ccedil;&atilde;o (segundos, opcional)">
     <div class="linha" style="margin-top:4px">

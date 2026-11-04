@@ -274,6 +274,26 @@ class ConfigRelogioMixin:
                  font=("Arial", 9), fg='#8b949e', bg='#0d1117',
                  justify='left', wraplength=620).pack(pady=(0, 6))
 
+        # ── Mostrar/ocultar somente a temperatura no telão (monitor 2) ──
+        tk.Label(tab_relogio,
+                 text="Mostrar ou esconder somente a temperatura no telão:",
+                 font=("Arial", 11, "bold"), fg='#58a6ff', bg='#0d1117',
+                 anchor='w').pack(fill='x')
+        self._btn_temperatura_telao = tk.Button(
+            tab_relogio, text="🌡️ Ocultar temperatura do telão",
+            font=("Arial", 12, "bold"), bg='#1f6feb', fg='white',
+            activebackground='#388bfd',
+            command=self.alternar_temperatura_telao, cursor='hand2',
+            padx=20, pady=5)
+        self._btn_temperatura_telao.pack(pady=(4, 4))
+        self._atualizar_botao_temperatura_telao()
+        tk.Label(tab_relogio,
+                 text="Oculta só a temperatura; o relógio continua no telão. "
+                      "Projeções e contagem/cronômetro não são afetados. "
+                      "A escolha vale só nesta sessão.",
+                 font=("Arial", 9), fg='#8b949e', bg='#0d1117',
+                 justify='left', wraplength=620).pack(pady=(0, 6))
+
         # ══════════════════════ Tab ⏱ Cronômetro ══════════════════════
         tab_crono = tk.Frame(notebook, bg='#0d1117')
         notebook.add(tab_crono, text="⏱ Cronômetro")

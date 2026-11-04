@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build.sh — Gera o NavePro.AppImage (PyInstaller + appimagetool)
 #
-# Uso:  ./build.sh <versão>        ex.: ./build.sh 2.1.4
+# Uso:  ./build.sh <versão>        ex.: ./build.sh 2.3.1
 # Saída: NavePro-<versão>.AppImage (executável, pronto para distribuir)
 #
 # Empacota com o NavePro.spec — a MESMA configuração usada no Windows

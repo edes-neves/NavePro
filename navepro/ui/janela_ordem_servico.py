@@ -7,12 +7,14 @@ herda deste mixin para montar a janela.
 from __future__ import annotations
 
 import os
+import threading
 import tkinter as tk
 import tkinter.messagebox
 import tkinter.simpledialog
 from datetime import datetime
 from tkinter import ttk
 
+from navepro.config import EXTENSOES_AUDIO, EXTENSOES_VIDEO
 from navepro.core.anuncios import (
     _buscar_anuncio_por_ref,
     _buscar_anuncio_por_termo,
@@ -21,14 +23,14 @@ from navepro.core.anuncios import (
 from navepro.core.banco import db_query
 from navepro.core.inicializacao import _sincronizar_uploads_midia
 from navepro.core.log import get_logger
-from navepro.core.mediaplayer import _eh_url
 from navepro.core.servicos import (
+    _SERVICO_PROXIMO_ITEM,
     _analisar_faixa_versiculos,
     _carregar_servicos_json,
     _faixa_versiculo_item,
+    _formatar_duracao_segundos,
     _migrar_servicos_do_banco,
     _proximo_id_servico_livre,
-    _reordenar_itens_servico,
     _salvar_servicos_json,
 )
 from navepro.core.slides import (
@@ -38,6 +40,7 @@ from navepro.core.slides import (
 )
 from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
 from navepro.core.widgets_arredondados import TkArredondado
+from navepro.core.youtube import _eh_url_youtube, _obter_info_youtube
 from navepro.ui.apoio import (
     _colar_texto_campo,
     _escolher_arquivos_usuario,
@@ -76,16 +79,110 @@ class JanelaOrdemServicoMixin:
         _centralizar_sobre(janela, self.root,
                            area=self._area_monitor_operador())
 
+        # A janela pode ser redimensionada/maximizada: a lista fica com todo
+        # o espaço extra e a barra de botões permanece sempre visível embaixo.
+        try:
+            janela.minsize(800, 540)
+            janela.resizable(True, True)
+        except tk.TclError:
+            pass
+
+        _estado_max = {"geo": "", "maximizada": False}
+
+        def _esta_maximizada() -> bool:
+            try:
+                if bool(janela.attributes('-zoomed')):
+                    return True
+            except (tk.TclError, ValueError):
+                pass
+            try:
+                return janela.state() == 'zoomed'
+            except tk.TclError:
+                return False
+
+        def _definir_maximizada(maximizar: bool) -> None:
+            if maximizar:
+                try:
+                    _estado_max["geo"] = janela.geometry()
+                    largura_antes = janela.winfo_width()
+                    altura_antes = janela.winfo_height()
+                except tk.TclError:
+                    _estado_max["geo"] = ""
+                    largura_antes = altura_antes = 0
+                try:
+                    janela.attributes('-zoomed', True)
+                except (tk.TclError, ValueError):
+                    try:
+                        janela.state('zoomed')
+                    except tk.TclError:
+                        area = self._area_monitor_operador()
+                        if area:
+                            x, y, w, h = area
+                            try:
+                                janela.geometry(f"{w}x{h}+{x}+{y}")
+                            except tk.TclError:
+                                pass
+
+                def _conferir_maximizacao():
+                    """Fallback p/ WMs que ignoram -zoomed silenciosamente."""
+                    if not _estado_max.get("maximizada"):
+                        return
+                    try:
+                        if (janela.winfo_width() > largura_antes + 20
+                                or janela.winfo_height() > altura_antes + 20):
+                            return
+                    except tk.TclError:
+                        return
+                    area = self._area_monitor_operador()
+                    if not area:
+                        return
+                    x, y, w, h = area
+                    if w <= largura_antes and h <= altura_antes:
+                        return
+                    try:
+                        janela.geometry(f"{w}x{h}+{x}+{y}")
+                    except tk.TclError:
+                        pass
+
+                try:
+                    janela.after(150, _conferir_maximizacao)
+                except tk.TclError:
+                    pass
+            else:
+                try:
+                    janela.attributes('-zoomed', False)
+                except (tk.TclError, ValueError):
+                    try:
+                        janela.state('normal')
+                    except tk.TclError:
+                        pass
+                if _estado_max.get("geo"):
+                    try:
+                        janela.geometry(str(_estado_max["geo"]))
+                    except tk.TclError:
+                        pass
+            _estado_max["maximizada"] = bool(maximizar)
+            try:
+                btn_max.configure(text="⛶ Restaurar" if maximizar
+                                  else "⛶ Maximizar")
+            except tk.TclError:
+                pass
+
+        def _alternar_maximizar() -> None:
+            _definir_maximizada(not _esta_maximizada())
+
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(2, weight=1)
 
         tk.Label(main, text="📋 Ordem de Serviço",
                  font=("Arial", 16, "bold"), fg='#f0c040', bg='#0d1117'
-                 ).pack(pady=(0, 10))
+                 ).grid(row=0, column=0, sticky='ew', pady=(0, 10))
 
         # ── Lista de serviços salvos ──
         serv_frame = tk.Frame(main, bg='#161b22')
-        serv_frame.pack(fill='x', pady=5, ipady=5)
+        serv_frame.grid(row=1, column=0, sticky='ew', pady=5, ipady=5)
 
         tk.Label(serv_frame, text="Serviço:", fg='#f0c040', bg='#161b22',
                  font=("Arial", 11, "bold")).pack(side='left', padx=8)
@@ -93,7 +190,17 @@ class JanelaOrdemServicoMixin:
         servico_var = tk.StringVar()
         combo_servico = ttk.Combobox(serv_frame, textvariable=servico_var,
                                       width=40, font=("Arial", 11), state='readonly')
+        # Mantém a StringVar viva enquanto o combobox existir; sem esta
+        # referência o garbage collector apaga a variável Tcl e o serviço
+        # selecionado some da tela (a lista continua carregada).
+        combo_servico._navepro_servico_var = servico_var
         combo_servico.pack(side='left', padx=5)
+        btn_max = tk.Button(
+            serv_frame, text="⛶ Maximizar", font=("Arial", 10, "bold"),
+            bg='#21262d', fg='#f0c040', activebackground='#30363d',
+            activeforeground='#f0c040', command=_alternar_maximizar,
+            cursor='hand2', padx=10, pady=3)
+        btn_max.pack(side='right', padx=8)
 
         servico_selecionado_id = [None]
 
@@ -134,18 +241,19 @@ class JanelaOrdemServicoMixin:
 
         # ── Itens do serviço (Treeview) ──
         tree_frame = tk.Frame(main, bg='#161b22')
-        tree_frame.pack(fill='both', expand=True, pady=5)
+        tree_frame.grid(row=2, column=0, sticky='nsew', pady=5)
 
         colunas = ("#", "Tipo", "Título", "Duração")
-        tree = ttk.Treeview(tree_frame, columns=colunas, show='headings', height=16)
+        tree = ttk.Treeview(tree_frame, columns=colunas, show='headings', height=10,
+                            style="OrdemServico.Treeview")
         tree.heading("#", text="#")
         tree.heading("Tipo", text="Tipo")
         tree.heading("Título", text="Título")
-        tree.heading("Duração", text="Duração (s)")
-        tree.column("#", width=40)
-        tree.column("Tipo", width=120)
-        tree.column("Título", width=350)
-        tree.column("Duração", width=100)
+        tree.heading("Duração", text="Duração")
+        tree.column("#", width=40, anchor='center', stretch=False)
+        tree.column("Tipo", width=120, stretch=False)
+        tree.column("Título", width=350, stretch=True)
+        tree.column("Duração", width=130, anchor='center', stretch=False)
 
         scroll_y = tk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=scroll_y.set)
@@ -159,6 +267,9 @@ class JanelaOrdemServicoMixin:
                         font=("Arial", 10, "bold"))
         style.map('Treeview', background=[('selected', '#6e40c9')],
                   foreground=[('selected', '#ffffff')])
+        # Espaçamento maior entre os itens (só nesta janela; as demais
+        # Treeviews continuam com a altura padrão).
+        style.configure("OrdemServico.Treeview", rowheight=32)
 
         # Escolha do operador na lista de itens: vale UMA única vez no
         # próximo clique em "Executar Serviço". Só é registrada por gestos
@@ -176,8 +287,251 @@ class JanelaOrdemServicoMixin:
             except (TypeError, ValueError):
                 pass
 
+        # ── Duração dos itens (ffprobe em segundo plano) ──
+        _duracao_cache: dict[str, float | None] = {}
+        _duracao_pendente: set[str] = set()
+        _linhas_path: dict[str, str] = {}
+        _textos_base: dict[str, str] = {}
+        _contagem: dict[str, str | None] = {"iid": None}
+        _timers: dict[str, str | None] = {"contagem": None}
+
+        def _extensao_midia(caminho: str | None) -> bool:
+            ext = os.path.splitext(caminho or "")[1].lower()
+            return ext in EXTENSOES_VIDEO or ext in EXTENSOES_AUDIO
+
+        def _caminho_item(it: dict) -> str | None:
+            """Resolve o arquivo/URL de mídia de um item da Ordem de Serviço."""
+            tipo = (it.get("tipo") or "").strip().lower()
+            if tipo == "youtube":
+                url = (it.get("youtube_url") or "").strip()
+                return url or None
+            caminho = (it.get("caminho_arquivo") or "").strip()
+            if caminho and os.path.isfile(caminho):
+                if _extensao_midia(caminho) or tipo in ("video", "audio", "sermao"):
+                    return caminho
+            ref = it.get("referencia_id")
+            if tipo in ("video", "audio") and ref is not None:
+                try:
+                    rows = db_query(
+                        "SELECT caminho_arquivo FROM midia "
+                        "WHERE id = ? AND ativo = 1", (ref,))
+                except Exception:
+                    rows = None
+                if rows:
+                    caminho = (rows[0].get("caminho_arquivo") or "").strip()
+                    if caminho:
+                        return caminho
+            if tipo == "anuncio" and ref is not None:
+                try:
+                    anuncio = _buscar_anuncio_por_ref(ref) or {}
+                except Exception:
+                    anuncio = {}
+                caminho = (anuncio.get("arquivo_midia") or "").strip()
+                if caminho and _extensao_midia(caminho):
+                    return caminho
+            return caminho or None
+
+        def _texto_titulo_item(it: dict, indice: int) -> str:
+            """Título da lista; no YouTube a URL aparece na linha de baixo."""
+            titulo = (it.get("titulo_custom") or "").strip() or f"Item {indice}"
+            if (it.get("tipo") or "").strip().lower() != "youtube":
+                return titulo
+            url = (it.get("youtube_url") or "").strip()
+            if url and url != titulo:
+                return f"{titulo}\n{url}"
+            return url or titulo
+
+        def _texto_duracao_item(it: dict, caminho: str | None = None) -> str:
+            if caminho is None:
+                caminho = _caminho_item(it)
+            if caminho and caminho in _duracao_cache:
+                duracao = _duracao_cache[caminho]
+                if duracao:
+                    return _formatar_duracao_segundos(duracao)
+            estimado = it.get("duracao_estimada_segundos") or 0
+            try:
+                estimado = float(estimado)
+            except (TypeError, ValueError):
+                estimado = 0.0
+            if estimado > 0:
+                return _formatar_duracao_segundos(estimado)
+            return "—"
+
+        def _persistir_duracao(caminho: str, duracao) -> None:
+            """Guarda a duração real no item para não depender do ffprobe sempre."""
+            if not caminho or not duracao:
+                return
+            serv = _servico_atual()
+            if not serv:
+                return
+            try:
+                valor = int(round(float(duracao)))
+            except (TypeError, ValueError):
+                return
+            alterou = False
+            for it in serv.get("itens") or []:
+                if _linhas_path.get(str(it.get("id"))) != caminho:
+                    continue
+                if it.get("duracao_estimada_segundos") != valor:
+                    it["duracao_estimada_segundos"] = valor
+                    alterou = True
+            if alterou and not _salvar_servicos_json(dados):
+                log.debug("Não foi possível guardar a duração em servicos.json.")
+
+        def _pedir_duracao(caminho: str) -> None:
+            """Consulta a duração real sem travar a interface.
+
+            Arquivos locais usam o ffprobe do player; URLs do YouTube usam
+            os metadados do yt-dlp (sem baixar o vídeo).
+            """
+            if not caminho or caminho in _duracao_cache or caminho in _duracao_pendente:
+                return
+            player = getattr(self, "player", None)
+            eh_youtube = _eh_url_youtube(caminho)
+            if not eh_youtube and not os.path.isfile(caminho):
+                return
+            if not eh_youtube and player is None:
+                return
+            _duracao_pendente.add(caminho)
+
+            def _trabalho():
+                if eh_youtube:
+                    info = _obter_info_youtube(caminho)
+                    duracao = (info or {}).get("duracao") or None
+                else:
+                    duracao = player._obter_duracao_arquivo(caminho)
+
+                def _aplicar():
+                    _duracao_pendente.discard(caminho)
+                    _duracao_cache[caminho] = duracao
+                    if not duracao or not janela.winfo_exists():
+                        return
+                    _persistir_duracao(caminho, duracao)
+                    texto = _formatar_duracao_segundos(duracao)
+                    for iid, path in list(_linhas_path.items()):
+                        if path != caminho:
+                            continue
+                        _textos_base[iid] = texto
+                        if _contagem["iid"] == iid:
+                            continue
+                        try:
+                            if tree.exists(iid):
+                                tree.set(iid, "Duração", texto)
+                        except tk.TclError:
+                            pass
+
+                try:
+                    self.root.after(0, _aplicar)
+                except (tk.TclError, RuntimeError):
+                    pass
+
+            threading.Thread(target=_trabalho, daemon=True,
+                             name="navepro-duracao-item").start()
+
+        # ── Indicador animado de inserção (drag & drop) ──
+        _cor_ind = "#58a6ff"
+        _cor_ind_brilho = "#79c0ff"
+        _cor_ind_fundo = "#1f6feb"
+        _ind: dict[str, object] = {
+            "glow": None, "line": None, "dot": None, "dot_oval": None,
+            "anim": None, "visivel": False, "fase": False}
+
+        def _pulsar_indicador():
+            _ind["anim"] = None
+            line = _ind.get("line")
+            if line is None or not _ind.get("visivel"):
+                return
+            fase = not bool(_ind.get("fase"))
+            _ind["fase"] = fase
+            try:
+                line.configure(bg=_cor_ind_brilho if fase else _cor_ind)
+                dot = _ind.get("dot")
+                oval = _ind.get("dot_oval")
+                if dot is not None and oval is not None:
+                    if fase:
+                        dot.coords(oval, 4, 4, 14, 14)
+                        dot.itemconfigure(oval, fill=_cor_ind_brilho)
+                    else:
+                        dot.coords(oval, 6, 6, 12, 12)
+                        dot.itemconfigure(oval, fill=_cor_ind_fundo)
+                _ind["anim"] = janela.after(280, _pulsar_indicador)
+            except tk.TclError:
+                return
+
+        def _mostrar_indicador(y: int) -> None:
+            if _ind.get("line") is None:
+                try:
+                    _ind["glow"] = tk.Frame(tree, bg=_cor_ind_fundo, height=9)
+                    _ind["line"] = tk.Frame(tree, bg=_cor_ind, height=3)
+                    dot = tk.Canvas(tree, width=18, height=18,
+                                    highlightthickness=0, bd=0)
+                    _ind["dot"] = dot
+                    _ind["dot_oval"] = dot.create_oval(
+                        6, 6, 12, 12, outline=_cor_ind,
+                        fill=_cor_ind_fundo, width=2)
+                except tk.TclError:
+                    return
+            _ind["visivel"] = True
+            y = max(0, int(y))
+            try:
+                fundo = ttk.Style().lookup("Treeview", "background") or "#21262d"
+                _ind["dot"].configure(bg=fundo)
+                _ind["glow"].place(x=0, y=max(0, y - 3), relwidth=1, height=9)
+                _ind["line"].place(x=0, y=y, relwidth=1, height=3)
+                _ind["dot"].place(x=2, y=max(0, y - 8), width=18, height=18)
+                _ind["glow"].lift()
+                _ind["line"].lift()
+                _ind["dot"].lift()
+            except tk.TclError:
+                return
+            if _ind.get("anim") is None:
+                _pulsar_indicador()
+
+        def _esconder_indicador() -> None:
+            _ind["visivel"] = False
+            anim = _ind.get("anim")
+            if anim is not None:
+                try:
+                    janela.after_cancel(anim)
+                except tk.TclError:
+                    pass
+                _ind["anim"] = None
+            for chave in ("glow", "line", "dot"):
+                widget = _ind.get(chave)
+                if widget is not None:
+                    try:
+                        widget.place_forget()
+                    except tk.TclError:
+                        pass
+
         # ── Drag & drop para reordenar itens dentro da tree ──
-        _drag_state: dict[str, str | None] = {"origem": None}
+        _drag_state: dict[str, object] = {
+            "origem": None, "press_y": None, "dragging": False, "pos": None}
+
+        def _calcular_posicao(y: int):
+            """Devolve (posição de inserção, y da linha, iid alvo) ou None."""
+            linhas = list(tree.get_children())
+            if not linhas:
+                return None
+            alvo = tree.identify_row(y)
+            if alvo:
+                bbox = tree.bbox(alvo)
+                if not bbox:
+                    return None
+                _x, topo, _w, altura = bbox
+                indice = linhas.index(alvo)
+                if y < topo + altura / 2:
+                    return indice, topo, alvo
+                return indice + 1, topo + altura - 1, alvo
+            bbox_primeiro = tree.bbox(linhas[0])
+            bbox_ultimo = tree.bbox(linhas[-1])
+            if not bbox_primeiro or not bbox_ultimo:
+                return None
+            if y < bbox_primeiro[1]:
+                return 0, bbox_primeiro[1], None
+            if y > bbox_ultimo[1] + bbox_ultimo[3]:
+                return len(linhas), bbox_ultimo[1] + bbox_ultimo[3] - 1, None
+            return None
 
         def _on_tree_button_press(event):
             if tree.identify_region(event.x, event.y) in ("heading", "separator"):
@@ -186,28 +540,101 @@ class JanelaOrdemServicoMixin:
             if not item:
                 return
             _registrar_escolha(item)
-            _drag_state["origem"] = item
+            _drag_state.update(origem=item, press_y=event.y,
+                               dragging=False, pos=None)
+
+        def _on_tree_motion(event):
+            origem = _drag_state.get("origem")
+            if not origem:
+                return
+            press_y = _drag_state.get("press_y")
+            if press_y is not None and not _drag_state.get("dragging"):
+                if abs(event.y - press_y) < 5:
+                    return
+                _drag_state["dragging"] = True
+                try:
+                    tree.configure(cursor="fleur")
+                except tk.TclError:
+                    pass
+            if tree.identify_region(event.x, event.y) == "heading":
+                _drag_state["pos"] = None
+                _esconder_indicador()
+                return
+            alvo = _calcular_posicao(event.y)
+            if alvo is None:
+                _drag_state["pos"] = None
+                _esconder_indicador()
+                return
+            pos, linha_y, _alvo = alvo
+            _drag_state["pos"] = pos
+            _mostrar_indicador(linha_y)
+            try:
+                if event.y < 28:
+                    tree.yview_scroll(-1, "units")
+                elif event.y > tree.winfo_height() - 28:
+                    tree.yview_scroll(1, "units")
+            except tk.TclError:
+                pass
+
+        def _reordenar_com_posicao(serv: dict, origem: str, pos: int | None):
+            if pos is None:
+                return None
+            itens = list(serv.get("itens") or [])
+            idx_orig = next((i for i, it in enumerate(itens)
+                             if str(it.get("id")) == origem), None)
+            if idx_orig is None:
+                return None
+            if pos > idx_orig:
+                pos -= 1
+            pos = max(0, min(pos, len(itens) - 1))
+            if pos == idx_orig:
+                return None
+            novo = list(itens)
+            item = novo.pop(idx_orig)
+            novo.insert(pos, item)
+            return novo
 
         def _on_tree_button_release(event):
             origem = _drag_state.get("origem")
-            _drag_state["origem"] = None
-            if not origem:
+            pos = _drag_state.get("pos")
+            arrastou = bool(_drag_state.get("dragging"))
+            _drag_state.update(origem=None, press_y=None,
+                               dragging=False, pos=None)
+            _esconder_indicador()
+            try:
+                tree.configure(cursor="")
+            except tk.TclError:
+                pass
+            if not origem or not arrastou:
                 return
-            destino = tree.identify_row(event.y)
             serv = _servico_atual()
-            if not serv or not destino or destino == origem:
+            if not serv:
                 return
-            itens = list(serv.get("itens") or [])
-            novo = _reordenar_itens_servico(itens, int(origem), int(destino))
-            if novo != itens:
-                serv["itens"] = novo
-                if _salvar_servicos_json(dados):
-                    _carregar_itens()
-                    tree.selection_set(destino)
-                    tree.focus(destino)
+            novo = _reordenar_com_posicao(serv, str(origem), pos)
+            if novo is None:
+                return
+            itens_antigos = serv.get("itens")
+            serv["itens"] = novo
+            if not _salvar_servicos_json(dados):
+                serv["itens"] = itens_antigos
+                log.warning("Não foi possível salvar a reordenação por arrastar.")
+                return
+            _carregar_itens()
+            if tree.exists(str(origem)):
+                tree.selection_set(str(origem))
+                tree.focus(str(origem))
+                tree.see(str(origem))
 
         tree.bind("<ButtonPress-1>", _on_tree_button_press)
+        tree.bind("<B1-Motion>", _on_tree_motion)
         tree.bind("<ButtonRelease-1>", _on_tree_button_release)
+
+        def _on_tree_leave(_event=None):
+            _drag_state["pos"] = None
+            _esconder_indicador()
+
+        tree.bind("<Leave>", _on_tree_leave)
+        janela.bind("<Escape>", _on_tree_leave, add="+")
 
         def _on_tree_double_click(event):
             if tree.identify_region(event.x, event.y) == "heading":
@@ -289,23 +716,161 @@ class JanelaOrdemServicoMixin:
         def _carregar_itens():
             for item in tree.get_children():
                 tree.delete(item)
+            _linhas_path.clear()
+            _textos_base.clear()
+            _contagem["iid"] = None
+            _esconder_indicador()
             serv = _servico_atual()
             if not serv:
                 return
             itens = list(serv.get("itens") or [])
+            # A URL do YouTube ocupa a segunda linha do título. Só nesse
+            # caso as linhas ficam mais altas; serviços sem YouTube mantêm
+            # o espaçamento compacto.
+            tem_youtube = any((it.get("tipo") or "").strip().lower() == "youtube"
+                              for it in itens)
+            try:
+                style.configure("OrdemServico.Treeview",
+                                rowheight=48 if tem_youtube else 32)
+            except tk.TclError:
+                pass
             for i, it in enumerate(itens):
                 tipo = it.get("tipo") or "slide"
                 tipo_emoji = {"hino": "📖", "versiculo": "✝️", "video": "🎬",
                               "audio": "🎵", "slide": "📄", "anuncio": "📢",
                               "sermao": "🎤", "youtube": "▶️"}.get(tipo, "📁")
-                tree.insert("", tk.END, iid=str(it.get("id")),
+                iid = str(it.get("id"))
+                caminho = _caminho_item(it)
+                texto = _texto_duracao_item(it, caminho)
+                tree.insert("", tk.END, iid=iid,
                             values=(i + 1, f"{tipo_emoji} {tipo.title()}",
-                                    it.get("titulo_custom") or f"Item {i+1}",
-                                    it.get("duracao_estimada_segundos") or 0))
+                                    _texto_titulo_item(it, i + 1),
+                                    texto))
+                _textos_base[iid] = texto
+                if caminho:
+                    _linhas_path[iid] = caminho
+                    if _eh_url_youtube(caminho):
+                        # Só consulta a rede se o item antigo ainda não tem a
+                        # duração capturada do YouTube.
+                        if not (it.get("duracao_estimada_segundos") or 0):
+                            _pedir_duracao(caminho)
+                    elif _extensao_midia(caminho) and os.path.isfile(caminho):
+                        _pedir_duracao(caminho)
+
+        def _item_em_reproducao():
+            """Item da lista que está tocando agora (ou None)."""
+            serv = _servico_atual()
+            if not serv:
+                return None
+            itens = list(serv.get("itens") or [])
+            chave = serv.get("id") or serv.get("nome") or "?"
+            prox = _SERVICO_PROXIMO_ITEM.get(chave)
+            if prox is None or prox <= 0 or prox > len(itens):
+                return None
+            item = itens[prox - 1]
+            iid = str(item.get("id"))
+            caminho = _linhas_path.get(iid) or _caminho_item(item)
+            player = getattr(self, "player", None)
+            if not caminho or player is None:
+                return None
+            if list(getattr(player, "playlist", None) or []) != [caminho]:
+                return None
+            return item, iid, caminho
+
+        def _restaurar_duracao(iid: str | None) -> None:
+            if not iid:
+                return
+            texto = _textos_base.get(iid)
+            if texto is None:
+                return
+            try:
+                if tree.exists(iid):
+                    tree.set(iid, "Duração", texto)
+            except tk.TclError:
+                pass
+
+        def _atualizar_contagem() -> None:
+            player = getattr(self, "player", None)
+            alvo = _item_em_reproducao() if player is not None else None
+            if alvo is None:
+                _restaurar_duracao(_contagem["iid"])
+                _contagem["iid"] = None
+                return
+            _item, iid, caminho = alvo
+            if not tree.exists(iid):
+                _contagem["iid"] = None
+                return
+            duracao = getattr(player, "duracao_total", None)
+            if not duracao:
+                duracao = _duracao_cache.get(caminho)
+            tocando = bool(getattr(player, "is_playing", False))
+            pausado = bool(getattr(player, "is_paused", False))
+            if not duracao or not tocando:
+                _restaurar_duracao(_contagem["iid"])
+                _contagem["iid"] = None
+                return
+            # Guarda a duração real conhecida para as próximas aberturas.
+            if caminho not in _duracao_cache:
+                _duracao_cache[caminho] = float(duracao)
+                _persistir_duracao(caminho, duracao)
+                texto = _formatar_duracao_segundos(duracao)
+                for outro_iid, path in list(_linhas_path.items()):
+                    if path == caminho:
+                        _textos_base[outro_iid] = texto
+                        if outro_iid != iid:
+                            try:
+                                if tree.exists(outro_iid):
+                                    tree.set(outro_iid, "Duração", texto)
+                            except tk.TclError:
+                                pass
+            if _contagem["iid"] and _contagem["iid"] != iid:
+                _restaurar_duracao(_contagem["iid"])
+            restante = float(duracao)
+            try:
+                restante -= float(player.obter_tempo_decorrido())
+            except (TypeError, ValueError):
+                pass
+            restante = max(0.0, restante)
+            icone = "⏸" if pausado else "⏳"
+            try:
+                tree.set(iid, "Duração",
+                         f"{icone} {_formatar_duracao_segundos(restante)}")
+            except tk.TclError:
+                return
+            _contagem["iid"] = iid
+
+        def _tick_contagem():
+            _timers["contagem"] = None
+            if not janela.winfo_exists():
+                return
+            try:
+                _atualizar_contagem()
+            except Exception as exc:
+                log.debug("Falha ao atualizar a contagem da Ordem de Serviço: %s", exc)
+            try:
+                _timers["contagem"] = janela.after(500, _tick_contagem)
+            except tk.TclError:
+                pass
+
+        def _ao_destruir_janela(event):
+            if event.widget is not janela:
+                return
+            for chave in ("contagem",):
+                timer = _timers.get(chave)
+                if timer is not None:
+                    try:
+                        janela.after_cancel(timer)
+                    except tk.TclError:
+                        pass
+                    _timers[chave] = None
+            _esconder_indicador()
+
+        janela.bind("<Destroy>", _ao_destruir_janela, add="+")
+        _tick_contagem()
 
         # ── Botões ──
         btn_frame = tk.Frame(main, bg='#0d1117')
-        btn_frame.pack(fill='x', pady=5)
+        btn_frame.grid(row=3, column=0, sticky='ew', pady=5)
 
         def _novo_servico():
             nome = tkinter.simpledialog.askstring("Novo Serviço",
@@ -408,9 +973,15 @@ class JanelaOrdemServicoMixin:
             tk.Label(add_main, text="Título:", fg='#f0c040', bg='#0d1117',
                      font=("Arial", 11, "bold")).pack(anchor='w', pady=(8, 0))
             titulo_entry = tk.Entry(add_main, font=("Arial", 11), bg='#21262d',
-                                    fg='#f0c040', insertbackground='#f0c040')
+                                    fg='#f0c040', insertbackground='#f0c040',
+                                    readonlybackground='#161b22')
             titulo_entry.insert(0, (item_edit or {}).get("titulo_custom") or "")
             titulo_entry.pack(fill='x', ipady=3, pady=2)
+            # Quando o item é um vídeo do YouTube, a URL é exibida aqui,
+            # logo abaixo do título capturado automaticamente.
+            youtube_titulo_url_lbl = tk.Label(
+                add_main, text="", fg='#58a6ff', bg='#0d1117',
+                font=("Arial", 9), anchor='w', justify='left', wraplength=660)
 
             tk.Label(add_main, text="Buscar (nº ou nome do hino/mídia/anúncio):", fg='#8b949e',
                      bg='#0d1117', font=("Arial", 9)).pack(anchor='w')
@@ -837,12 +1408,151 @@ class JanelaOrdemServicoMixin:
                 youtube_url_entry,
                 [("📋 Colar", lambda: _colar_texto_campo(youtube_url_entry))])
 
+            _yt_url_inicial = youtube_url_var.get().strip()
+            _yt_titulo_inicial = ((item_edit or {}).get("titulo_custom")
+                                  or "").strip()
+            if _yt_titulo_inicial == _yt_url_inicial:
+                _yt_titulo_inicial = ""
+            _yt_info: dict[str, object] = {
+                "url": _yt_url_inicial if youtube_var.get() else "",
+                "titulo": _yt_titulo_inicial if youtube_var.get() else "",
+                "duracao": int((item_edit or {}).get(
+                    "duracao_estimada_segundos") or 0) if youtube_var.get() else 0,
+                "token": 0, "timer": None, "pendente": False,
+                "pendente_url": ""}
+
+            def _aplicar_estado_titulo_youtube():
+                """No YouTube o título é capturado; não pode ser digitado."""
+                try:
+                    if youtube_var.get():
+                        titulo_entry.configure(state='readonly')
+                    else:
+                        titulo_entry.configure(state='normal')
+                except tk.TclError:
+                    pass
+
+            def _atualizar_url_abaixo_titulo():
+                url = youtube_url_var.get().strip()
+                try:
+                    if youtube_var.get() and url:
+                        youtube_titulo_url_lbl.config(text=url)
+                        youtube_titulo_url_lbl.pack(
+                            fill='x', pady=(0, 2), after=titulo_entry)
+                    else:
+                        youtube_titulo_url_lbl.pack_forget()
+                except tk.TclError:
+                    pass
+
+            def _definir_titulo_youtube(texto: str):
+                try:
+                    titulo_entry.configure(state='normal')
+                    titulo_entry.delete(0, tk.END)
+                    titulo_entry.insert(0, texto)
+                except tk.TclError:
+                    pass
+                _aplicar_estado_titulo_youtube()
+
+            def _aplicar_info_youtube(info, url: str, token: int):
+                if token != _yt_info.get("token"):
+                    return
+                try:
+                    if not add_win.winfo_exists():
+                        return
+                except tk.TclError:
+                    return
+                _yt_info["pendente"] = False
+                _yt_info["pendente_url"] = ""
+                if not info or not info.get("titulo"):
+                    # Não deixa um título antigo parecendo ser da URL nova.
+                    if url != _yt_info.get("url"):
+                        _definir_titulo_youtube("")
+                    return
+                _yt_info["url"] = url
+                _yt_info["titulo"] = str(info.get("titulo") or "")
+                try:
+                    _yt_info["duracao"] = int(round(float(info.get("duracao") or 0)))
+                except (TypeError, ValueError):
+                    _yt_info["duracao"] = 0
+                _definir_titulo_youtube(str(_yt_info["titulo"]))
+                try:
+                    dur_entry.delete(0, tk.END)
+                    if int(_yt_info["duracao"]) > 0:
+                        dur_entry.insert(0, str(_yt_info["duracao"]))
+                except tk.TclError:
+                    pass
+
+            def _iniciar_info_youtube(url: str, token: int):
+                def _trabalho():
+                    info = _obter_info_youtube(url)
+                    try:
+                        self.root.after(
+                            0, lambda: _aplicar_info_youtube(info, url, token))
+                    except (tk.TclError, RuntimeError):
+                        pass
+
+                threading.Thread(target=_trabalho, daemon=True,
+                                 name="navepro-youtube-info").start()
+
+            def _agendar_info_youtube(*_args):
+                _atualizar_url_abaixo_titulo()
+                _aplicar_estado_titulo_youtube()
+                timer = _yt_info.get("timer")
+                if timer is not None:
+                    try:
+                        add_win.after_cancel(timer)
+                    except tk.TclError:
+                        pass
+                    _yt_info["timer"] = None
+                url = youtube_url_var.get().strip()
+                if not youtube_var.get() or not url or not _eh_url_youtube(url):
+                    _yt_info["token"] = int(_yt_info.get("token") or 0) + 1
+                    _yt_info["pendente"] = False
+                    _yt_info["pendente_url"] = ""
+                    if not youtube_var.get() or url != _yt_info.get("url"):
+                        _definir_titulo_youtube("")
+                    return
+                if _yt_info.get("url") == url and _yt_info.get("titulo"):
+                    return
+                if (_yt_info.get("pendente")
+                        and _yt_info.get("pendente_url") == url):
+                    return
+                # Invalida qualquer consulta antiga antes de agendar a nova.
+                _yt_info["token"] = int(_yt_info.get("token") or 0) + 1
+                token = int(_yt_info["token"])
+                if url != _yt_info.get("url"):
+                    _definir_titulo_youtube("")
+
+                def _disparar():
+                    _yt_info["timer"] = None
+                    if token != _yt_info.get("token"):
+                        return
+                    try:
+                        if not add_win.winfo_exists():
+                            return
+                    except tk.TclError:
+                        return
+                    if youtube_url_var.get().strip() != url:
+                        return
+                    _yt_info["pendente"] = True
+                    _yt_info["pendente_url"] = url
+                    _iniciar_info_youtube(url, token)
+
+                try:
+                    _yt_info["timer"] = add_win.after(700, _disparar)
+                except tk.TclError:
+                    pass
+
             def _atualizar_youtube():
                 if youtube_var.get():
                     youtube_url_row.pack(fill='x', pady=(2, 0))
                 else:
                     youtube_url_row.pack_forget()
+                _agendar_info_youtube()
 
+            youtube_url_var.trace_add(
+                "write", lambda *a: _agendar_info_youtube())
+            youtube_var.trace_add(
+                "write", lambda *a: _agendar_info_youtube())
             _atualizar_youtube()
 
             # A janela é posicionada UMA única vez, na abertura, já
@@ -912,17 +1622,53 @@ class JanelaOrdemServicoMixin:
                 caminho_arquivo = arquivo_path_var.get().strip()
                 # Caixinha "YouTube": quando marcada, o item vira um vídeo do
                 # YouTube e guarda a URL (em vez de um arquivo em disco).
+                # O título (e a duração) vêm do próprio vídeo, nunca do campo
+                # digitado pelo operador.
                 youtube_url = ""
                 if youtube_var.get():
                     youtube_url = youtube_url_var.get().strip()
-                    if not _eh_url(youtube_url):
+                    if not _eh_url_youtube(youtube_url):
                         tkinter.messagebox.showwarning(
-                            "YouTube",
-                            "Informe a URL do vídeo (começando com http:// "
-                            "ou https://).", parent=add_win)
+                            "URL inválida",
+                            "URL inválida! Insira uma URL do YouTube",
+                            parent=add_win)
                         return
                     tipo = "youtube"
                     caminho_arquivo = ""
+                    info = None
+                    if (_yt_info.get("url") == youtube_url
+                            and _yt_info.get("titulo")):
+                        info = {"titulo": _yt_info.get("titulo"),
+                                "duracao": _yt_info.get("duracao") or 0}
+                    else:
+                        try:
+                            add_win.configure(cursor="watch")
+                            add_win.update_idletasks()
+                        except tk.TclError:
+                            pass
+                        try:
+                            info = _obter_info_youtube(youtube_url)
+                        finally:
+                            try:
+                                add_win.configure(cursor="")
+                            except tk.TclError:
+                                pass
+                    if not info or not info.get("titulo"):
+                        tkinter.messagebox.showwarning(
+                            "YouTube",
+                            "Não foi possível obter o título do vídeo do "
+                            "YouTube. Verifique a URL, a conexão e o yt-dlp.",
+                            parent=add_win)
+                        return
+                    _yt_info["url"] = youtube_url
+                    _yt_info["titulo"] = str(info.get("titulo") or "")
+                    try:
+                        _yt_info["duracao"] = int(round(
+                            float(info.get("duracao") or 0)))
+                    except (TypeError, ValueError):
+                        _yt_info["duracao"] = 0
+                    titulo = str(_yt_info["titulo"])
+                    duracao = int(_yt_info["duracao"])
                 if tipo == "youtube" and not youtube_url:
                     # Caixinha desmarcada num item que era YouTube: evita
                     # salvar "youtube" sem URL (que ficaria sem mídia).
@@ -1185,39 +1931,91 @@ class JanelaOrdemServicoMixin:
                     tkinter.messagebox.showwarning(
                         "Executar", res.get('erro', ''), parent=janela)
 
-        tk.Button(btn_frame, text="➕ Novo Serviço", font=("Arial", 11, "bold"),
-                  bg='#238636', fg='white', activebackground='#2ea043',
-                  command=_novo_servico, cursor='hand2', padx=12, pady=4
-                  ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="✏️ Editar Serviço", font=("Arial", 11, "bold"),
-                  bg='#1f6feb', fg='white', activebackground='#388bfd',
-                  command=_editar_servico, cursor='hand2', padx=12, pady=4
-                  ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="🗑️ Excluir Item", font=("Arial", 11, "bold"),
-                  bg='#da3633', fg='white', activebackground='#f85149',
-                  command=_apagar_item_contexto, cursor='hand2', padx=12, pady=4
-                  ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="🔄 Transferir", font=("Arial", 11, "bold"),
-                  bg='#2f6f47', fg='white', activebackground='#3f8f57',
-                  command=lambda: self.janela_transferencia(janela),
-                  cursor='hand2', padx=12, pady=4
-                  ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="➕ Ad. Item", font=("Arial", 11, "bold"),
-                  bg='#1f6feb', fg='white', activebackground='#388bfd',
-                  command=lambda: _abrir_editor_item(), cursor='hand2', padx=12, pady=4
-                  ).pack(side='left', padx=3)
-        tk.Button(btn_frame, text="⬆️", font=("Arial", 11, "bold"),
-                  bg='#21262d', fg='#f0c040', activebackground='#30363d',
-                  command=lambda: _mover_item(-1), cursor='hand2', padx=8, pady=4
-                  ).pack(side='left', padx=2)
-        tk.Button(btn_frame, text="⬇️", font=("Arial", 11, "bold"),
-                  bg='#21262d', fg='#f0c040', activebackground='#30363d',
-                  command=lambda: _mover_item(1), cursor='hand2', padx=8, pady=4
-                  ).pack(side='left', padx=2)
-        tk.Button(btn_frame, text="▶️ Executar Serviço", font=("Arial", 11, "bold"),
-                  bg='#6e40c9', fg='#f0c040', activebackground='#8b5cf6',
-                  command=_executar_servico, cursor='hand2', padx=12, pady=4
-                  ).pack(side='right', padx=3)
+        btn_novo = tk.Button(
+            btn_frame, text="➕ Novo Serviço", font=("Arial", 11, "bold"),
+            bg='#238636', fg='white', activebackground='#2ea043',
+            command=_novo_servico, cursor='hand2', padx=12, pady=4)
+        btn_editar = tk.Button(
+            btn_frame, text="✏️ Editar Serviço", font=("Arial", 11, "bold"),
+            bg='#1f6feb', fg='white', activebackground='#388bfd',
+            command=_editar_servico, cursor='hand2', padx=12, pady=4)
+        btn_excluir = tk.Button(
+            btn_frame, text="🗑️ Excluir Item", font=("Arial", 11, "bold"),
+            bg='#da3633', fg='white', activebackground='#f85149',
+            command=_apagar_item_contexto, cursor='hand2', padx=12, pady=4)
+        btn_transferir = tk.Button(
+            btn_frame, text="🔄 Transferir", font=("Arial", 11, "bold"),
+            bg='#2f6f47', fg='white', activebackground='#3f8f57',
+            command=lambda: self.janela_transferencia(janela),
+            cursor='hand2', padx=12, pady=4)
+        btn_add = tk.Button(
+            btn_frame, text="➕ Ad. Item", font=("Arial", 11, "bold"),
+            bg='#1f6feb', fg='white', activebackground='#388bfd',
+            command=lambda: _abrir_editor_item(), cursor='hand2',
+            padx=12, pady=4)
+        btn_subir = tk.Button(
+            btn_frame, text="⬆️", font=("Arial", 11, "bold"),
+            bg='#21262d', fg='#f0c040', activebackground='#30363d',
+            command=lambda: _mover_item(-1), cursor='hand2', padx=8, pady=4)
+        btn_descer = tk.Button(
+            btn_frame, text="⬇️", font=("Arial", 11, "bold"),
+            bg='#21262d', fg='#f0c040', activebackground='#30363d',
+            command=lambda: _mover_item(1), cursor='hand2', padx=8, pady=4)
+        btn_exec = tk.Button(
+            btn_frame, text="▶️ Executar Serviço", font=("Arial", 11, "bold"),
+            bg='#6e40c9', fg='#f0c040', activebackground='#8b5cf6',
+            command=_executar_servico, cursor='hand2', padx=12, pady=4)
+
+        botoes_esq = [btn_novo, btn_editar, btn_excluir, btn_transferir,
+                      btn_add, btn_subir, btn_descer]
+        _layout_botoes = {"modo": None}
+
+        def _reorganizar_botoes(event=None):
+            """Uma linha quando cabe; duas quando a janela fica estreita."""
+            largura = btn_frame.winfo_width()
+            if largura <= 1:
+                largura = janela.winfo_width()
+            if largura <= 1:
+                return
+            necessario = sum(b.winfo_reqwidth() + 6 for b in botoes_esq)
+            necessario += btn_exec.winfo_reqwidth() + 24
+            modo = "linha" if largura >= necessario else "duas"
+            if _layout_botoes["modo"] == modo:
+                return
+            _layout_botoes["modo"] = modo
+            for b in botoes_esq + [btn_exec]:
+                b.grid_forget()
+            for c in range(len(botoes_esq) + 2):
+                btn_frame.columnconfigure(c, weight=0)
+            for r in range(2):
+                btn_frame.rowconfigure(r, weight=0)
+            if modo == "linha":
+                for col, b in enumerate(botoes_esq):
+                    b.grid(row=0, column=col, sticky='w', padx=2, pady=2)
+                spacer = len(botoes_esq)
+                btn_frame.columnconfigure(spacer, weight=1)
+                btn_exec.grid(row=0, column=spacer + 1, sticky='e',
+                              padx=(12, 2), pady=2)
+            else:
+                for col, b in enumerate(botoes_esq):
+                    b.grid(row=0, column=col, sticky='w', padx=2, pady=2)
+                btn_frame.columnconfigure(len(botoes_esq), weight=1)
+                btn_exec.grid(row=1, column=0,
+                              columnspan=len(botoes_esq) + 1,
+                              sticky='e', padx=2, pady=(0, 2))
+
+        btn_frame.bind("<Configure>", _reorganizar_botoes)
+        try:
+            janela.update_idletasks()
+        except tk.TclError:
+            pass
+        _reorganizar_botoes()
+
+        def _f11_maximizar(event=None):
+            _alternar_maximizar()
+            return "break"
+
+        janela.bind("<F11>", _f11_maximizar)
 
         # ── Navegação por teclado dos slides projetados (sem sair da janela) ──
         _slide_anterior, _slide_proximo, _parar_projecao = \

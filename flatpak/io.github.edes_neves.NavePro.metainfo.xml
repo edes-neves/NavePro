@@ -40,6 +40,17 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.3.1" date="2026-11-03">
+      <description>
+        <ul>
+          <li>Ordem de Serviço — YouTube: URL validada, título e duração capturados pelo yt-dlp, título readonly e URL abaixo do título no app e no controle remoto</li>
+          <li>Duração real formatada na lista e contagem regressiva durante a reprodução, com pausa/continuar; itens antigos consultam a duração em segundo plano</li>
+          <li>Janela da Ordem de Serviço responsiva: botões sempre visíveis, barra em uma ou duas linhas, maximizar/restaurar (F11) e reordenação por arrastar e soltar</li>
+          <li>Telão: nova opção para ocultar somente a temperatura, mantendo a hora; escolha válida apenas na sessão</li>
+          <li>Tema claro: contraste e hierarquia de cores ajustados, incluindo o campo de título readonly do YouTube e a lista de resultados</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.0" date="2026-11-02">
       <description>
         <ul>

@@ -25,7 +25,6 @@ from navepro.core.anuncios import (
 )
 from navepro.core.banco import db_query
 from navepro.core.log import get_logger
-from navepro.core.mediaplayer import _eh_url
 from navepro.core.paths import CONFIG_FILE
 from navepro.core.rede import _ip_da_rede
 from navepro.core.servicos import (
@@ -45,6 +44,7 @@ from navepro.core.slides import (
 )
 from navepro.core.textos import _numero_do_titulo
 from navepro.core.widgets_arredondados import TkArredondado
+from navepro.core.youtube import _eh_url_youtube
 from navepro.ui.apoio import _menu_contexto_campo
 
 log = get_logger("remoto")
@@ -782,11 +782,13 @@ class ControleRemotoMixin:
             if not titulo or _usou_titulo_como_busca:
                 titulo = m.get('nome_exibicao', '') or f'Item ({tipo.title()})'
         elif tipo == 'youtube':
-            if not _eh_url(youtube_url):
+            if not _eh_url_youtube(youtube_url):
                 return (False,
-                        'Informe a URL do vídeo (começando com http:// ou '
-                        'https://).', {})
+                        'URL inválida! Insira uma URL do YouTube', {})
             caminho_arquivo = ''
+            # O formulário do celular captura o título pelo endpoint
+            # /api/remoto/youtube_info e o envia em `titulo`; se ele faltar
+            # (cliente antigo), a URL evita um item sem rótulo.
             if not titulo:
                 titulo = youtube_url or f'Item ({tipo.title()})'
         elif tipo == 'sermao':

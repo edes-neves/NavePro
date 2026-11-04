@@ -297,6 +297,25 @@ def _reordenar_itens_servico(itens: list[dict], id_origem: int, id_destino: int)
     return nova
 
 
+def _formatar_duracao_segundos(segundos: float | int | None) -> str:
+    """Formata segundos como ``m:ss`` ou ``h:mm:ss`` (``—`` se inválido).
+
+    Usado na coluna "Duração" da Ordem de Serviço e na contagem regressiva
+    durante a reprodução.
+    """
+    try:
+        total = int(round(float(segundos)))
+    except (TypeError, ValueError):
+        return "—"
+    if total < 0:
+        total = 0
+    horas, resto = divmod(total, 3600)
+    minutos, seg = divmod(resto, 60)
+    if horas:
+        return f"{horas}:{minutos:02d}:{seg:02d}"
+    return f"{minutos}:{seg:02d}"
+
+
 def _extrair_texto_pdf(caminho: str) -> str | None:
     """Extrai o texto de um PDF usando pypdf (com fallback para pdftotext).
 

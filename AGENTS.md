@@ -53,13 +53,13 @@ ruff check .
 
 | Artefato | Comando | Obs. |
 |---|---|---|
-| AppImage | `./build.sh 2.1.4` | usa o `.venv`; exige Tk 8.6; gera `NavePro-2.1.4.AppImage` |
+| AppImage | `./build.sh 2.3.1` | usa o `.venv`; exige Tk 8.6; gera `NavePro-2.3.1.AppImage` |
 | .exe | `build-windows.bat` (só Windows) | usa o `NavePro.spec` |
 | Flatpak (bundle local) | `./build-flatpak.sh` | manifest: `flatpak/io.github.edes_neves.NavePro.yaml` |
 
 - `NavePro.spec` é a **fonte única** do PyInstaller para Linux e Windows.
   `NAVEPRO_CONSOLE=0/1` controla a janela de console; `NAVEPRO_ICON=img\Icon.ico` o ícone.
-- **Release 2.1.x+ (fluxo atual):** bump de `APP_VERSION` → `./build.sh <versão>`
+- **Release 2.3.x+ (fluxo atual):** bump de `APP_VERSION` → `./build.sh <versão>`
   → commit + `git tag v<versão>` → push de `main` + tag. O push da tag dispara o CI,
   que constrói/anexa `.exe` e `.flatpak` (x86_64 + aarch64) ao release e publica o
   repositório Flatpak no `gh-pages` (`edes-neves.github.io/NavePro`). O **AppImage**
@@ -115,6 +115,7 @@ navepro/
   core/transferencia.py  # exportação/importação portátil (.navepro, ZIP) com backup
   core/util_tk.py   # _centralizar_sobre, _normalizar_escala_tk
   core/widgets_arredondados.py  # BotaoArredondado/CampoArredondado + TkArredondado
+  core/youtube.py   # validação de URL e metadados (título/duração) via yt-dlp
   sorteio/          # subsistema de sorteio vendorado (janela embutida, sons, shim ctk)
 Biblias/, NHA/, HASD/     # bíblias XML/TXT e hinários OpenLyrics para importação
 tests/                     # suítes headless (ver acima)
@@ -137,6 +138,9 @@ icones/                    # PNGs dos botões (fallback; gerados por gerar_icone
 
 - **Tk `after()` devolve o id do timer como `str`.** Guardar sob chave `int` num Tk
   falso faz o `after_cancel` falhar em silêncio (bug de debounce da Bíblia).
+- **`StringVar` de `Combobox`/`Entry` precisa de referência viva.** Se a variável
+  só existir na closure de montagem, o garbage collector apaga a variável Tcl e o
+  campo aparece vazio; guarde-a no widget (ex.: `combo._navepro_var = var`).
 - **Toda leitura de arquivo em teste precisa de `encoding="utf-8"`** (senão usa
   cp1252 no Windows e quebra em qualquer acento).
 - **Logging:** use `navepro.core.log.get_logger()` (o app expõe `log` no nível do

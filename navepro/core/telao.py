@@ -143,6 +143,7 @@ class TelaoWindow:
         self._em_slides = False
         self._modo_extra: str | None = None
         self._relogio_oculto = False
+        self._temperatura_oculta = False
         self._mostrando_imagem = False
         self._mostrando_imagem_com_texto = False
         self._imagem_item = None
@@ -373,6 +374,9 @@ class TelaoWindow:
                 self._is_visible = True
             self._esconder_textos_relogio()
             return
+        if getattr(self, "_temperatura_oculta", False):
+            # Só a temperatura foi ocultada: o relógio continua normalmente.
+            temperatura = ""
         # Evita chamadas Tk desnecessárias se os valores não mudaram
         texto_mudou = texto != self._current_text
         temp_mudou = temperatura != self._current_temp
@@ -439,6 +443,25 @@ class TelaoWindow:
             return
         if self._relogio_oculto:
             self._esconder_textos_relogio()
+    def definir_temperatura_oculta(self, oculto: bool) -> None:
+        """Oculta ou mostra somente a temperatura no telão.
+
+        O relógio (hora) continua visível normalmente. Afeta apenas o modo
+        relógio: projeções e medidores não são interrompidos. Ao mostrar de
+        novo, quem chamou deve redesenhar via ``mostrar_relogio``.
+        """
+        self._temperatura_oculta = bool(oculto)
+        if not self._raiz_viva():
+            return
+        if not getattr(self, "mostrando_relogio", False):
+            return
+        if self._temperatura_oculta:
+            try:
+                self.canvas.itemconfig(
+                    self.temp_text, text="", state="hidden")
+            except tk.TclError:
+                return
+            self._current_temp = ""
     def _raiz_viva(self) -> bool:
         """True se o Tk do telão ainda existe (não foi fechado/destruído)."""
         try:
@@ -1682,6 +1705,15 @@ class TelaoWindow:
                 self._guardar_temp_para_restaurar()
             self._esconder_textos_relogio()
             return
+        if getattr(self, "_temperatura_oculta", False):
+            # Só a temperatura foi ocultada: desenha apenas a hora.
+            temperatura = ""
+            self._current_temp = ""
+            try:
+                self.canvas.itemconfig(
+                    self.temp_text, text="", state="hidden")
+            except tk.TclError:
+                return
         hora = datetime.datetime.now().strftime("%H:%M")
         self.canvas.itemconfig(self.overlay_text, text=hora, state="normal")
         self._current_text = hora

@@ -15,6 +15,7 @@ from navepro.config import APP_VERSION
 from navepro.core.icones import _carregar_emoji, _carregar_icone
 from navepro.core.log import get_logger
 from navepro.core.paths import _caminho_recurso
+from navepro.core.tema import COR_AREA_CONTROLES_CLARA
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _criar_faixa_secao, _marcar_area_cinza_clara
 
@@ -245,7 +246,8 @@ class PainelMixin:
         # ── Controles ──
         controls_frame = tk.Frame(main_frame, bg='#161b22')
         controls_frame.pack(fill='x', pady=(10, 0), ipady=8)
-        _marcar_area_cinza_clara(controls_frame, '#161b22')
+        _marcar_area_cinza_clara(
+            controls_frame, '#161b22', COR_AREA_CONTROLES_CLARA)
         _criar_faixa_secao(controls_frame, topo=True)
         # Guardado para o campo de resultados usar a mesma cor "por baixo dos
         # botões" no tema claro (ver _pintar_lista_cores).
@@ -330,7 +332,8 @@ class PainelMixin:
 
         # Espaçador flexível
         _espacador = tk.Frame(controls_frame, bg='#161b22')
-        _marcar_area_cinza_clara(_espacador, '#161b22')
+        _marcar_area_cinza_clara(
+            _espacador, '#161b22', COR_AREA_CONTROLES_CLARA)
         _espacador.pack(side='left', fill='x', expand=True)
 
         # Botão Sorteio (canto inferior direito, mesmo estilo pílula dos demais)

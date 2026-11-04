@@ -31,6 +31,7 @@ from navepro.core.mediaplayer import (  # noqa: E402
     _opcoes_telao_mpv,
 )
 from navepro.core.player import localizar_executavel, nome_pipe_mpv  # noqa: E402
+from navepro.core.youtube import _eh_url_youtube  # noqa: E402
 
 _FONTE = open(os.path.join(RAIZ, "navepro/core/mediaplayer.py"),
               encoding="utf-8").read()
@@ -216,21 +217,28 @@ checar("Flatpak enxerga o /usr/local/bin do host (yt-dlp oficial)",
 checar("sandbox também cobre /run/host/usr/bin (mpv do apt)",
        "/run/host/usr/bin" in player_mod._CAMINHOS_LINUX)
 
-# ── 7. Título do item YouTube não é trocado pela URL ──────────────────
-# No editor "Ad. Item", o título de cada tipo é resolvido a partir de uma
-# busca. Para o YouTube não há busca (a caixa "Buscar" fica vazia), então o
-# título digitado pelo operador precisa ser preservado — a URL é só a mídia,
-# quem executa o vídeo. Antes, com a busca vazia, `_usou_titulo_como_busca`
-# virava True e o título era sobreescrito pela URL.
+# ── 7. Título/URL/duração do item YouTube no editor ───────────────────
+# No editor "Ad. Item" o título do YouTube é capturado do próprio vídeo
+# (yt-dlp), o campo fica read-only, a URL aparece logo abaixo do título e a
+# duração também vem dos metadados. A lista preenche a coluna "Duração" de
+# itens antigos consultando o yt-dlp em segundo plano.
 _fonte_app = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
 _fonte_os = open(os.path.join(RAIZ, "navepro", "ui", "janela_ordem_servico.py"),
                  encoding="utf-8").read()
-_bloco_youtube = _fonte_os.split('elif tipo == "youtube":', 1)[1]
-_bloco_youtube = _bloco_youtube.split("elif ", 1)[0]
-checar("título do YouTube só cai para a URL quando está vazio",
-       "if not titulo:" in _bloco_youtube)
-checar("título do YouTube não usa mais a regra de busca (_usou_titulo_como_busca)",
-       "_usou_titulo_como_busca" not in _bloco_youtube)
+checar("título do YouTube é capturado pelo yt-dlp no salvamento",
+       "_obter_info_youtube(youtube_url)" in _fonte_os)
+checar("URL fora do YouTube é recusada com a mensagem pedida",
+       "URL inválida! Insira uma URL do YouTube" in _fonte_os)
+checar("no YouTube o título não é digitável (readonly)",
+       "titulo_entry.configure(state='readonly')" in _fonte_os)
+checar("a URL aparece abaixo do título no editor",
+       "after=titulo_entry" in _fonte_os and "youtube_titulo_url_lbl" in _fonte_os)
+checar("a lista busca a duração do YouTube sem baixar o vídeo",
+       "_obter_info_youtube(caminho)" in _fonte_os)
+checar("na lista, a URL aparece na segunda linha do título",
+       r'f"{titulo}\n{url}"' in _fonte_os)
+checar("a lista aumenta a altura das linhas quando há YouTube",
+       "rowheight=48 if tem_youtube else 32" in _fonte_os)
 _fonte_exec = open(os.path.join(RAIZ, "navepro", "ui", "execucao_servico.py"),
                       encoding="utf-8").read()
 checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
@@ -244,6 +252,19 @@ checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
 
 _fonte_remoto = open(os.path.join(RAIZ, "navepro", "ui", "remoto.py"),
                         encoding="utf-8").read()
+_fonte_web = open(os.path.join(RAIZ, "navepro", "remoto_web.py"),
+                  encoding="utf-8").read()
+_fonte_servidor = open(os.path.join(RAIZ, "navepro", "core", "servidor_http.py"),
+                       encoding="utf-8").read()
+checar("web: valida o domínio antes de salvar o item",
+       "function ehUrlYoutube" in _fonte_web
+       and "URL inválida! Insira uma URL do YouTube" in _fonte_web)
+checar("servidor: endpoint de metadados fora da thread do Tk",
+       "/api/remoto/youtube_info" in _fonte_servidor
+       and "asyncio.to_thread(_obter_info_youtube" in _fonte_servidor)
+checar("web: a lista também mostra a URL abaixo do título",
+       "it.tipo === 'youtube' && it.youtube_url" in _fonte_web
+       and "item-url" in _fonte_web)
 
 
 def _extrair_metodo_app(classe, metodo, ns):
@@ -260,7 +281,7 @@ def _extrair_metodo_app(classe, metodo, ns):
 
 
 _resolver = _extrair_metodo_app("ControleRemotoMixin", "_remoto_resolver_item",
-                                {"os": os, "_eh_url": _eh_url})
+                                {"os": os, "_eh_url_youtube": _eh_url_youtube})
 
 _ok, _err, _campos = _resolver(None, {
     "tipo": "youtube", "youtube_url": "https://youtu.be/abc123"})
@@ -281,6 +302,11 @@ checar("remoto: título digitado é preservado no YouTube",
 
 _ok, _err, _campos = _resolver(None, {"tipo": "youtube", "youtube_url": ""})
 checar("remoto: YouTube sem URL é recusado", not _ok and "URL" in _err)
+
+_ok, _err, _campos = _resolver(None, {
+    "tipo": "youtube", "youtube_url": "https://exemplo.com/video"})
+checar("remoto: URL que não é do YouTube é recusada",
+       not _ok and _err == "URL inválida! Insira uma URL do YouTube")
 
 _ok, _err, _campos = _resolver(None, {"tipo": "slide"})
 checar("remoto: item comum também ganha a chave youtube_url (vazia)",
