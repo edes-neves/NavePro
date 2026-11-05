@@ -84,12 +84,14 @@ navepro/
     config_relogio.py    # configuração (cidade/estado, monitor do telão, player)
     tema_painel.py       # tema claro/escuro do painel
     janela_hinos.py janela_biblia.py janela_anuncios.py
+    biblia_grade.py      # Bíblia em grade (livros → capítulos → versículos), tela cheia
     janela_ordem_servico.py janela_transferencia.py gerenciador_midias.py
     remoto.py       # controle remoto (token, despacho e handlers do celular)
     execucao_servico.py  # execução do próximo item da Ordem de Serviço
     atualizacao.py  # janelas/flow de atualização (download, flatpak, instruções)
   core/ambiente.py  # _eh_windows(), _tornar_dpi_aware()
   core/anuncios.py  # anúncios: JSON legado + CRUD SQLite, uploads, migração
+  core/biblia_import.py  # importação de Bíblias (XML/TXT/JSON) para `versiculos`
   core/apresentacao.py  # abertura de apresentações/PDF no app do sistema (PowerPoint/Impress)
   core/atualizacao.py  # verificação e atualização via GitHub Releases / Flatpak
   core/banco.py     # DatabaseManager (SQLite + cache), db_query/db_execute, reuso de IDs

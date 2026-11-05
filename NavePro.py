@@ -95,6 +95,7 @@ from navepro.ui.apoio import (
     _escolher_arquivos_usuario,
 )
 from navepro.ui.atualizacao import AtualizacaoMixin
+from navepro.ui.biblia_grade import JanelaBibliaGradeMixin
 from navepro.ui.config_relogio import ConfigRelogioMixin
 from navepro.ui.execucao_servico import ExecucaoServicoMixin
 from navepro.ui.gerenciador_midias import GerenciadorMidiasMixin
@@ -248,7 +249,7 @@ log = get_logger("app")
 # ────────────────────────────────────────────────────────────────────
 
 
-class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, ExecucaoServicoMixin, AtualizacaoMixin, JanelaHinosMixin, JanelaBibliaMixin, JanelaAnunciosMixin, JanelaOrdemServicoMixin, JanelaTransferenciaMixin, GerenciadorMidiasMixin, ConfigRelogioMixin, PainelMixin):
+class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, ExecucaoServicoMixin, AtualizacaoMixin, JanelaHinosMixin, JanelaBibliaGradeMixin, JanelaBibliaMixin, JanelaAnunciosMixin, JanelaOrdemServicoMixin, JanelaTransferenciaMixin, GerenciadorMidiasMixin, ConfigRelogioMixin, PainelMixin):
     """Interface gráfica principal do sistema de projeção."""
 
     def __init__(self) -> None:

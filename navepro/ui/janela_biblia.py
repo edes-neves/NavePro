@@ -1,31 +1,27 @@
-"""Janela de janela_biblia do painel do operador (mixin).
+"""Janela clássica de busca bíblica do painel do operador (mixin).
 
-Extraída de NavePro.py sem alteração de comportamento: a AppInterface
-herda deste mixin para montar a janela.
+A interface principal agora é a Bíblia em grade (`biblia_grade.py`); esta
+janela de combos + área de texto continua disponível como
+`janela_biblia_busca` e concentra a lógica de projeção/faixa usada nos testes.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import re
-import sqlite3
 import tkinter as tk
 import tkinter.messagebox
 import tkinter.simpledialog
-import unicodedata
-import xml.etree.ElementTree as ET
 from tkinter import ttk
 
-from navepro.config import SQLITE_TIMEOUT
-from navepro.core.banco import _gerador_id_livre, db_query
+from navepro.core.banco import db_query
+from navepro.core.biblia_import import importar_biblias
 from navepro.core.log import get_logger
-from navepro.core.paths import DB_PATH
 from navepro.core.servicos import _analisar_faixa_versiculos
 from navepro.core.slides import _buscar_versiculos_por_texto
 from navepro.core.util_tk import _centralizar_sobre
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
+from navepro.ui.biblia_grade import _invalidar_cache_biblia
 
 log = get_logger("janela_biblia")
 
@@ -34,8 +30,8 @@ tk = TkArredondado(tk)
 
 
 class JanelaBibliaMixin:
-    def janela_biblia(self) -> None:
-        """Abre a janela de busca bíblica."""
+    def janela_biblia_busca(self) -> None:
+        """Abre a janela clássica de busca bíblica (combos + área de texto)."""
         janela = tk.Toplevel(self.root)
         janela.title("✝️ Bíblia")
         janela.geometry("950x700")
@@ -335,384 +331,22 @@ class JanelaBibliaMixin:
 
         janela.bind("<Destroy>", _ao_destruir_janela)
 
-        # ── Importação de Bíblia (XML / TXT) ──
-        def _sem_acentos(texto: str) -> str:
-            nf = unicodedata.normalize('NFKD', str(texto))
-            return ''.join(c for c in nf if not unicodedata.combining(c)).casefold()
-
-        _LIVROS_FLAT = {_sem_acentos(n): n for n in self.LIVROS_BIBLIA}
-        _LIVROS_ALIAS = {
-            "cantico dos canticos": "Cânticos",
-            "cantares": "Cânticos",
-            "lamentacoes de jeremias": "Lamentações",
-        }
-
-        def _normalizar_livro_biblia(nome: str) -> str | None:
-            """Converte o nome do livro para o padrão da lista do app.
-
-            Insensível a acentos e a variações comuns: números romanos
-            (I/II) e nomes completos ('Lamentações de Jeremias',
-            'Cântico dos Cânticos'). Retorna None se não reconhecer.
-            """
-            chave = _sem_acentos(nome or '')
-            if not chave:
-                return None
-            if chave in _LIVROS_FLAT:
-                return _LIVROS_FLAT[chave]
-            if chave in _LIVROS_ALIAS:
-                return _LIVROS_ALIAS[chave]
-            for rom, num in (("iii", "3"), ("ii", "2"), ("i", "1")):
-                prefixo = rom + " "
-                if chave.startswith(prefixo):
-                    cand = num + " " + chave[len(prefixo):]
-                    return _LIVROS_FLAT.get(cand)
-            return None
-
-        def _parsear_biblia_xml(caminho: str) -> tuple:
-            """Lê uma Bíblia em XML (estilo Zefania: BIBLEBOOK/CHAPTER/VERS).
-
-            Retorna (versao, versiculos, livros_desconhecidos), onde
-            versiculos é uma lista de tuplas (versao, livro, capitulo,
-            versiculo, texto).
-            """
-            tree = ET.parse(caminho)
-            raiz = tree.getroot()
-            versao = (raiz.get('biblename') or
-                      os.path.splitext(os.path.basename(caminho))[0] or
-                      "Bíblia")
-            versiculos = []
-            desconhecidos = set()
-            for bb in raiz.findall('BIBLEBOOK'):
-                livro = _normalizar_livro_biblia(bb.get('bname'))
-                if not livro:
-                    desconhecidos.add(bb.get('bname'))
-                    continue
-                for ch in bb.findall('CHAPTER'):
-                    cap_t = ch.get('cnumber')
-                    if not cap_t or not cap_t.isdigit():
-                        continue
-                    cap = int(cap_t)
-                    for v in ch.findall('VERS'):
-                        nv_t = v.get('vnumber')
-                        if not nv_t or not nv_t.isdigit():
-                            continue
-                        texto = (v.text or '').strip()
-                        if not texto:
-                            continue
-                        versiculos.append((versao, livro, cap, int(nv_t), texto))
-            return versao, versiculos, desconhecidos
-
-        def _parsear_biblia_txt(caminho: str) -> tuple:
-            """Lê uma Bíblia em TXT (formato Almeida Revista e Corrigida).
-
-            Estrutura: linhas ' LIVRO CAP', linhas 'N texto do versículo',
-            separadores com o nome do livro sozinho e possível continuação
-            de versículo na linha seguinte. Números romanos (I/II) são
-            convertidos e nomes completos são normalizados.
-            """
-            versao = "Almeida Revista e Corrigida"
-            _re_header = re.compile(r'^\s*(.+?)(\d{1,3})\s*$')
-            _re_verso = re.compile(r'^\s*(\d{1,3})\s+(.*)$')
-            versiculos = []
-            desconhecidos = set()
-            livro_atual = None
-            cap_atual = None
-            for linha in open(caminho, encoding='utf-8', errors='replace'):
-                s = linha.rstrip('\n')
-                t = s.strip()
-                if not t:
-                    continue
-                if t in ("ANTIGO TESTAMENTO", "NOVO TESTAMENTO"):
-                    continue
-                # Separador com o nome do livro sozinho (ex.: "ÊXODO")
-                if _normalizar_livro_biblia(t) is not None:
-                    continue
-                # Cabeçalho de capítulo: '<nome do livro> <número>'
-                m = _re_header.match(s)
-                if m:
-                    novo_livro = _normalizar_livro_biblia(m.group(1).strip())
-                    if novo_livro is not None:
-                        livro_atual = novo_livro
-                        cap_atual = int(m.group(2))
-                        continue
-                # Versículo: '<número> <texto>'
-                m = _re_verso.match(s)
-                if m and livro_atual is not None and cap_atual is not None:
-                    versiculos.append((versao, livro_atual, cap_atual,
-                                       int(m.group(1)), m.group(2).strip()))
-                elif versiculos and livro_atual is not None and cap_atual is not None:
-                    # Continuação de versículo na linha seguinte
-                    linhas = versiculos[-1][4] + " " + t
-                    versiculos[-1] = (versiculos[-1][0], versiculos[-1][1],
-                                      versiculos[-1][2], versiculos[-1][3], linhas)
-            return versao, versiculos, desconhecidos
-
-        def _parsear_biblia_json(caminho: str) -> tuple:
-            """Lê uma Bíblia em JSON e retorna (versao, versiculos, desconhecidos).
-
-            Aceita as estruturas mais comuns:
-            - {Livro: {cap: {vers: texto}}}
-            - {Livro: {cap: [texto1, texto2, ...]}}
-            - {"books": [{"name": ..., "chapters": [[{"verse": n, "text": ...}]]}]}
-            - [{"book": ..., "chapter": n, "verse": n, "text": ...}] (lista plana)
-            A versão é lida das chaves 'version'/'versao'/'biblename' do objeto
-            raiz, ou do nome do arquivo.
-            """
-            with open(caminho, encoding='utf-8-sig') as f:
-                dados = json.load(f)
-            versiculos = []
-            desconhecidos = set()
-            raiz = dados
-
-            # Extrai o nome da versão das chaves de metadados do objeto raiz
-            versao = None
-            if isinstance(raiz, dict):
-                for chave in ("version", "versao", "biblename", "translation",
-                              "nome", "name"):
-                    v = raiz.get(chave)
-                    if isinstance(v, str) and v.strip():
-                        versao = v.strip()
-                        break
-            if not versao:
-                versao = (os.path.splitext(os.path.basename(caminho))[0] or "Bíblia")
-
-            def _texto(obj) -> str:
-                if isinstance(obj, str):
-                    return obj.strip()
-                if isinstance(obj, dict):
-                    for chave in ("text", "texto"):
-                        v = obj.get(chave)
-                        if isinstance(v, str):
-                            return v.strip()
-                        if isinstance(v, (int, float)):
-                            return str(v)
-                    for v in obj.values():
-                        if isinstance(v, str):
-                            return v.strip()
-                    return ""
-                if isinstance(obj, list):
-                    partes = [p for p in (_texto(x) for x in obj) if p]
-                    return " ".join(partes)
-                if isinstance(obj, (int, float)):
-                    return str(obj)
-                return ""
-
-            def _numero(obj, *chaves) -> int | None:
-                if isinstance(obj, dict):
-                    for chave in chaves:
-                        v = obj.get(chave)
-                        if v is None:
-                            continue
-                        if isinstance(v, (int, float)) and not isinstance(v, bool):
-                            return int(v)
-                        m = re.match(r'^\s*(\d+)', str(v))
-                        if m:
-                            return int(m.group(1))
-                return None
-
-            def _versiculos_capitulo(valor, cap, livro) -> None:
-                """Extrai os versículos de um capítulo (dict ou lista)."""
-                if isinstance(valor, dict):
-                    for vk, vv in valor.items():
-                        num = _numero({"_": vk}, "_") if str(vk).strip().isdigit() \
-                            else _numero(vv, "verse", "versiculo", "n", "num")
-                        if num is None:
-                            continue
-                        texto = _texto(vv)
-                        if texto:
-                            versiculos.append((versao, livro, cap, num, texto))
-                elif isinstance(valor, list):
-                    for i, item in enumerate(valor, start=1):
-                        if isinstance(item, dict):
-                            num = _numero(item, "verse", "versiculo", "n", "num", "v")
-                            texto = _texto(item)
-                            if num is None or not texto:
-                                continue
-                            versiculos.append((versao, livro, cap, num, texto))
-                        else:
-                            texto = _texto(item)
-                            if texto:
-                                versiculos.append((versao, livro, cap, i, texto))
-                elif isinstance(valor, str) and valor.strip():
-                    versiculos.append((versao, livro, cap, 1, valor.strip()))
-
-            def _processar_livro(nome, valor) -> None:
-                nonlocal versao
-                livro = _normalizar_livro_biblia(nome)
-                if not livro:
-                    desconhecidos.add(str(nome))
-                    return
-                if isinstance(valor, dict) and any(k in valor for k in
-                                                   ("chapters", "textos")):
-                    # formato {name/abbrev, chapters: [[verso1, verso2, ...]]}
-                    dados = valor.get("chapters")
-                    if not isinstance(dados, (list, dict)):
-                        dados = valor.get("textos")
-                    if isinstance(dados, (list, dict)):
-                        valor = dados
-                    else:
-                        return
-                if isinstance(valor, dict):
-                    cap = _numero(valor, "chapter", "capitulo", "cnumber")
-                    num = _numero(valor, "verse", "versiculo", "n", "v")
-                    if cap is not None and num is not None:
-                        # objeto de versículo único {book, chapter, verse, text}
-                        texto = _texto(valor)
-                        if texto:
-                            versiculos.append((versao, livro, cap, num, texto))
-                        return
-                    for ck, cv in valor.items():
-                        cap = _numero({"_": ck}, "_") if str(ck).strip().isdigit() \
-                            else _numero(cv, "chapter", "capitulo", "cnumber")
-                        if cap is None:
-                            # formato {livro: [{chapter: 1, verses: [...]}]}
-                            if isinstance(cv, list) and cv and all(
-                                    isinstance(x, dict) for x in cv):
-                                for obj in cv:
-                                    c2 = _numero(obj, "chapter", "capitulo")
-                                    if c2 is None:
-                                        continue
-                                    _versiculos_capitulo(obj.get("verses",
-                                                                  obj.get("textos",
-                                                                         [])), c2, livro)
-                                continue
-                            continue
-                        _versiculos_capitulo(cv, cap, livro)
-                elif isinstance(valor, list):
-                    if not valor:
-                        return
-                    if isinstance(valor[0], dict):
-                        # lista plana de versículos OU de capítulos
-                        tem_cap = any(any(k in v for k in ("chapter", "capitulo"))
-                                      for v in valor)
-                        tem_ver = any(any(k in v for k in ("verse", "versiculo",
-                                                           "v", "n"))
-                                      for v in valor)
-                        if tem_cap and tem_ver:
-                            for obj in valor:
-                                cap = _numero(obj, "chapter", "capitulo")
-                                num = _numero(obj, "verse", "versiculo", "v", "n")
-                                texto = _texto(obj)
-                                if cap is None or num is None or not texto:
-                                    continue
-                                versiculos.append((versao, livro, cap, num, texto))
-                        else:
-                            # lista de capítulos: [{n/chapter: c, verses/textos: [...]}]
-                            for obj in valor:
-                                cap = _numero(obj, "chapter", "capitulo", "n")
-                                if cap is None:
-                                    continue
-                                _versiculos_capitulo(
-                                    obj.get("verses", obj.get("textos", [])), cap, livro)
-                    elif isinstance(valor[0], list):
-                        # lista de capítulos, cada um uma lista de versículos
-                        for i, cap_lista in enumerate(valor, start=1):
-                            _versiculos_capitulo(cap_lista, i, livro)
-                    else:
-                        # lista de textos (capítulo único)
-                        _versiculos_capitulo(valor, 1, livro)
-
-            if isinstance(raiz, dict):
-                for chave, valor in raiz.items():
-                    if chave.lower() in ("version", "versao", "biblename",
-                                         "translation", "nome", "name", "id",
-                                         "info", "metadata", "language", "lang"):
-                        continue
-                    # {"books": [...]} -> cada item tem o nome do livro
-                    if chave.lower() == "books" and isinstance(valor, list):
-                        for item in valor:
-                            nome = item.get("name") or item.get("nome") or \
-                                   item.get("book") or item.get("livro")
-                            if not nome:
-                                continue
-                            dados_livro = item.get("chapters") or item.get("textos") \
-                                or item
-                            _processar_livro(nome, dados_livro)
-                    else:
-                        _processar_livro(chave, valor)
-            elif isinstance(raiz, list):
-                for item in raiz:
-                    nome = item.get("book") or item.get("livro") or \
-                           item.get("name") if isinstance(item, dict) else None
-                    if nome:
-                        _processar_livro(nome, item)
-                    else:
-                        desconhecidos.add(str(item)[:40])
-            return versao, versiculos, desconhecidos
-
+        # ── Importação de Bíblia (XML / TXT / JSON) ──
         def _importar_biblia(caminhos: tuple) -> None:
             """Importa uma ou mais Bíblias (XML/TXT/JSON) para a tabela versiculos."""
             nonlocal _travado_recarga
-            total_inseridos = 0
-            total_pulados = 0
-            erros = 0
-            versoes_importadas = []
-            desconhecidos = set()
-            for caminho in caminhos:
-                ext = os.path.splitext(caminho)[1].lower()
-                try:
-                    if ext == '.xml':
-                        versao, vv, desc = _parsear_biblia_xml(caminho)
-                    elif ext == '.txt':
-                        versao, vv, desc = _parsear_biblia_txt(caminho)
-                    elif ext == '.json':
-                        versao, vv, desc = _parsear_biblia_json(caminho)
-                    else:
-                        erros += 1
-                        continue
-                except Exception as e:
-                    log.exception(f"Erro ao importar bíblia {caminho}: {e}")
-                    erros += 1
-                    continue
-                desconhecidos.update(desc)
-                existentes = {
-                    (r['versao'], r['livro'], r['capitulo'], r['versiculo'])
-                    for r in db_query(
-                        "SELECT versao, livro, capitulo, versiculo FROM versiculos "
-                        "WHERE versao = ?", (versao,))
-                }
-                novos = [v for v in vv
-                         if (v[0], v[1], v[2], v[3]) not in existentes]
-                total_pulados += len(vv) - len(novos)
-                if novos:
-                    conn = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT)
-                    try:
-                        ids_livres = list(
-                            _gerador_id_livre("versiculos",
-                                              limitar=len(novos)))
-                        com_id = []
-                        sem_id = []
-                        for idx, ver in enumerate(novos):
-                            if idx < len(ids_livres):
-                                com_id.append((ids_livres[idx],) + tuple(ver))
-                            else:
-                                sem_id.append(tuple(ver))
-                        if com_id:
-                            conn.executemany(
-                                "INSERT INTO versiculos "
-                                "(id, versao, livro, capitulo, versiculo, texto) "
-                                "VALUES (?, ?, ?, ?, ?, ?)", com_id)
-                        if sem_id:
-                            conn.executemany(
-                                "INSERT INTO versiculos "
-                                "(versao, livro, capitulo, versiculo, texto) "
-                                "VALUES (?, ?, ?, ?, ?)", sem_id)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                    total_inseridos += len(novos)
-                if versao not in versoes_importadas:
-                    versoes_importadas.append(versao)
-
-            msg = f"✅ {total_inseridos} versículos importados, " \
-                  f"{total_pulados} já existentes (pulados)."
-            if versoes_importadas:
-                msg += f"\n📚 Versões: {', '.join(versoes_importadas)}"
-            if desconhecidos:
-                msg += f"\n⚠️ {len(desconhecidos)} livro(s) não reconhecidos: " \
-                       f"{', '.join(str(x) for x in sorted(desconhecidos))}"
-            if erros:
-                msg += f"\n⚠️ {erros} arquivo(s) com erro."
+            resumo = importar_biblias(caminhos, self.LIVROS_BIBLIA)
+            _invalidar_cache_biblia()
+            msg = f"✅ {resumo['inseridos']} versículos importados, " \
+                  f"{resumo['pulados']} já existentes (pulados)."
+            if resumo['versoes']:
+                msg += f"\n📚 Versões: {', '.join(resumo['versoes'])}"
+            if resumo['desconhecidos']:
+                msg += f"\n⚠️ {len(resumo['desconhecidos'])} livro(s) não " \
+                       f"reconhecidos: " \
+                       f"{', '.join(str(x) for x in sorted(resumo['desconhecidos']))}"
+            if resumo['erros']:
+                msg += f"\n⚠️ {resumo['erros']} arquivo(s) com erro."
             tkinter.messagebox.showinfo("Importação de Bíblia", msg, parent=janela)
 
             # Atualiza lista de versões e carrega a primeira importada
@@ -720,12 +354,12 @@ class JanelaBibliaMixin:
             novas_versoes = [r['versao'] for r in atuais]
             if novas_versoes:
                 combo_versao.config(values=novas_versoes)
-            if versoes_importadas:
+            if resumo['versoes']:
                 # A escolha da versão não recarrega sozinha: a carga é feita
                 # na linha seguinte, uma única vez.
                 _travado_recarga = True
                 try:
-                    versao_var.set(versoes_importadas[0])
+                    versao_var.set(resumo['versoes'][0])
                 finally:
                     _travado_recarga = False
                 _carregar_capitulo()
