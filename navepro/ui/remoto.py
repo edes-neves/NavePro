@@ -647,7 +647,9 @@ class ControleRemotoMixin:
         if serv is None:
             return {'ok': False, 'erro': 'Serviço não encontrado.'}
         item = dados.get('item')
-        escolhido = int(item) if item is not None else None
+        # Não converter para int: o id do item pode ser texto (dados antigos/
+        # importados ou editados à mão) e int() derrubava o botão do item.
+        escolhido = None if item is None or item == '' else item
         self.player._garantir_telao()
         return self.executar_proximo_item_servico(serv, escolhido=escolhido)
     def _remoto_servico_itens(self, dados: dict) -> dict:

@@ -39,7 +39,7 @@ tk = TkArredondado(tk)
 
 class ExecucaoServicoMixin:
     def executar_proximo_item_servico(self, servico: dict | None, *,
-                                      escolhido: int | None = None,
+                                      escolhido: int | str | None = None,
                                       ao_destacar: Callable | None = None
                                       ) -> dict:
         """Reproduz APENAS o próximo item de `servico` e para.
@@ -55,7 +55,8 @@ class ExecucaoServicoMixin:
 
         Não abre diálogo (usado pelo controle remoto na thread do servidor):
         devolve {'ok': True, 'indice', 'id', 'titulo'} ou
-        {'ok': False, 'codigo' ('sem_servico'|'vazio'|'falha'), 'erro'}.
+        {'ok': False, 'codigo': ('sem_servico'|'vazio'|'item_inexistente'|
+        'falha'), 'erro'}.
         `ao_destacar(item)` é chamado para a janela realçar o item na lista.
         """
         if not servico:
@@ -68,10 +69,16 @@ class ExecucaoServicoMixin:
         chave = servico.get("id") or servico.get("nome") or "?"
         prox = _SERVICO_PROXIMO_ITEM.get(chave)
         if escolhido is not None:
+            # O id pode vir do JSON como texto (dados antigos/importados ou
+            # editados à mão). Comparar como texto evita executar o item do
+            # ponteiro quando o botão mandou um id que não bate por tipo.
+            alvo_id = str(escolhido)
             idx_escolhido = next((i for i, it in enumerate(itens)
-                                  if it.get("id") == escolhido), None)
-            if idx_escolhido is not None:
-                prox = idx_escolhido
+                                  if str(it.get("id")) == alvo_id), None)
+            if idx_escolhido is None:
+                return {'ok': False, 'codigo': 'item_inexistente',
+                        'erro': f'Item {escolhido} não encontrado no serviço.'}
+            prox = idx_escolhido
         if prox is None or prox < 0 or prox >= len(itens):
             prox = 0
         item = itens[prox]
