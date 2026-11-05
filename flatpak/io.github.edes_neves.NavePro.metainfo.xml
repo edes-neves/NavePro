@@ -40,6 +40,16 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.3.3" date="2026-11-05">
+      <description>
+        <ul>
+          <li>Bíblia em grade: livros, capítulos e versículos na mesma tela, com abertura mais rápida</li>
+          <li>Controle remoto — Bíblia em grade, com botão Encerrar (relógio) para fechar a projeção</li>
+          <li>Importação de Bíblia (XML/TXT/JSON) reorganizada em um módulo compartilhado</li>
+          <li>Versão estável: o NavePro deixa oficialmente a fase beta</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.2" date="2026-11-04">
       <description>
         <ul>

@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.3.2.AppImage
-   ./NavePro-2.3.2.AppImage
+   chmod +x NavePro-2.3.3.AppImage
+   ./NavePro-2.3.3.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.3.2          # gera NavePro-2.3.2.AppImage
+./build.sh 2.3.3          # gera NavePro-2.3.3.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.3.2
+   ./build.sh 2.3.3
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.3.2: ..."
-   git tag v2.3.2
-   git push origin main v2.3.2
+   git add -A && git commit -m "NavePro 2.3.3: ..."
+   git tag v2.3.3
+   git push origin main v2.3.3
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.3.2 NavePro-2.3.2.AppImage \
-     --title "NavePro 2.3.2" --notes "O que mudou nesta versão..."
+   gh release create v2.3.3 NavePro-2.3.3.AppImage \
+     --title "NavePro 2.3.3" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -554,6 +554,17 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.3.3
+
+- **Bíblia em grade**: nova janela com livros, capítulos e versículos na mesma
+  tela, no estilo do Holyrics, e abertura mais rápida (a janela aparece antes
+  de consultar e desenhar a grade).
+- **Controle remoto — Bíblia**: aba em grade com livros, capítulos e versículos,
+  além do botão **Encerrar (relógio)** para fechar a projeção sem trocar de aba.
+- **Importação de Bíblia**: leitura XML/TXT/JSON movida para um módulo próprio,
+  compartilhada pelas duas janelas.
+- **Estável**: o NavePro passa oficialmente da fase beta para a estável.
 
 ### 2.3.2
 
