@@ -107,6 +107,50 @@ _REMOTO_CSS = """
   .pill { font-size: 12px; background: #21262d; border-radius: 20px;
           padding: 3px 10px; color: #8b949e; }
   .pill.exec { background: #238636; color: #fff; font-weight: 700; }
+  /* Aba Bíblia em grade: livros no topo, capítulos e versículos embaixo.
+     No celular tudo empilha; a partir de 640px os capítulos ficam à
+     esquerda e os versículos à direita (sem repetir os versículos). */
+  .bib-grade { display: grid; gap: 12px; grid-template-columns: 1fr; }
+  .bib-bloco { min-width: 0; }
+  .bib-grade-botoes {
+    display: grid; gap: 6px;
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  }
+  .bib-grade-botoes.livros {
+    grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  }
+  .bib-botao {
+    background: #21262d; color: #c9d1d9; border: 0; border-radius: 8px;
+    padding: 7px 4px; font-size: 15px; font-weight: 700; cursor: pointer;
+    min-height: 38px; line-height: 1.15;
+  }
+  .bib-botao:active { filter: brightness(1.3); }
+  .bib-botao.on { background: #6e40c9; color: #fff; }
+  .bib-botao .sigla { display: block; font-size: 16px; line-height: 1.1; }
+  .bib-botao .nome {
+    display: block; font-size: 10px; line-height: 1.1; color: #8b949e;
+    margin-top: 2px; word-break: break-word;
+  }
+  .bib-botao.on .nome { color: #fff; }
+  li.bib-versiculo {
+    align-items: flex-start; justify-content: flex-start; gap: 8px;
+    cursor: pointer;
+  }
+  li.bib-versiculo .num {
+    color: #f0c040; font-weight: 800; min-width: 24px; text-align: right;
+  }
+  li.bib-versiculo .texto { flex: 1; font-size: 14px; line-height: 1.4; }
+  li.bib-versiculo.on { background: rgba(110, 64, 201, .28); }
+  @media (min-width: 640px) {
+    .bib-grade {
+      grid-template-columns: .8fr 1.5fr;
+      grid-template-areas: "livros livros" "capitulos versiculos";
+    }
+    .bib-livros { grid-area: livros; }
+    .bib-capitulos { grid-area: capitulos; }
+    .bib-versiculos { grid-area: versiculos; }
+    #lista_biblia { max-height: 60vh; overflow-y: auto; }
+  }
   /* Aba Serviço: nome e ações empilhados para caber no celular. */
   li.servico-linha { flex-wrap: wrap; row-gap: 8px; }
   li.servico-linha .nome { flex: 1 1 100%; white-space: normal;
@@ -297,9 +341,173 @@ function controlePlayer(acao) {
 }
 
 // ── Bíblia ──
+// Abreviações dos livros (mesma ordem/ideia da janela Bíblia do app).
+var BIB_ABREVIACOES = {
+  "G\u00EAnesis": "Gn", "\u00CAxodo": "\u00CAx", "Lev\u00EDtico": "Lv",
+  "N\u00FAmeros": "Nm", "Deuteron\u00F4mio": "Dt", "Josu\u00E9": "Js",
+  "Ju\u00EDzes": "Jz", "Rute": "Rt", "1 Samuel": "1Sm", "2 Samuel": "2Sm",
+  "1 Reis": "1Rs", "2 Reis": "2Rs", "1 Cr\u00F4nicas": "1Cr",
+  "2 Cr\u00F4nicas": "2Cr", "Esdras": "Ed", "Neemias": "Ne", "Ester": "Et",
+  "J\u00F3": "J\u00F3", "Salmos": "Sl", "Prov\u00E9rbios": "Pv",
+  "Eclesiastes": "Ec", "C\u00E2nticos": "Ct", "Isa\u00EDas": "Is",
+  "Jeremias": "Jr", "Lamenta\u00E7\u00F5es": "Lm", "Ezequiel": "Ez",
+  "Daniel": "Dn", "Os\u00E9ias": "Os", "Joel": "Jl", "Am\u00F3s": "Am",
+  "Obadias": "Ob", "Jonas": "Jn", "Miqu\u00E9ias": "Mq", "Naum": "Na",
+  "Habacuque": "Hc", "Sofonias": "Sf", "Ageu": "Ag", "Zacarias": "Zc",
+  "Malaquias": "Ml", "Mateus": "Mt", "Marcos": "Mc", "Lucas": "Lc",
+  "Jo\u00E3o": "Jo", "Atos": "At", "Romanos": "Rm",
+  "1 Cor\u00EDntios": "1Co", "2 Cor\u00EDntios": "2Co", "G\u00E1latas": "Gl",
+  "Ef\u00E9sios": "Ef", "Filipenses": "Fp", "Colossenses": "Cl",
+  "1 Tessalonicenses": "1Ts", "2 Tessalonicenses": "2Ts",
+  "1 Tim\u00F3teo": "1Tm", "2 Tim\u00F3teo": "2Tm", "Tito": "Tt",
+  "Filemom": "Fm", "Hebreus": "Hb", "Tiago": "Tg", "1 Pedro": "1Pe",
+  "2 Pedro": "2Pe", "1 Jo\u00E3o": "1Jo", "2 Jo\u00E3o": "2Jo",
+  "3 Jo\u00E3o": "3Jo", "Judas": "Jd", "Apocalipse": "Ap"
+};
+
+function abrevLivro(nome) {
+  return BIB_ABREVIACOES[nome] || String(nome || '').substring(0, 2);
+}
+
+function criarBotaoGrade(texto, sigla, dados) {
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'bib-botao';
+  if (sigla) {
+    var s = document.createElement('span');
+    s.className = 'sigla';
+    s.textContent = sigla;
+    var n = document.createElement('span');
+    n.className = 'nome';
+    n.textContent = texto;
+    b.appendChild(s);
+    b.appendChild(n);
+  } else {
+    b.textContent = texto;
+  }
+  if (dados) {
+    Object.keys(dados).forEach(function(k) { b.dataset[k] = dados[k]; });
+  }
+  return b;
+}
+
+function renderizarLivrosGrade(livros) {
+  var grade = document.getElementById('bib_livros_grade');
+  if (!grade) return;
+  grade.innerHTML = '';
+  (livros || []).forEach(function(livro) {
+    var b = criarBotaoGrade(livro, abrevLivro(livro), {livro: livro});
+    b.onclick = function() { selecionarLivroGrade(livro); };
+    grade.appendChild(b);
+  });
+  atualizarDestaqueLivro(document.getElementById('bib_livro').value);
+}
+
+function selecionarLivroGrade(livro) {
+  document.getElementById('bib_livro').value = livro;
+  document.getElementById('bib_cap').value = '';
+  document.getElementById('bib_vers').value = '';
+  atualizarDestaqueLivro(livro);
+  carregarOpcoesBiblia();
+}
+
+function atualizarDestaqueLivro(livro) {
+  var alvo = document.getElementById('bib_livro_atual');
+  if (alvo) alvo.textContent = livro || '\u2014';
+  [].forEach.call(
+    document.querySelectorAll('#bib_livros_grade .bib-botao'),
+    function(b) { b.classList.toggle('on', b.dataset.livro === livro); });
+}
+
+function renderizarCapitulosGrade(livro, capitulos) {
+  var grade = document.getElementById('bib_capitulos_grade');
+  if (!grade) return;
+  grade.innerHTML = '';
+  var titulo = document.getElementById('bib_capitulos_titulo');
+  if (titulo) titulo.textContent = livro || '\u2014';
+  (capitulos || []).forEach(function(cap) {
+    var b = criarBotaoGrade(String(cap), null, {cap: String(cap)});
+    b.onclick = function() { selecionarCapituloGrade(cap); };
+    grade.appendChild(b);
+  });
+}
+
+function selecionarCapituloGrade(cap) {
+  document.getElementById('bib_cap').value = cap;
+  document.getElementById('bib_vers').value = '';
+  atualizarDestaqueCapitulo(cap);
+  carregarOpcoesBiblia();
+}
+
+function atualizarDestaqueCapitulo(cap) {
+  [].forEach.call(
+    document.querySelectorAll('#bib_capitulos_grade .bib-botao'),
+    function(b) {
+      b.classList.toggle('on', b.dataset.cap === String(cap));
+    });
+}
+
+function carregarVersiculosGrade(livro, cap) {
+  var ul = document.getElementById('lista_biblia');
+  var titulo = document.getElementById('bib_vers_titulo');
+  if (titulo) titulo.textContent = (livro && cap) ? livro + ' ' + cap : '\u2014';
+  if (!ul) return;
+  if (!livro || !cap) {
+    ul.innerHTML = '<li class="vazio">Escolha um livro e um cap\u00EDtulo.</li>';
+    return;
+  }
+  var v = document.getElementById('bib_versao').value;
+  ul.innerHTML = '<li class="vazio">Carregando...</li>';
+  apiGet('/api/remoto/biblia_ref?versao=' + encodeURIComponent(v) +
+         '&livro=' + encodeURIComponent(livro) +
+         '&cap=' + encodeURIComponent(cap) +
+         '&vers=').then(function(j) {
+    ul.innerHTML = '';
+    if (!j || !j.resultados || !j.resultados.length) {
+      ul.innerHTML = '<li class="vazio">' +
+        esc((j && j.erro) || 'Nenhum vers\u00EDculo encontrado.') + '</li>';
+      return;
+    }
+    j.resultados.forEach(function(r) {
+      var li = document.createElement('li');
+      li.className = 'bib-versiculo';
+      li.dataset.vers = String(r.versiculo);
+      var num = document.createElement('span');
+      num.className = 'num';
+      num.textContent = r.versiculo;
+      var txt = document.createElement('span');
+      txt.className = 'texto';
+      txt.textContent = r.texto;
+      li.appendChild(num);
+      li.appendChild(txt);
+      li.onclick = function() { selecionarVersiculoGrade(r.versiculo); };
+      ul.appendChild(li);
+    });
+    atualizarDestaqueVersiculo();
+  }).catch(function() {
+    ul.innerHTML = '<li class="vazio">Erro ao carregar vers\u00EDculos.</li>';
+  });
+}
+
+function selecionarVersiculoGrade(num) {
+  document.getElementById('bib_vers').value = num;
+  atualizarDestaqueVersiculo();
+  // Como na janela Bíblia do app: o versículo tocado vira o início da
+  // projeção e ▶ Próximo continua pelos versículos seguintes do capítulo.
+  projetarBibliaRef(num + '-9999');
+}
+
+function atualizarDestaqueVersiculo() {
+  var alvo = document.getElementById('bib_vers').value.trim();
+  [].forEach.call(
+    document.querySelectorAll('#lista_biblia li.bib-versiculo'),
+    function(li) { li.classList.toggle('on', li.dataset.vers === alvo); });
+}
+
 function carregarVersoes(j) {
   var sel = document.getElementById('bib_versao');
   if (!j || !j.versoes) return;
+  var anterior = sel.value;
   sel.innerHTML = '';
   j.versoes.forEach(function(v) {
     var o = document.createElement('option');
@@ -307,7 +515,9 @@ function carregarVersoes(j) {
     if (j.versao === v) o.selected = true;
     sel.appendChild(o);
   });
-  carregarOpcoesBiblia();
+  // Só recarrega a grade quando a versão mudou; respostas de busca/ref não
+  // devem apagar o capítulo que o operador está vendo.
+  if (!anterior || j.versao !== anterior) carregarOpcoesBiblia();
 }
 
 function carregarLivros() {
@@ -321,6 +531,7 @@ function carregarLivros() {
       if (l === 'Jo\u00E3o') o.selected = true;
       sel.appendChild(o);
     });
+    renderizarLivrosGrade(j.livros);
     carregarOpcoesBiblia();
   }).catch(function() {});
 }
@@ -341,13 +552,25 @@ function preencherOpcoes(id, valores) {
 function carregarOpcoesBiblia() {
   var v = document.getElementById('bib_versao').value;
   var livro = document.getElementById('bib_livro').value;
-  var cap = document.getElementById('bib_cap').value.trim();
-  apiGet('/api/remoto/biblia_opcoes?versao=' + encodeURIComponent(v) +
+  var capEl = document.getElementById('bib_cap');
+  var cap = capEl.value.trim();
+  return apiGet('/api/remoto/biblia_opcoes?versao=' + encodeURIComponent(v) +
          '&livro=' + encodeURIComponent(livro) +
          '&cap=' + encodeURIComponent(cap)).then(function(j) {
     if (!j || !j.ok) return;
     preencherOpcoes('bib_cap_opcoes', j.capitulos);
     preencherOpcoes('bib_vers_opcoes', j.versiculos);
+    renderizarCapitulosGrade(livro, j.capitulos);
+    cap = capEl.value.trim();
+    if (j.capitulos.length && (!cap || j.capitulos.indexOf(cap) < 0)) {
+      // Livro novo (ou capítulo que não existe nesta versão): começa no
+      // primeiro capítulo, como na janela Bíblia do app.
+      capEl.value = j.capitulos[0];
+      carregarOpcoesBiblia();
+      return;
+    }
+    atualizarDestaqueCapitulo(cap);
+    carregarVersiculosGrade(livro, cap);
   }).catch(function() {});
 }
 
@@ -457,7 +680,7 @@ function buscarBiblia() {
   apiGet('/api/remoto/biblia?q=' + encodeURIComponent(q) +
          '&versao=' + encodeURIComponent(v)).then(function(j) {
     carregarVersoes(j);
-    var ul = document.getElementById('lista_biblia');
+    var ul = document.getElementById('lista_biblia_busca');
     ul.innerHTML = '';
     if (!j.resultados || !j.resultados.length) {
       ul.innerHTML = '<li class="vazio">Nenhum vers&iacute;culo encontrado.</li>';
@@ -1262,33 +1485,52 @@ PAGINA = """<!DOCTYPE html>
 </section>
 
 <section id="aba-biblia">
-  <div class="card">
-    <h3>Refer&ecirc;ncia (Cap: V:)</h3>
-    <select id="bib_versao"></select>
-    <select id="bib_livro"></select>
-    <div class="linha" style="margin-top:8px">
-      <span class="pill">Cap:</span>
-      <input id="bib_cap" list="bib_cap_opcoes" inputmode="numeric" placeholder="3" style="max-width:80px">
-      <datalist id="bib_cap_opcoes"></datalist>
-      <span class="pill">V:</span>
-      <input id="bib_vers" list="bib_vers_opcoes" inputmode="numeric" placeholder="16 (ou 1-7)">
-      <datalist id="bib_vers_opcoes"></datalist>
+  <div class="card bib-grade">
+    <div class="bib-bloco bib-livros">
+      <h3>Livros &middot; <span id="bib_livro_atual">&mdash;</span></h3>
+      <div id="bib_livros_grade" class="bib-grade-botoes livros"></div>
     </div>
+    <div class="bib-bloco bib-capitulos">
+      <h3>Cap&iacute;tulos &middot; <span id="bib_capitulos_titulo">&mdash;</span></h3>
+      <div id="bib_capitulos_grade" class="bib-grade-botoes"></div>
+    </div>
+    <div class="bib-bloco bib-versiculos">
+      <h3>Vers&iacute;culos &middot; <span id="bib_vers_titulo">&mdash;</span></h3>
+      <ul id="lista_biblia"><li class="vazio">Escolha um livro e um cap&iacute;tulo.</li></ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Vers&atilde;o e navega&ccedil;&atilde;o</h3>
+    <select id="bib_versao"></select>
     <div class="linha" style="margin-top:8px">
       <button class="btn" onclick="slide('ant')">&#9664; Anterior</button>
       <button class="btn verde" onclick="slide('prox')">&#9654; Pr&oacute;ximo</button>
     </div>
-    <div style="color:#8b949e;font-size:13px;margin-top:6px">
-      Preencha o vers&iacute;culo (V:): a proje&ccedil;&atilde;o come&ccedil;a sozinha.
-      No fim da faixa, &#9654; Pr&oacute;ximo encerra e volta ao rel&oacute;gio.
-    </div>
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;color:#8b949e;font-size:13px">
+        Digitar refer&ecirc;ncia (Cap: / V:)</summary>
+      <div class="linha" style="margin-top:8px">
+        <select id="bib_livro"></select>
+        <span class="pill">Cap:</span>
+        <input id="bib_cap" list="bib_cap_opcoes" inputmode="numeric" placeholder="3" style="max-width:80px">
+        <datalist id="bib_cap_opcoes"></datalist>
+        <span class="pill">V:</span>
+        <input id="bib_vers" list="bib_vers_opcoes" inputmode="numeric" placeholder="16 (ou 1-7)">
+        <datalist id="bib_vers_opcoes"></datalist>
+      </div>
+      <div style="color:#8b949e;font-size:13px;margin-top:6px">
+        Preencha o vers&iacute;culo (V:): a proje&ccedil;&atilde;o come&ccedil;a sozinha.
+      </div>
+    </details>
   </div>
+
   <div class="card">
     <h3>Buscar vers&iacute;culo (texto)</h3>
     <input id="bib_busca" placeholder="Texto do vers&iacute;culo..." enterkeyhint="search">
     <button class="btn" onclick="buscarBiblia()">&#128269; Buscar</button>
   </div>
-  <div class="card"><ul id="lista_biblia"><li class="vazio">Busque um vers&iacute;culo.</li></ul></div>
+  <div class="card"><ul id="lista_biblia_busca"><li class="vazio">Busque um vers&iacute;culo.</li></ul></div>
 </section>
 
 <section id="aba-anuncio">
