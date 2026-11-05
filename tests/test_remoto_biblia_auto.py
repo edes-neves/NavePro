@@ -46,6 +46,8 @@ check("aba Bíblia tem o botão Anterior ligado a slide('ant')",
       "onclick=\"slide('ant')\"" in aba and "Anterior" in aba)
 check("aba Bíblia tem o botão Próximo ligado a slide('prox')",
       "onclick=\"slide('prox')\"" in aba and "Pr&oacute;ximo" in aba)
+check("aba Bíblia tem o botão Encerrar ligado a slide('parar')",
+      "onclick=\"slide('parar')\"" in aba and "Encerrar" in aba)
 check("botões antigos (Buscar/Projetar) saíram da referência",
       "buscarBibliaRef()" not in aba and "projetarBibliaRef()" not in aba)
 check("Anterior/Próximo usam a mesma rota da aba Slides",

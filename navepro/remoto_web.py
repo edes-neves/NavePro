@@ -1507,6 +1507,9 @@ PAGINA = """<!DOCTYPE html>
       <button class="btn" onclick="slide('ant')">&#9664; Anterior</button>
       <button class="btn verde" onclick="slide('prox')">&#9654; Pr&oacute;ximo</button>
     </div>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn vermelho" onclick="slide('parar')">&#9209; Encerrar (rel&oacute;gio)</button>
+    </div>
     <details style="margin-top:10px">
       <summary style="cursor:pointer;color:#8b949e;font-size:13px">
         Digitar refer&ecirc;ncia (Cap: / V:)</summary>
