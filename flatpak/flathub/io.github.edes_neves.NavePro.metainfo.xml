@@ -40,6 +40,14 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.3.4" date="2026-11-05">
+      <description>
+        <ul>
+          <li>Ordem de Serviço: o serviço selecionado fica fixo ao fechar/reabrir a janela e ao reiniciar o app</li>
+          <li>Bíblia em grade: botões e letras dos livros cerca de 30% maiores</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.3" date="2026-11-05">
       <description>
         <ul>
