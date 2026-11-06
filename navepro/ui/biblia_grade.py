@@ -53,6 +53,10 @@ COR_VERMELHO_ATIVO = '#f85149'
 
 PLACEHOLDER_BUSCA = "Buscar versículo por texto..."
 
+# Livros ~30% maiores que o desenho original: o painel tem espaço sobrando e
+# os botões/letras ficam mais confortáveis para tocar na tela.
+ESCALA_LIVROS = 1.3
+
 # Cache do índice da Bíblia entre aberturas da janela. As consultas DISTINCT
 # são baratas com o índice, mas a janela é aberta e fechada várias vezes
 # durante o culto; cachear evita repetir as mesmas leituras. É invalidado
@@ -600,9 +604,12 @@ class JanelaBibliaGradeMixin:
                     "Use o botão '📥 Importar' para adicionar uma Bíblia.")
                 return livros
             largura = _largura_canvas(canvas_livros, 0.7, 300)
-            colunas = max(9, min(16, largura // 60))
+            colunas_base = max(9, min(16, largura // 60))
+            colunas = max(9, round(colunas_base / ESCALA_LIVROS))
             cel_w = largura / colunas
-            cel_h = 50
+            cel_h = int(50 * ESCALA_LIVROS)
+            fonte_abrev = round(12 * ESCALA_LIVROS)
+            fonte_nome = round(7 * ESCALA_LIVROS)
             for i, livro in enumerate(livros):
                 coluna = i % colunas
                 linha = i // colunas
@@ -614,11 +621,13 @@ class JanelaBibliaGradeMixin:
                     fill=COR_CARTAO, outline='', tags=(tag,))
                 abreviatura = ABREVIACOES_BIBLIA.get(livro, livro[:2])
                 abrev = canvas_livros.create_text(
-                    x + cel_w / 2, y + 5, text=abreviatura,
-                    font=("Arial", 12, "bold"), fill=COR_TEXTO,
+                    x + cel_w / 2, y + int(5 * ESCALA_LIVROS),
+                    text=abreviatura,
+                    font=("Arial", fonte_abrev, "bold"), fill=COR_TEXTO,
                     anchor='n', tags=(tag,))
                 nome_id = canvas_livros.create_text(
-                    x + cel_w / 2, y + 23, text=livro, font=("Arial", 7),
+                    x + cel_w / 2, y + int(23 * ESCALA_LIVROS),
+                    text=livro, font=("Arial", fonte_nome),
                     fill=COR_TEXTO, anchor='n',
                     width=max(30, int(cel_w) - 8), justify='center',
                     tags=(tag,))

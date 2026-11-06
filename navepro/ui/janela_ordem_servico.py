@@ -223,9 +223,14 @@ class JanelaOrdemServicoMixin:
             ord_servicos = _ordenar_servicos()
             opcoes = [_rotulo_servico(s) for s in ord_servicos]
             combo_servico['values'] = opcoes
-            combo_servico._servico_ids = [s['id'] for s in ord_servicos]
+            ids = [s['id'] for s in ord_servicos]
+            combo_servico._servico_ids = ids
             if opcoes and escolher:
-                combo_servico.current(0)
+                # Restaura o serviço escolhido na última sessão. Se ele não
+                # existir mais, cai no primeiro (mais recente).
+                salvo = dados.get("_servico_selecionado")
+                combo_servico.current(
+                    ids.index(salvo) if salvo in ids else 0)
 
         def _on_servico_select(event=None):
             sel = combo_servico.get()
@@ -234,7 +239,14 @@ class JanelaOrdemServicoMixin:
             idx = combo_servico.current()
             ids = getattr(combo_servico, '_servico_ids', [])
             if idx >= 0 and idx < len(ids):
-                servico_selecionado_id[0] = ids[idx]
+                sid = ids[idx]
+                servico_selecionado_id[0] = sid
+                # Fixa a escolha no servicos.json para reabrir nesta ordem.
+                if dados.get("_servico_selecionado") != sid:
+                    dados["_servico_selecionado"] = sid
+                    if not _salvar_servicos_json(dados):
+                        log.debug("Não foi possível guardar o serviço "
+                                  "selecionado em servicos.json.")
                 _carregar_itens()
 
         combo_servico.bind("<<ComboboxSelected>>", _on_servico_select)
@@ -901,6 +913,7 @@ class JanelaOrdemServicoMixin:
             if not nome:
                 return
             novo_id = _proximo_id_servico_livre(dados)
+            selecionado_antes = dados.get("_servico_selecionado")
             dados["servicos"].append({
                 "id": novo_id,
                 "nome": nome,
@@ -909,10 +922,15 @@ class JanelaOrdemServicoMixin:
             })
             dados["_proximo_id_servico"] = max(
                 dados.get("_proximo_id_servico", 1), novo_id + 1)
+            dados["_servico_selecionado"] = novo_id
             if not _salvar_servicos_json(dados):
                 dados["servicos"] = [s for s in dados["servicos"]
                                      if s.get("id") != novo_id]
                 dados["_proximo_id_servico"] = novo_id
+                if selecionado_antes is None:
+                    dados.pop("_servico_selecionado", None)
+                else:
+                    dados["_servico_selecionado"] = selecionado_antes
                 tkinter.messagebox.showwarning(
                     "⚠️", "Não foi possível salvar em servicos.json.", parent=janela)
                 return
