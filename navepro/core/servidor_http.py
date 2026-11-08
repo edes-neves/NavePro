@@ -44,6 +44,7 @@ _ACOES_POST_REMOTO: dict = {
     '/api/remoto/medidor': 'medidor',
     '/api/remoto/tamanho': 'tamanho',
     '/api/remoto/relogio': 'relogio',
+    '/api/remoto/projecao': 'abrir_config_projecao',
     '/api/remoto/sorteio/abrir': 'sorteio_abrir',
     '/api/remoto/sorteio/fechar': 'sorteio_fechar',
     '/api/remoto/sorteio/configurar': 'sorteio_configurar',

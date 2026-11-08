@@ -31,6 +31,8 @@ A API usada (tudo com o header `X-Token`):
   GET  /api/remoto/relogio     → configuração e estado do relógio
   POST /api/remoto/relogio     → {acao: configurar|projetar|
                                    alternar_relogio|alternar_temperatura}
+  POST /api/remoto/projecao    → abre no computador a janela Aparência da
+                                   Projeção (com as opções da Bíblia)
   GET  /api/remoto/sorteio     → estado e configuração do Sorteio
   POST /api/remoto/sorteio/abrir      → abre o Sorteio
   POST /api/remoto/sorteio/fechar     → fecha o Sorteio
@@ -769,6 +771,16 @@ function autoBiblia(ev) {
   el.addEventListener('input', autoBiblia);
   el.addEventListener('change', autoBiblia);
 });
+
+// Abre no computador a janela "Aparência da Projeção" (a mesma da Bíblia
+// do app), com todas as opções: cor da referência, caixa e alinhamento.
+function abrirProjecaoBiblia() {
+  apiPost('/api/remoto/projecao', {}).then(function(j) {
+    if (j && j.ok)
+      aviso('Janela Apar\u00eancia da Proje\u00e7\u00e3o aberta no computador',
+            '#238636');
+  });
+}
 
 // Projeta por referência (livro + Cap + V:), versículo a versículo.
 // Sem `vers`, usa o campo "V:"; com `vers`, começa naquele versículo.
@@ -1677,6 +1689,7 @@ PAGINA = """<!DOCTYPE html>
       <button class="btn verde" onclick="slide('prox')">&#9654; Pr&oacute;ximo</button>
     </div>
     <div class="linha" style="margin-top:8px">
+      <button class="btn" onclick="abrirProjecaoBiblia()">&#127912; Proje&ccedil;&atilde;o</button>
       <button class="btn vermelho" onclick="slide('parar')">&#9209; Encerrar (rel&oacute;gio)</button>
     </div>
     <details style="margin-top:10px">

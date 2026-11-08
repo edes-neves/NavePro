@@ -13,6 +13,7 @@ verificados no próprio texto (mesma abordagem do test_remoto_web.py).
 """
 
 import os
+import re
 import sys
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +49,18 @@ check("aba Bíblia tem o botão Próximo ligado a slide('prox')",
       "onclick=\"slide('prox')\"" in aba and "Pr&oacute;ximo" in aba)
 check("aba Bíblia tem o botão Encerrar ligado a slide('parar')",
       "onclick=\"slide('parar')\"" in aba and "Encerrar" in aba)
+check("aba Bíblia tem o botão Projeção ligado à janela de aparência",
+      "onclick=\"abrirProjecaoBiblia()\"" in aba
+      and "Proje&ccedil;&atilde;o" in aba)
+check("Projeção fica na mesma linha do Encerrar (relógio)",
+      bool(re.search(
+          r'<div class="linha"[^>]*>\s*'
+          r'<button[^>]*abrirProjecaoBiblia[^>]*>.*?</button>\s*'
+          r'<button[^>]*slide\(\'parar\'\)',
+          aba, re.S)))
+check("botão Projeção chama a rota /api/remoto/projecao",
+      "function abrirProjecaoBiblia()" in JS
+      and "/api/remoto/projecao" in JS)
 check("botões antigos (Buscar/Projetar) saíram da referência",
       "buscarBibliaRef()" not in aba and "projetarBibliaRef()" not in aba)
 check("Anterior/Próximo usam a mesma rota da aba Slides",

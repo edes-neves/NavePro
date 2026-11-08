@@ -282,8 +282,9 @@ class ControleRemotoMixin:
     def _remoto_despacho(self, acao: str, dados: dict) -> Any:
         """Executa uma ação vinda do ServidorAsyncHTTP (na thread do Tk).
 
-        O servidor chama isto via `_na_ui` (root.after + Future). Nunca
-        abre diálogo e nunca deixa exceção escapar: devolve sempre dicts
+        O servidor chama isto via `_na_ui` (root.after + Future). Alguns
+        handlers abrem janelas no computador (Sorteio, Aparência da
+        Projeção), mas nunca deixam exceção escapar: devolve sempre dicts
         serializáveis — erro vira {'ok': False, 'erro': ...} (com o
         próprio JSON da resposta; o HTTP segue 200).
         """
@@ -325,6 +326,8 @@ class ControleRemotoMixin:
                 'servico_item': lambda d: self._remoto_servico_item(d),
                 'medidor': lambda d: self._remoto_medidor(d),
                 'relogio': lambda d: self._remoto_relogio(d),
+                'abrir_config_projecao': lambda d:
+                    self._remoto_abrir_config_projecao(),
                 'sorteio_abrir': lambda d: self._remoto_sorteio_abrir(),
                 'sorteio_fechar': lambda d: self._remoto_sorteio_fechar(),
                 'sorteio_configurar': lambda d: self._remoto_sorteio_configurar(d),
@@ -343,6 +346,11 @@ class ControleRemotoMixin:
         """Projeta anúncio pedido pelo celular (garante o telão antes)."""
         self.player._garantir_telao()
         return self.projetar_anuncio(int(dados.get('id') or 0))
+
+    def _remoto_abrir_config_projecao(self) -> dict:
+        """Abre no computador a janela Aparência da Projeção (opções da Bíblia)."""
+        self.abrir_config_projecao_dialogo(mostrar_cor_ref=True)
+        return {'ok': True}
 
     def _remoto_sorteio_estado(self) -> dict:
         """Estado do Sorteio Profissional (para o controle remoto)."""

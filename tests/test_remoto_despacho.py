@@ -51,6 +51,8 @@ self_fake = types.SimpleNamespace(
     _remoto_buscar_hino=lambda busca: chamadas.append(f"hino:{busca}")
     or {"ok": True, "hinos": []},
     _remoto_medidor=lambda d: chamadas.append("medidor") or {"ok": True},
+    _remoto_abrir_config_projecao=lambda: chamadas.append("config_projecao")
+    or {"ok": True},
 )
 
 ns = {"log": log, "Any": __import__("typing").Any,
@@ -74,6 +76,9 @@ checar("livros_biblia devolve os livros", r == {"ok": True,
                                                 "livros": ["ARC", "NVI"]})
 r = despacho("medidor", {"acao": "iniciar"})
 checar("medidor chama o handler", chamadas[-1] == "medidor")
+r = despacho("abrir_config_projecao", {})
+checar("abrir_config_projecao chama o handler",
+       r == {"ok": True} and chamadas[-1] == "config_projecao")
 
 # ── 2. dados não-dict viram {} ───────────────────────────────────────
 chamadas.clear()
@@ -95,6 +100,20 @@ despacho_err = ns["_remoto_despacho"].__get__(self_err)
 r = despacho_err("estado", {})
 checar("exceção do handler vira {'ok': False, 'erro': ...}",
        r == {"ok": False, "erro": "boom interno"})
+
+# ── 5. Abrir a Aparência da Projeção usa as opções da Bíblia ─────────
+chamadas_cfg = []
+self_cfg = types.SimpleNamespace(
+    abrir_config_projecao_dialogo=lambda **kw: chamadas_cfg.append(kw))
+ns_cfg = {"log": log}
+exec(compile(_extrair("_remoto_abrir_config_projecao"),
+             "<_remoto_abrir_config_projecao>", "exec"),
+     ns_cfg)  # noqa: S102
+abrircfg = ns_cfg["_remoto_abrir_config_projecao"].__get__(self_cfg)
+r = abrircfg()
+checar("Aparência da Projeção abre com cor da referência/caixa/alinhamento",
+       r == {"ok": True}
+       and chamadas_cfg == [{"mostrar_cor_ref": True}])
 
 print()
 if falhas:
