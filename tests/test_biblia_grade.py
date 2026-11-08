@@ -82,6 +82,17 @@ _seg_destruir = ast.get_source_segment(_SRC, _funcoes["_ao_destruir"])
 checar("fechar cancela os timers pendentes",
        "_id_carga" in _seg_destruir and "_id_resize" in _seg_destruir)
 
+# ── 3. Abre maximizada no monitor, sem tela cheia ────────────────────
+checar("maximizar no monitor virou função separada",
+       "_maximizar_no_monitor" in _funcoes)
+_seg_abertura = ast.get_source_segment(_SRC, _metodo)
+checar("abertura NÃO entra em tela cheia",
+       "'-fullscreen'" not in _seg_abertura.split(
+           "def _toggle_fullscreen", 1)[0])
+checar("abertura ocupa a área do monitor (maximizada)",
+       "-zoomed" in ast.get_source_segment(
+           _SRC, _funcoes["_maximizar_no_monitor"]))
+
 print()
 if falhas:
     print(f"X {len(falhas)} teste(s) falharam.")

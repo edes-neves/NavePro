@@ -29,7 +29,6 @@ from navepro.core.banco import db_query
 from navepro.core.biblia_import import importar_biblias
 from navepro.core.monitores import _escolher_monitor_painel, get_monitors_config
 from navepro.core.slides import _buscar_versiculos_por_texto
-from navepro.core.util_tk import _centralizar_sobre
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
 
@@ -100,7 +99,7 @@ ABREVIACOES_BIBLIA = {
 
 class JanelaBibliaGradeMixin:
     def janela_biblia(self) -> None:
-        """Abre a Bíblia em grade, em tela cheia no monitor do operador."""
+        """Abre a Bíblia em grade, maximizada no monitor do operador."""
         aberta = getattr(self, "_biblia_grade", None)
         if aberta is not None:
             try:
@@ -117,9 +116,11 @@ class JanelaBibliaGradeMixin:
         janela.configure(bg=COR_FUNDO)
         self._biblia_grade = janela
 
-        # Tela cheia no monitor do painel (primário). Posicionar antes de
-        # ligar o fullscreen garante que o Tk use o monitor certo no Linux;
-        # no Windows o fullscreen já vai para o primário, que é o painel.
+        # Janela maximizada no monitor do painel (primário), NÃO em tela
+        # cheia: ocupa toda a área útil do monitor e mantém a barra de
+        # título/botões do sistema. Posicionar antes de maximizar garante
+        # que o Tk use o monitor certo no Linux; no Windows o maximizado
+        # já vai para o monitor primário, que é o painel.
         painel = None
         try:
             painel = _escolher_monitor_painel(get_monitors_config())
@@ -134,10 +135,28 @@ class JanelaBibliaGradeMixin:
                 f"{largura_inicial}x{altura_inicial}"
                 f"+{painel.x}+{painel.y}")
         janela.update_idletasks()
-        try:
-            janela.attributes('-fullscreen', True)
-        except tk.TclError:
-            pass
+
+        def _maximizar_no_monitor() -> None:
+            """Ocupa a área do monitor do painel sem entrar em tela cheia."""
+            try:
+                janela.attributes('-zoomed', True)
+                return
+            except (tk.TclError, ValueError):
+                pass
+            try:
+                janela.state('zoomed')
+                return
+            except tk.TclError:
+                pass
+            if painel is not None:
+                try:
+                    janela.geometry(
+                        f"{largura_inicial}x{altura_inicial}"
+                        f"+{painel.x}+{painel.y}")
+                except tk.TclError:
+                    pass
+
+        _maximizar_no_monitor()
         janela.lift()
         janela.focus_force()
 
@@ -981,8 +1000,9 @@ class JanelaBibliaGradeMixin:
                 atual = bool(janela.attributes('-fullscreen'))
                 janela.attributes('-fullscreen', not atual)
                 if atual:
-                    janela.geometry('1200x800')
-                    _centralizar_sobre(janela, self.root)
+                    # Ao sair da tela cheia, volta maximizada no monitor —
+                    # não para uma janela pequena centralizada.
+                    _maximizar_no_monitor()
             except tk.TclError:
                 pass
             return 'break'
