@@ -40,6 +40,15 @@
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
          considerar a build nova "igual" à instalada e recusar a
          atualização. -->
+    <release version="2.3.5" date="2026-11-07">
+      <description>
+        <ul>
+          <li>Controle remoto — YouTube: aceita links sem https:// e busca o título pelo oEmbed quando o yt-dlp não responde</li>
+          <li>Controle remoto — Relógio: nova aba para configurar cores, fundo, tamanhos e espaçamento, além de mostrar/ocultar relógio e temperatura no telão</li>
+          <li>Controle remoto — Serviço: botões Play/Pause e Parar na aba Serviço</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.4" date="2026-11-05">
       <description>
         <ul>
