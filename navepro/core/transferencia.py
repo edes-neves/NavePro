@@ -17,7 +17,11 @@ Regras de segurança (a importação nunca destrói dados sem rede):
     dentro do arquivo exportado;
   * as mídias escolhidas direto no editor de item (caminho_arquivo) NÃO
     são transferidas: o caminho é do computador de origem e o app já cai
-    no acervo local quando ele não existe.
+    no acervo local quando ele não existe. Para que essas ordens continuem
+    apontando para as mesmas pastas em outra máquina, a parte do caminho
+    relativa à pasta do usuário vira o token {{HOME}} na exportação e é
+    reexpandida para a pasta do usuário atual na importação (caminhos fora
+    da pasta do usuário — e pacotes antigos — ficam intactos);
 """
 
 from __future__ import annotations
@@ -45,6 +49,83 @@ ARQ_ANUNCIOS = "anuncios.json"
 ARQ_SERVICOS = "servicos.json"
 MODOS_IMPORTACAO = ("somar", "atualizar", "substituir")
 LIMITE_BACKUP_MB = 200  # mídia maior que isso não entra no backup
+TOKEN_HOME = "{{HOME}}"  # pasta do usuário de origem (portabilidade)
+
+
+def _caminho_para_portatil(caminho: str, home: str | None = None) -> str:
+    """Troca a pasta do usuário pelo token {{HOME}} (exportação).
+
+    Só mexe em caminhos absolutos dentro da pasta do usuário. Qualquer outro
+    valor — caminho de outra unidade/rede, vazio ou já portátil — volta
+    intacto, preservando o comportamento de pacotes e servicos.json antigos.
+    """
+    valor = (caminho or "").strip()
+    if not valor:
+        return caminho or ""
+    home = (home or os.path.expanduser("~")).replace("\\", "/").rstrip("/")
+    if not home:
+        return caminho
+    normal = valor.replace("\\", "/")
+    base = home.lower() if _eh_windows() else home
+    comparado = normal.lower() if _eh_windows() else normal
+    if comparado == base:
+        return TOKEN_HOME
+    if comparado.startswith(base + "/"):
+        return TOKEN_HOME + "/" + normal[len(home) + 1:]
+    return caminho
+
+
+def _caminho_de_portatil(caminho: str, home: str | None = None) -> str:
+    """Reexpande o token {{HOME}} para a pasta do usuário atual (importação).
+
+    Caminhos sem o token (inclusive os de pacotes antigos) são devolvidos
+    sem alteração, então nada que já funcionava muda de comportamento.
+    """
+    valor = (caminho or "").strip()
+    if not valor:
+        return caminho or ""
+    home = home or os.path.expanduser("~")
+    if valor == TOKEN_HOME:
+        return home
+    prefixo = TOKEN_HOME + "/"
+    if not valor.startswith(prefixo):
+        return caminho
+    partes = [p for p in valor[len(prefixo):].replace("\\", "/").split("/")
+              if p and p not in (".", "..")]
+    if not partes:
+        return home
+    return os.path.join(home, *partes)
+
+
+def _servicos_portateis(servicos: dict, home: str | None = None) -> dict:
+    """Cópia de `servicos` com os caminho_arquivo dos itens tokenizados.
+
+    A exportação grava essa cópia, sem alterar o objeto em memória do app
+    (a janela da Ordem de Serviço continua mostrando os caminhos reais).
+    """
+    if not isinstance(servicos, dict):
+        return servicos
+    novo = dict(servicos)
+    lista: list = []
+    for serv in servicos.get("servicos") or []:
+        if not isinstance(serv, dict):
+            lista.append(serv)
+            continue
+        copia = dict(serv)
+        itens: list = []
+        for item in serv.get("itens") or []:
+            if not isinstance(item, dict):
+                itens.append(item)
+                continue
+            item_copia = dict(item)
+            if "caminho_arquivo" in item_copia:
+                item_copia["caminho_arquivo"] = _caminho_para_portatil(
+                    item_copia.get("caminho_arquivo") or "", home)
+            itens.append(item_copia)
+        copia["itens"] = itens
+        lista.append(copia)
+    novo["servicos"] = lista
+    return novo
 
 
 def _nome_arquivo(diretorio: str | None = None, prefixo: str = "backup") -> str:
@@ -159,6 +240,7 @@ def exportar_transferencia(
     Returns um resumo {anuncios, servicos, midia, destino}.
     """
     mapa = _mapa_de_midia(anuncios) if incluir_midia else {}
+    servicos_portateis = _servicos_portateis(servicos)
     arquivos = sorted(mapa.items(), key=lambda par: par[1])
     destino = os.path.abspath(os.path.expanduser(destino))
     if not destino.lower().endswith(EXTENSAO_TRANSFERENCIA):
@@ -197,8 +279,8 @@ def exportar_transferencia(
                 json.dumps(lista_para_zip, ensure_ascii=False, indent=2))
             zf.writestr(
                 ARQ_SERVICOS,
-                json.dumps(servicos or {"servicos": []}, ensure_ascii=False,
-                           indent=2))
+                json.dumps(servicos_portateis or {"servicos": []},
+                           ensure_ascii=False, indent=2))
             # Mídia: já vem comprimida (jpg/png/pdf/mp4) — guardar sem
             # recomprimir é muito mais rápido e o arquivo fica do mesmo
             # tamanho.
@@ -396,6 +478,9 @@ def _converter_itens(
         if not isinstance(item, dict):
             continue
         novo = dict(item)
+        if "caminho_arquivo" in novo:
+            novo["caminho_arquivo"] = _caminho_de_portatil(
+                novo.get("caminho_arquivo") or "")
         if (novo.get("tipo") or "").lower() == "anuncio" \
                 and novo.get("referencia_id") not in (None, ""):
             try:
