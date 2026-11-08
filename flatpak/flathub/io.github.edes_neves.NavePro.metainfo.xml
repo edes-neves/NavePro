@@ -35,6 +35,16 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.3.6" date="2026-11-08">
+      <description>
+        <ul>
+          <li>Bíblia: janela em grade abre maximizada no monitor do operador, mantendo a barra de título</li>
+          <li>Bíblia: opções de caixa (normal/maiúsculas/minúsculas) e alinhamento do versículo, com a referência sempre dentro do cartão e a fonte ajustada nos versículos grandes</li>
+          <li>Controle remoto — Bíblia: botão Projeção para abrir a janela Aparência da Projeção no computador</li>
+          <li>Transferência: os caminhos das mídias da Ordem de Serviço vão no pacote .navepro de forma portátil ({{HOME}})</li>
+        </ul>
+      </description>
+    </release>
     <!-- Cada <release> declarado aqui vira a versão que o flatpak mostra
          (`flatpak info`/`remote-ls`) e o que ele compara em
          `flatpak update`. Releases esquecidos aqui fazem o flatpak
