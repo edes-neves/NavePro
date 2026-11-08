@@ -1008,6 +1008,8 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         cfg_atual.setdefault("cor_fundo", "#000000")
         cfg_atual.setdefault("fundo_opaco", True)
         cfg_atual.setdefault("fundo_imagem", "")
+        cfg_atual.setdefault("biblia_caixa", "normal")
+        cfg_atual.setdefault("biblia_alinhamento", "centro")
 
         cfg_win = tk.Toplevel(janela)
         cfg_win.title("🎨 Aparência da Projeção (Telão)")
@@ -1064,6 +1066,26 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                 font=("Arial", 10))
             rb.pack(side='left', padx=2)
 
+        # Opções exclusivas da Bíblia (texto do versículo e alinhamento no
+        # cartão). Ficam vivas mesmo quando a janela é de Anúncios/Hinos
+        # para preservar o que o operador escolheu ao salvar de lá.
+        mapa_caixa = {
+            "Como está": "normal",
+            "MAIÚSCULAS": "maiusculas",
+            "minúsculas": "minusculas",
+        }
+        rev_caixa = {v: k for k, v in mapa_caixa.items()}
+        mapa_alinhamento = {
+            "Esquerda": "esquerda",
+            "Centralizado": "centro",
+            "Direita": "direita",
+        }
+        rev_alinhamento = {v: k for k, v in mapa_alinhamento.items()}
+        var_caixa = tk.StringVar(value=rev_caixa.get(
+            str(cfg_atual["biblia_caixa"]), "Como está"))
+        var_alinhamento = tk.StringVar(value=rev_alinhamento.get(
+            str(cfg_atual["biblia_alinhamento"]), "Centralizado"))
+
         if mostrar_cor_ref:
             # ── Cor da referência bíblica (livro cap:vers. — canto inferior direito) ──
             tk.Label(c_main, text="Cor da referência bíblica (livro cap:vers.):",
@@ -1079,6 +1101,26 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                     activebackground='#0d1117', activeforeground='#f0c040',
                     font=("Arial", 10))
                 rb.pack(side='left', padx=2)
+
+            # ── Texto do versículo: caixa e alinhamento dentro do cartão ──
+            linha_versiculo = tk.Frame(c_main, bg='#0d1117')
+            linha_versiculo.pack(fill='x', pady=(0, 10))
+            tk.Label(linha_versiculo, text="Versículo:",
+                     font=("Arial", 11, "bold"), fg='#f0c040',
+                     bg='#0d1117').pack(side='left')
+            combo_caixa = ttk.Combobox(
+                linha_versiculo, textvariable=var_caixa, state="readonly",
+                values=list(mapa_caixa), width=12, font=("Arial", 10))
+            combo_caixa.pack(side='left', padx=(4, 12), ipady=1)
+            combo_caixa._navepro_var = var_caixa
+            tk.Label(linha_versiculo, text="Alinhamento:",
+                     font=("Arial", 11, "bold"), fg='#f0c040',
+                     bg='#0d1117').pack(side='left')
+            combo_alinhamento = ttk.Combobox(
+                linha_versiculo, textvariable=var_alinhamento, state="readonly",
+                values=list(mapa_alinhamento), width=12, font=("Arial", 10))
+            combo_alinhamento.pack(side='left', padx=(4, 0), ipady=1)
+            combo_alinhamento._navepro_var = var_alinhamento
 
         # ── Cor de fundo ──
         tk.Label(c_main, text="Cor de fundo:", font=("Arial", 11, "bold"),
@@ -1162,6 +1204,16 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             }
             if mostrar_cor_ref:
                 novo["cor_ref"] = var_cor_ref.get()
+                novo["biblia_caixa"] = mapa_caixa.get(
+                    var_caixa.get(), "normal")
+                novo["biblia_alinhamento"] = mapa_alinhamento.get(
+                    var_alinhamento.get(), "centro")
+            else:
+                # A janela de Anúncios/Hinos não mostra estes ajustes:
+                # preserva o que o operador configurou na Bíblia.
+                for chave in ("cor_ref", "biblia_caixa",
+                              "biblia_alinhamento"):
+                    novo[chave] = cfg_atual.get(chave)
             self.salvar_config_projecao(novo)
             cfg_win.destroy()
 

@@ -35,6 +35,21 @@ from navepro.core.util_tk import _normalizar_escala_tk
 
 log = get_logger("telao")
 
+
+def _texto_biblia_com_caixa(texto: str, modo: str) -> str:
+    """Aplica o modo de caixa (normal/maiúsculas/minúsculas) ao versículo."""
+    if modo == "maiusculas":
+        return texto.upper()
+    if modo == "minusculas":
+        return texto.lower()
+    return texto
+
+
+def _justify_biblia(alinhamento: str) -> str:
+    """Converte o alinhamento configurado para o `justify` do canvas."""
+    return {"esquerda": "left", "direita": "right"}.get(alinhamento, "center")
+
+
 class TelaoWindow:
     """Janela de projeção exibida no telão (monitor secundário).
     Otimizações:
@@ -155,6 +170,9 @@ class TelaoWindow:
         self._texto_escala = 1.0
         self._texto_largura_base = None
         self._caixa_texto_itens: list = []
+        self._caixa_texto_box: tuple | None = None
+        self._caixa_texto_margem_ref: int = 0
+        self._caixa_texto_ref_cabe: bool = False
         self._slides: list = []
         self._slide_index = 0
         self._proj_cfg: dict = {
@@ -166,6 +184,8 @@ class TelaoWindow:
             "cor_fundo": "#000000",
             "fundo_opaco": True,
             "fundo_imagem": "",
+            "biblia_caixa": "normal",
+            "biblia_alinhamento": "centro",
         }
         self._fundo_imagem_item = None
         self._fundo_imagem_to_tk = None
@@ -538,6 +558,8 @@ class TelaoWindow:
             "cor_fundo": "#000000",
             "fundo_opaco": True,
             "fundo_imagem": "",
+            "biblia_caixa": "normal",
+            "biblia_alinhamento": "centro",
         }
         merged = dict(defaults)
         if isinstance(cfg, dict):
@@ -782,6 +804,9 @@ class TelaoWindow:
             except tk.TclError:
                 pass
         self._caixa_texto_itens = []
+        self._caixa_texto_box = None
+        self._caixa_texto_margem_ref = 0
+        self._caixa_texto_ref_cabe = False
 
     def _rgb_da_cor(self, cor: str, padrao: tuple = (0, 0, 0)) -> tuple:
         """Converte uma cor Tk (hex ou nome) em (r, g, b) de 0 a 255."""
@@ -841,12 +866,14 @@ class TelaoWindow:
             x1, y2 - raio, x1, y1 + raio, x1, y1,
         ]
 
-    def _desenhar_caixa_texto(self, cor_fundo: str) -> None:
+    def _desenhar_caixa_texto(self, cor_fundo: str, largura_referencia: int = 0,
+                              altura_referencia: int = 0) -> None:
         """Desenha o cartão arredondado atrás do texto já posicionado.
 
         O tamanho é medido pelo bbox real do texto (com folga interna) e
-        limitado às margens da tela. O cartão fica sempre abaixo do texto,
-        preservando a projeção e a referência bíblica existentes.
+        limitado às margens da tela. Quando a referência bíblica é informada,
+        o cartão ganha espaço extra embaixo para ela caber no canto inferior
+        direito DENTRO da caixa (e não mais fora dela).
         """
         self._limpar_caixa_texto()
         try:
@@ -863,9 +890,22 @@ class TelaoWindow:
         pad_x = max(28, int(base * 0.035))
         pad_y = max(20, int(base * 0.028))
         largura = max(bx2 - bx1 + 2 * pad_x, int(w * 0.18))
+        if largura_referencia:
+            largura = max(largura, largura_referencia + 2 * pad_x)
         altura = max(by2 - by1 + 2 * pad_y, int(h * 0.10))
+        margem_ref = max(14, int(base * 0.016))
+        extra_inferior = 0
+        if altura_referencia:
+            gap_ref = max(8, int(base * 0.010))
+            # +2 de folga compensa o arredondamento inteiro de cy/altura;
+            # sem ela a checagem abaixo podia falhar por 1px e a referência
+            # caía no canto da tela (fora do cartão).
+            extra_inferior = max(
+                0, altura_referencia + gap_ref + margem_ref - pad_y) + 2
+            altura += extra_inferior
         cx = (bx1 + bx2) // 2
-        cy = (by1 + by2) // 2
+        # O texto permanece no mesmo lugar; só o cartão cresce para baixo.
+        cy = (by1 + by2) // 2 + extra_inferior // 2
         x1, x2 = cx - largura // 2, cx + largura // 2
         y1, y2 = cy - altura // 2, cy + altura // 2
         margem_x = max(24, int(w * 0.04))
@@ -896,14 +936,21 @@ class TelaoWindow:
         except tk.TclError:
             return
         self._caixa_texto_itens = itens
+        self._caixa_texto_box = (x1, y1, x2, y2)
+        self._caixa_texto_margem_ref = margem_ref
+        if altura_referencia:
+            gap_ref = max(8, int(base * 0.010))
+            self._caixa_texto_ref_cabe = (
+                y2 - margem_ref - altura_referencia >= by2 + gap_ref)
 
     def _desenhar_texto_no_canvas(self, texto: str, referencia: str = "",
                                   largura_max: int | None = None) -> tuple:
         """Desenha texto centralizado no canvas com auto-ajuste de fonte.
         Usado tanto na projeção simples (projetar_texto) quanto nos slides.
         Retorna a tupla de fonte aplicada.
-        Se referencia for fornecida (ex.: "João 3:16"), exibe no canto inferior direito
-        e o texto é desenhado dentro de uma caixa (cartão) contrastante com o fundo.
+        Se referencia for fornecida (ex.: "João 3:16"), o texto é desenhado
+        dentro de uma caixa (cartão) contrastante com o fundo e a referência
+        fica no canto inferior direito DENTRO dessa caixa.
         Se largura_max for fornecida, o texto é quebrado (e centralizado)
         dentro dessa largura máxima — usado pelo anúncio de imagem + texto,
         em que parte da tela é ocupada pela imagem.
@@ -913,7 +960,17 @@ class TelaoWindow:
         cfg = getattr(self, "_proj_cfg", None)
         if cfg is None:
             self.configurar_projecao()
+            cfg = self._proj_cfg
         self._limpar_caixa_texto()
+        # Opções da Bíblia (só valem quando há referência bíblica): caixa
+        # das letras (normal/maiúsculas/minúsculas) e alinhamento no cartão.
+        if referencia:
+            texto = _texto_biblia_com_caixa(
+                texto, str(cfg.get("biblia_caixa", "normal")))
+            justify = _justify_biblia(
+                str(cfg.get("biblia_alinhamento", "centro")))
+        else:
+            justify = "center"
         # Calcula largura de quebra e fonte inicial
         w = self.canvas.winfo_width() or self._monitor.width
         h = self.canvas.winfo_height() or self._monitor.height
@@ -963,7 +1020,63 @@ class TelaoWindow:
         if altura_total > max_altura and altura_total > 0:
             fator = max_altura / altura_total
             tamanho = max(12, int(tamanho * fator))
-        fonte = (familia, tamanho, "normal")
+        def _aplicar_texto(tam: int) -> tuple:
+            fonte_iter = (familia, tam, "normal")
+            self.canvas.itemconfig(
+                self.overlay_text,
+                text=texto,
+                font=fonte_iter,
+                fill=cor,
+                width=wrap_width,
+                justify=justify,
+                state="normal",
+            )
+            self.canvas.coords(self.overlay_text, centro_x, h // 2)
+            try:
+                self.root.update_idletasks()
+            except (tk.TclError, AttributeError):
+                pass
+            return fonte_iter
+
+        fonte = _aplicar_texto(tamanho)
+        # A contagem de linhas acima é estimada antes de o Tk quebrar o
+        # texto. Num versículo grande a estimativa pode ficar curta: o texto
+        # real ocupa mais altura, encosta na margem inferior e a referência
+        # acaba caindo fora do cartão. Mede o bbox REAL e procura a MAIOR
+        # fonte em que texto (com a referência embaixo) ainda cabe no telão.
+        if usar_caixa and referencia:
+            base = min(w, h)
+            pad_y = max(20, int(base * 0.028))
+            margem_y = max(20, int(h * 0.04))
+            tam_ref_ini = max(12, int(tamanho * 0.45))
+            try:
+                medidor_ref_ini = tkfont.Font(
+                    family=familia, size=tam_ref_ini, weight="bold")
+                altura_ref_ini = medidor_ref_ini.metrics("linespace")
+            except tk.TclError:
+                altura_ref_ini = tam_ref_ini + 4
+            ref_espaco = altura_ref_ini + max(
+                8, int(base * 0.010)) + max(14, int(base * 0.016))
+            # Altura máxima do texto para o cartão (texto + respiro +
+            # referência) ainda terminar acima da margem inferior.
+            limite_texto = max(
+                200, h - 2 * margem_y - 2 * max(pad_y, ref_espaco) - 4)
+            bbox = self.canvas.bbox(self.overlay_text)
+            if bbox and bbox[3] - bbox[1] > limite_texto:
+                lo, hi = 12, max(12, tamanho - 1)
+                melhor = 12
+                while lo <= hi:
+                    meio = (lo + hi) // 2
+                    _aplicar_texto(meio)
+                    bbox = self.canvas.bbox(self.overlay_text)
+                    if bbox and bbox[3] - bbox[1] <= limite_texto:
+                        melhor = meio
+                        lo = meio + 1
+                    else:
+                        hi = meio - 1
+                tamanho = melhor
+                fonte = _aplicar_texto(tamanho)
+
         self._font_letra = fonte
         self._current_text = texto
         self._current_temp = ""
@@ -972,24 +1085,30 @@ class TelaoWindow:
             self.canvas.itemconfig(self.temp_text, text="", state="hidden")
         except (tk.TclError, AttributeError):
             pass
-        self.canvas.itemconfig(
-            self.overlay_text,
-            text=texto,
-            font=fonte,
-            fill=cor,
-            width=wrap_width,
-            justify="center",
-            state="normal",
-        )
-        self.canvas.coords(self.overlay_text, centro_x, h // 2)
-        if usar_caixa:
-            self._desenhar_caixa_texto(
-                cfg.get("cor_fundo", "#000000") if cfg else "#000000")
-        # Referência bíblica (livro cap:vers.) — canto inferior direito
+        # Referência bíblica (livro cap:vers.). Na Bíblia ela fica DENTRO do
+        # cartão, no canto inferior direito; nos demais casos (ex.: anúncio
+        # com largura_max) mantém o canto inferior direito do telão.
+        cor_ref = cfg.get("cor_ref", "#A0A0A0")
+        largura_ref = 0
+        altura_ref = 0
+        fonte_ref = None
         if referencia:
-            cor_ref = cfg.get("cor_ref", "#A0A0A0")
             tam_ref = max(12, int(tamanho * 0.45))
             fonte_ref = (familia, tam_ref, "bold")
+            try:
+                medidor_ref = tkfont.Font(
+                    family=familia, size=tam_ref, weight="bold")
+                largura_ref = medidor_ref.measure(referencia)
+                altura_ref = medidor_ref.metrics("linespace")
+            except tk.TclError:
+                largura_ref = len(referencia) * max(6, tam_ref // 2)
+                altura_ref = tam_ref + 4
+        if usar_caixa:
+            self._desenhar_caixa_texto(
+                cfg.get("cor_fundo", "#000000") if cfg else "#000000",
+                largura_referencia=largura_ref,
+                altura_referencia=altura_ref)
+        if referencia and fonte_ref is not None:
             self.canvas.itemconfig(
                 self.ref_text,
                 text=referencia,
@@ -997,7 +1116,13 @@ class TelaoWindow:
                 font=fonte_ref,
                 state="normal",
             )
-            self.canvas.coords(self.ref_text, w - 30, h - 30)
+            if usar_caixa and self._caixa_texto_ref_cabe:
+                _x1, _y1, x2, y2 = self._caixa_texto_box
+                margem = self._caixa_texto_margem_ref
+                self.canvas.coords(self.ref_text, x2 - margem, y2 - margem)
+                self.canvas.tag_raise(self.ref_text)
+            else:
+                self.canvas.coords(self.ref_text, w - 30, h - 30)
         else:
             self.canvas.itemconfig(self.ref_text, text="", state="hidden")
         self.root.update_idletasks()
