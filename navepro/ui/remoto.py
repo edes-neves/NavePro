@@ -44,7 +44,7 @@ from navepro.core.slides import (
 )
 from navepro.core.textos import _numero_do_titulo
 from navepro.core.widgets_arredondados import TkArredondado
-from navepro.core.youtube import _eh_url_youtube
+from navepro.core.youtube import _eh_url_youtube, _normalizar_url_youtube
 from navepro.ui.apoio import _menu_contexto_campo
 
 log = get_logger("remoto")
@@ -311,6 +311,7 @@ class ControleRemotoMixin:
                      'itens': len(s.get('itens') or [])}
                     for s in (_carregar_servicos_json().get('servicos') or [])]},
                 'servico_itens': lambda d: self._remoto_servico_itens(d),
+                'relogio_estado': lambda d: self._remoto_relogio_estado(),
                 'sorteio_estado': lambda d: self._remoto_sorteio_estado(),
                 # ── Ações (POST) ──
                 'slide': lambda d: self._remoto_slide(str(d.get('acao') or '')),
@@ -323,6 +324,7 @@ class ControleRemotoMixin:
                 'executar_servico': lambda d: self._remoto_executar_servico(d),
                 'servico_item': lambda d: self._remoto_servico_item(d),
                 'medidor': lambda d: self._remoto_medidor(d),
+                'relogio': lambda d: self._remoto_relogio(d),
                 'sorteio_abrir': lambda d: self._remoto_sorteio_abrir(),
                 'sorteio_fechar': lambda d: self._remoto_sorteio_fechar(),
                 'sorteio_configurar': lambda d: self._remoto_sorteio_configurar(d),
@@ -417,6 +419,161 @@ class ControleRemotoMixin:
                          'restante': max(0.0, float(rest or 0.0)),
                          'titulo': g.get("titulo") or ''},
         }
+    @staticmethod
+    def _relogio_padrao() -> dict:
+        """Valores padrão da aparência do relógio (mesmos do telão)."""
+        return {
+            "cor_hora": "#F5BE08",
+            "cor_temp": "#F5BE08",
+            "cor_fundo": "#000000",
+            "fator_hora": 1.0,
+            "fator_temp": 1.0,
+            "espacamento": 1.0,
+            "fundo_opaco": False,
+            "fundo_imagem": "",
+        }
+    @staticmethod
+    def _cor_hex_valida(cor: object) -> bool:
+        """True se `cor` é um hexadecimal #RRGGBB."""
+        texto = str(cor or "")
+        return (len(texto) == 7 and texto[0] == "#"
+                and all(c in "0123456789abcdefABCDEF" for c in texto[1:]))
+    @staticmethod
+    def _bool_remoto(valor: object) -> bool:
+        """Converte booleanos/strings do JSON em bool (sem bool('false'))."""
+        if isinstance(valor, bool):
+            return valor
+        return str(valor or "").strip().lower() in (
+            "1", "true", "sim", "yes", "on", "oculto")
+    def _remoto_relogio_estado(self) -> dict:
+        """Configuração e estado do relógio para o controle remoto."""
+        padrao = self._relogio_padrao()
+        cfg = dict(padrao)
+        config_data = getattr(self, "config_data", {})
+        if not isinstance(config_data, dict):
+            config_data = {}
+        salva = config_data.get("relogio")
+        if isinstance(salva, dict):
+            cfg.update({k: v for k, v in salva.items()
+                        if k in padrao and v not in (None, "")})
+        telao = getattr(self.player, "telao", None)
+        atual = getattr(telao, "_relogio_cfg", None)
+        if isinstance(atual, dict):
+            cfg.update({k: v for k, v in atual.items()
+                        if k in padrao and v not in (None, "")})
+        temp = getattr(self, "temperatura_atual", "") or ""
+        valida = getattr(self, "_temperatura_valida", None)
+        if callable(valida):
+            try:
+                if not valida():
+                    temp = ""
+            except Exception:
+                temp = ""
+        if telao is None:
+            modo = "desligado"
+        elif getattr(telao, "_em_slides", False):
+            modo = "slides"
+        elif getattr(telao, "mostrando_relogio", False):
+            modo = "relogio"
+        else:
+            modo = "midia"
+        return {
+            "ok": True,
+            "config": {k: cfg.get(k) for k in padrao},
+            "tem_imagem": bool(str(cfg.get("fundo_imagem") or "").strip()),
+            "modo": modo,
+            "cidade": getattr(self, "cidade_salva", "") or "",
+            "estado": getattr(self, "estado_salvo", "") or "",
+            "temperatura": temp,
+            "oculto": bool(getattr(self, "_relogio_oculto_telao", False)),
+            "temperatura_oculta": bool(
+                getattr(self, "_temperatura_oculta_telao", False)),
+        }
+    def _remoto_relogio_configurar(self, dados: dict) -> dict:
+        """Salva a aparência do relógio pedida pelo celular."""
+        base = dict(self._relogio_padrao())
+        config_data = getattr(self, "config_data", {})
+        if isinstance(config_data, dict) and isinstance(
+                config_data.get("relogio"), dict):
+            base.update(config_data["relogio"])
+        telao = getattr(self.player, "telao", None)
+        atual = getattr(telao, "_relogio_cfg", None)
+        if isinstance(atual, dict):
+            base.update({k: v for k, v in atual.items()
+                         if k in base and v not in (None, "")})
+        for chave in ("cor_hora", "cor_temp", "cor_fundo"):
+            if chave in dados:
+                cor = str(dados.get(chave) or "").strip()
+                if not self._cor_hex_valida(cor):
+                    return {"ok": False,
+                            "erro": f"Cor inválida para {chave}: {cor}"}
+                base[chave] = cor
+        for chave, minimo, maximo in (
+                ("fator_hora", 0.3, 2.0),
+                ("fator_temp", 0.3, 2.0),
+                ("espacamento", 0.0, 3.0)):
+            if chave not in dados:
+                continue
+            try:
+                valor = float(dados.get(chave))
+            except (TypeError, ValueError):
+                return {"ok": False,
+                        "erro": f"Valor inválido para {chave}."}
+            if valor != valor:  # NaN
+                return {"ok": False,
+                        "erro": f"Valor inválido para {chave}."}
+            base[chave] = max(minimo, min(maximo, valor))
+        if "fundo_opaco" in dados:
+            base["fundo_opaco"] = self._bool_remoto(dados.get("fundo_opaco"))
+        self.salvar_config_relogio(base)
+        return self._remoto_relogio_estado()
+    def _remoto_relogio_projetar(self) -> dict:
+        """Encerra mídia/slides e volta o telão ao relógio."""
+        telao = self.player._garantir_telao()
+        if telao is None:
+            return {"ok": False, "erro": "Telão indisponível."}
+        if getattr(self, "_relogio_oculto_telao", False):
+            # "Mostrar relógio" também desfaz o ocultamento do relógio.
+            self.alternar_relogio_telao()
+        if getattr(self.player, "is_playing", False) or getattr(
+                self.player, "is_paused", False):
+            self.parar()
+        else:
+            telao.parar_projecao()
+            if not getattr(telao, "mostrando_relogio", False):
+                telao.restaurar_tela()
+            if getattr(telao, "mostrando_relogio", False):
+                hora = time.strftime("%H:%M")
+                temp = (getattr(self, "temperatura_atual", "") or ""
+                        if self._temperatura_valida() else "")
+                self._ultima_hora_telao = hora
+                telao.mostrar_relogio(hora, temp)
+        return self._remoto_relogio_estado()
+    def _remoto_relogio_alternar(self, dados: dict, acao: str) -> dict:
+        """Oculta/mostra o relógio ou a temperatura no telão."""
+        chave = "relogio" if acao.endswith("relogio") else "temperatura"
+        if chave == "relogio":
+            atual = bool(getattr(self, "_relogio_oculto_telao", False))
+        else:
+            atual = bool(getattr(self, "_temperatura_oculta_telao", False))
+        alvo = dados.get("oculto")
+        alvo = (not atual) if alvo is None else self._bool_remoto(alvo)
+        if alvo != atual:
+            if chave == "relogio":
+                self.alternar_relogio_telao()
+            else:
+                self.alternar_temperatura_telao()
+        return self._remoto_relogio_estado()
+    def _remoto_relogio(self, dados: dict) -> dict:
+        """Despacha as ações do relógio vindas do controle remoto."""
+        acao = str(dados.get("acao") or "configurar").strip().lower()
+        if acao in ("configurar", "salvar"):
+            return self._remoto_relogio_configurar(dados)
+        if acao in ("projetar", "mostrar", "relogio"):
+            return self._remoto_relogio_projetar()
+        if acao in ("alternar_relogio", "alternar_temperatura"):
+            return self._remoto_relogio_alternar(dados, acao)
+        return {"ok": False, "erro": f"Ação de relógio inválida: {acao}"}
     def _remoto_buscar_hino(self, busca: str) -> dict:
         """Lista hinos para o celular (resumo; sem a letra completa)."""
         busca = busca.strip()
@@ -725,7 +882,8 @@ class ControleRemotoMixin:
         titulo = str(dados.get('titulo') or '').strip()
         termo = str(dados.get('termo') or '').strip()
         caminho_arquivo = str(dados.get('caminho_arquivo') or '').strip()
-        youtube_url = str(dados.get('youtube_url') or '').strip()
+        youtube_url = _normalizar_url_youtube(
+            str(dados.get('youtube_url') or ''))
         try:
             duracao = int(dados.get('duracao') or 0)
         except (TypeError, ValueError):
@@ -733,6 +891,12 @@ class ControleRemotoMixin:
         if tipo not in ('hino', 'versiculo', 'video', 'audio', 'slide',
                         'anuncio', 'sermao', 'youtube'):
             return (False, f'Tipo de item inválido: "{tipo}".', {})
+        # Cliente antigo/caixinha fora de sincronia pode mandar tipo="video"
+        # junto de uma URL do YouTube. A URL é a mídia: trata como youtube,
+        # do mesmo jeito que o editor marca a caixinha.
+        if (tipo == 'video' and not caminho_arquivo and youtube_url
+                and _eh_url_youtube(youtube_url)):
+            tipo = 'youtube'
         if tipo not in ('video', 'audio', 'sermao'):
             caminho_arquivo = ''
 

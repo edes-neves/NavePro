@@ -31,7 +31,10 @@ from navepro.core.mediaplayer import (  # noqa: E402
     _opcoes_telao_mpv,
 )
 from navepro.core.player import localizar_executavel, nome_pipe_mpv  # noqa: E402
-from navepro.core.youtube import _eh_url_youtube  # noqa: E402
+from navepro.core.youtube import (  # noqa: E402
+    _eh_url_youtube,
+    _normalizar_url_youtube,
+)
 
 _FONTE = open(os.path.join(RAIZ, "navepro/core/mediaplayer.py"),
               encoding="utf-8").read()
@@ -297,7 +300,10 @@ def _extrair_metodo_app(classe, metodo, ns):
 
 
 _resolver = _extrair_metodo_app("ControleRemotoMixin", "_remoto_resolver_item",
-                                {"os": os, "_eh_url_youtube": _eh_url_youtube})
+                                {"os": os,
+                                 "_eh_url_youtube": _eh_url_youtube,
+                                 "_normalizar_url_youtube":
+                                     _normalizar_url_youtube})
 
 _ok, _err, _campos = _resolver(None, {
     "tipo": "youtube", "youtube_url": "https://youtu.be/abc123"})
@@ -315,6 +321,18 @@ _ok, _err, _campos = _resolver(None, {
     "titulo": "Culto ao vivo"})
 checar("remoto: título digitado é preservado no YouTube",
        _campos.get("titulo_custom") == "Culto ao vivo")
+
+_ok, _err, _campos = _resolver(None, {
+    "tipo": "youtube", "youtube_url": "youtu.be/abc123"})
+checar("remoto: link colado sem https é normalizado",
+       _ok and _campos.get("youtube_url") == "https://youtu.be/abc123")
+
+_ok, _err, _campos = _resolver(None, {
+    "tipo": "video", "youtube_url": "https://youtu.be/abc123",
+    "titulo": "Título digitado"})
+checar("remoto: vídeo com URL do YouTube vira item youtube",
+       _ok and _campos.get("tipo") == "youtube"
+       and _campos.get("titulo_custom") == "Título digitado")
 
 _ok, _err, _campos = _resolver(None, {"tipo": "youtube", "youtube_url": ""})
 checar("remoto: YouTube sem URL é recusado", not _ok and "URL" in _err)

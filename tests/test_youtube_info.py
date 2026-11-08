@@ -10,7 +10,12 @@ RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
 
 import navepro.core.youtube as yt  # noqa: E402
-from navepro.core.youtube import _eh_url_youtube, _obter_info_youtube  # noqa: E402
+from navepro.core.youtube import (  # noqa: E402
+    _eh_url_youtube,
+    _normalizar_url_youtube,
+    _obter_info_youtube,
+    _obter_info_youtube_oembed,
+)
 
 
 def _rodar() -> int:
@@ -35,6 +40,16 @@ def _rodar() -> int:
         "https://youtube-nocookie.com/embed/abc123",
     ):
         checar(f"aceita {url}", _eh_url_youtube(url))
+    checar("normaliza link colado sem https",
+           _normalizar_url_youtube("youtu.be/abc123")
+           == "https://youtu.be/abc123")
+    checar("normaliza link protocol-relative",
+           _normalizar_url_youtube("//youtu.be/abc123")
+           == "https://youtu.be/abc123")
+    checar("mantém URL que já tem esquema",
+           _normalizar_url_youtube("http://youtu.be/abc123")
+           == "http://youtu.be/abc123")
+
     for url in (
         "",
         "youtu.be/abc123",
@@ -88,6 +103,43 @@ def _rodar() -> int:
     yt.localizar_executavel = lambda _nome: None
     checar("yt-dlp ausente vira None", _obter_info_youtube(
         "https://youtu.be/abc123") is None)
+
+    # ── Reserva sem yt-dlp: oEmbed público ────────────────────────
+    original_baixar = yt._baixar
+
+    class _Resposta:
+        def __init__(self, corpo):
+            self.corpo = corpo
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return self.corpo
+
+    chamadas = {"n": 0}
+
+    def _baixar_ok(*_args, **_kwargs):
+        chamadas["n"] += 1
+        return _Resposta(b'{"title": "Culto ao vivo"}')
+
+    yt._baixar = _baixar_ok
+    info = _obter_info_youtube_oembed("https://youtu.be/abc123")
+    checar("oEmbed devolve o título quando o yt-dlp falha",
+           info and info["titulo"] == "Culto ao vivo")
+    checar("oEmbed não inventa duração", info and info["duracao"] == 0.0)
+
+    chamadas["n"] = 0
+    checar("oEmbed recusa URL que não é do YouTube",
+           _obter_info_youtube_oembed("https://exemplo.com/v") is None
+           and chamadas["n"] == 0)
+    checar("oEmbed aceita link colado sem https",
+           _obter_info_youtube_oembed("youtu.be/abc123") is not None)
+
+    yt._baixar = original_baixar
 
     # ── Flatpak: o yt-dlp do host roda via flatpak-spawn ──────────
     # Dentro do sandbox o Python do runtime não enxerga o yt_dlp instalado

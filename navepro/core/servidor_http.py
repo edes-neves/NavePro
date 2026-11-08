@@ -22,7 +22,12 @@ from navepro.core.log import get_logger
 from navepro.core.paths import UPLOAD_FOLDER
 from navepro.core.rede import _eh_loopback
 from navepro.core.textos import _termo_like, detectar_tipo_arquivo, remover_acentos
-from navepro.core.youtube import _eh_url_youtube, _obter_info_youtube
+from navepro.core.youtube import (
+    _eh_url_youtube,
+    _normalizar_url_youtube,
+    _obter_info_youtube,
+    _obter_info_youtube_oembed,
+)
 
 log = get_logger("servidor_http")
 
@@ -38,6 +43,7 @@ _ACOES_POST_REMOTO: dict = {
     '/api/remoto/servico_item': 'servico_item',
     '/api/remoto/medidor': 'medidor',
     '/api/remoto/tamanho': 'tamanho',
+    '/api/remoto/relogio': 'relogio',
     '/api/remoto/sorteio/abrir': 'sorteio_abrir',
     '/api/remoto/sorteio/fechar': 'sorteio_fechar',
     '/api/remoto/sorteio/configurar': 'sorteio_configurar',
@@ -406,13 +412,19 @@ class ServidorAsyncHTTP:
                 return bloqueio
             try:
                 if path == '/api/remoto/youtube_info':
-                    url = str(params.get('url') or '').strip()
+                    url = _normalizar_url_youtube(
+                        str(params.get('url') or ''))
                     if not _eh_url_youtube(url):
                         return self._responder_erro_bytes(
                             "URL inválida! Insira uma URL do YouTube", 400)
                     # Fora da thread do Tk: o yt-dlp pode demorar e não pode
-                    # congelar a interface do aplicativo.
+                    # congelar a interface do aplicativo. Se ele faltar ou
+                    # falhar (vídeo restrito/ao vivo), o oEmbed só devolve o
+                    # título, que é o que o formulário precisa.
                     info = await asyncio.to_thread(_obter_info_youtube, url)
+                    if not info:
+                        info = await asyncio.to_thread(
+                            _obter_info_youtube_oembed, url)
                     if not info or not info.get("titulo"):
                         return self._responder_erro_bytes(
                             "Não foi possível obter o título do vídeo do "
@@ -478,6 +490,8 @@ class ServidorAsyncHTTP:
             return ('listar_servicos', {})
         if path == '/api/remoto/servico_itens':
             return ('servico_itens', {'servico': params.get('servico', '')})
+        if path == '/api/remoto/relogio':
+            return ('relogio_estado', {})
         if path == '/api/remoto/sorteio':
             return ('sorteio_estado', {})
         raise KeyError(path)

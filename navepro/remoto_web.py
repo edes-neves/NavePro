@@ -28,6 +28,9 @@ A API usada (tudo com o header `X-Token`):
   POST /api/remoto/servico_item→ {operacao: add|editar|apagar|mover, servico, ...}
   POST /api/remoto/medidor     → {qual, acao, seg?, titulo?}
   POST /api/remoto/tamanho     → {qual, acao}
+  GET  /api/remoto/relogio     → configuração e estado do relógio
+  POST /api/remoto/relogio     → {acao: configurar|projetar|
+                                   alternar_relogio|alternar_temperatura}
   GET  /api/remoto/sorteio     → estado e configuração do Sorteio
   POST /api/remoto/sorteio/abrir      → abre o Sorteio
   POST /api/remoto/sorteio/fechar     → fecha o Sorteio
@@ -107,6 +110,18 @@ _REMOTO_CSS = """
   .pill { font-size: 12px; background: #21262d; border-radius: 20px;
           padding: 3px 10px; color: #8b949e; }
   .pill.exec { background: #238636; color: #fff; font-weight: 700; }
+  .campo { display: block; font-size: 13px; color: #8b949e;
+           margin: 12px 0 4px; }
+  .cores { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+  .cores button {
+    width: 42px; height: 34px; border-radius: 8px; cursor: pointer;
+    border: 2px solid #30363d;
+  }
+  .cores button.on { border-color: #f0c040; }
+  .check { display: flex; align-items: center; gap: 8px;
+           font-size: 14px; margin: 8px 0; }
+  .check input { width: auto; margin: 0; }
+  input[type=range] { padding: 0; border: 0; background: none; margin: 0 0 8px; }
   /* Aba Bíblia em grade: livros no topo, capítulos e versículos embaixo.
      No celular tudo empilha; a partir de 640px os capítulos ficam à
      esquerda e os versículos à direita (sem repetir os versículos). */
@@ -248,6 +263,7 @@ document.getElementById('abas').addEventListener('click', function(e) {
   b.classList.add('on');
   document.getElementById('aba-' + b.dataset.aba).classList.add('on');
   if (b.dataset.aba === 'sorteio') carregarConfigSorteio();
+  if (b.dataset.aba === 'relogio') carregarRelogio();
 });
 
 // ── Slides ──
@@ -336,6 +352,138 @@ function controlePlayer(acao) {
       if (acao === 'parar') aviso('M\u00fasica/v\u00eddeo parado', '#238636');
       else aviso(j.pausado ? 'Pausado' : 'Reproduzindo', '#238636');
     }
+    atualizarEstado();
+  });
+}
+
+// ── Relógio (aparência e mostrar/ocultar no telão) ──
+var RELOGIO_ESTADO = null;
+var RELOGIO_SEL = {hora: '#F5BE08', temp: '#F5BE08', fundo: '#000000'};
+var RELOGIO_CORES = [
+  ['Amarelo', '#F5BE08'], ['Branco', '#FFFFFF'],
+  ['Vermelho', '#FF5555'], ['Azul', '#58A6FF'],
+  ['Verde', '#3FB950'], ['Roxo', '#D2A8FF'],
+  ['Ciano', '#00E5FF'], ['Laranja', '#FF9800']
+];
+var RELOGIO_FUNDOS = [
+  ['Preto', '#000000'], ['Cinza escuro', '#1a1a2e'],
+  ['Azul escuro', '#0d1b2a'], ['Verde escuro', '#0a1f0a'],
+  ['Vinho', '#2d0a0a']
+];
+
+function relogioMontarCores() {
+  relogioMontarGrupo('relogio_cores_hora', RELOGIO_CORES, 'hora');
+  relogioMontarGrupo('relogio_cores_temp', RELOGIO_CORES, 'temp');
+  relogioMontarGrupo('relogio_cores_fundo', RELOGIO_FUNDOS, 'fundo');
+}
+
+function relogioMontarGrupo(id, lista, qual) {
+  var box = document.getElementById(id);
+  box.innerHTML = '';
+  lista.forEach(function(item) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.cor = item[1];
+    b.title = item[0];
+    b.style.background = item[1];
+    b.onclick = function() { relogioEscolher(qual, item[1]); };
+    box.appendChild(b);
+  });
+}
+
+function relogioEscolher(qual, cor) {
+  RELOGIO_SEL[qual] = cor;
+  var box = document.getElementById('relogio_cores_' + qual);
+  var alvo = String(cor || '').toUpperCase();
+  [].forEach.call(box.querySelectorAll('button'), function(b) {
+    b.classList.toggle('on', String(b.dataset.cor).toUpperCase() === alvo);
+  });
+}
+
+function relogioNum(valor, padrao) {
+  var n = Number(valor);
+  return isFinite(n) ? n : padrao;
+}
+
+function relogioSlider(qual) {
+  var id = qual === 'hora' ? 'relogio_fator_hora'
+    : qual === 'temp' ? 'relogio_fator_temp' : 'relogio_espacamento';
+  var alvo = id + '_txt';
+  var valor = Number(document.getElementById(id).value);
+  var digitos = qual === 'espacamento' ? 2 : 1;
+  document.getElementById(alvo).textContent =
+    valor.toFixed(digitos).replace('.', ',') + (qual === 'espacamento' ? '' : '\u00d7');
+}
+
+function relogioMostrar(j) {
+  if (!j || j.ok === false) return;
+  RELOGIO_ESTADO = j;
+  var c = j.config || {};
+  relogioEscolher('hora', c.cor_hora || '#F5BE08');
+  relogioEscolher('temp', c.cor_temp || '#F5BE08');
+  relogioEscolher('fundo', c.cor_fundo || '#000000');
+  document.getElementById('relogio_opaco').checked = !!c.fundo_opaco;
+  document.getElementById('relogio_fator_hora').value = relogioNum(c.fator_hora, 1);
+  document.getElementById('relogio_fator_temp').value = relogioNum(c.fator_temp, 1);
+  document.getElementById('relogio_espacamento').value = relogioNum(c.espacamento, 1);
+  relogioSlider('hora');
+  relogioSlider('temp');
+  relogioSlider('espacamento');
+  var modos = {relogio: 'no rel\u00f3gio', slides: 'slides',
+               midia: 'm\u00eddia', desligado: 'tel\u00e3o desligado'};
+  document.getElementById('relogio_modo').textContent =
+    'tel\u00e3o: ' + (modos[j.modo] || j.modo || '-');
+  document.getElementById('relogio_temp').textContent = j.temperatura
+    ? 'temperatura ' + j.temperatura : 'temperatura --';
+  document.getElementById('btn_ocultar_relogio').textContent = j.oculto
+    ? 'Mostrar rel\u00f3gio no tel\u00e3o' : 'Ocultar rel\u00f3gio do tel\u00e3o';
+  document.getElementById('btn_ocultar_temp').textContent = j.temperatura_oculta
+    ? 'Mostrar temperatura no tel\u00e3o' : 'Ocultar temperatura do tel\u00e3o';
+}
+
+function carregarRelogio() {
+  if (!document.getElementById('relogio_cores_hora').children.length) {
+    relogioMontarCores();
+  }
+  apiGet('/api/remoto/relogio').then(relogioMostrar).catch(function() {});
+}
+
+function relogioAcao(acao, extra) {
+  var dados = {acao: acao};
+  if (extra) {
+    for (var k in extra) {
+      if (Object.prototype.hasOwnProperty.call(extra, k)) dados[k] = extra[k];
+    }
+  }
+  apiPost('/api/remoto/relogio', dados).then(function(j) {
+    if (j && j.ok && acao === 'projetar') {
+      aviso('Rel\u00f3gio no tel\u00e3o', '#238636');
+    }
+    relogioMostrar(j);
+    atualizarEstado();
+  });
+}
+
+function relogioAlternar(qual) {
+  var atual = RELOGIO_ESTADO || {};
+  var oculto = qual === 'relogio' ? !atual.oculto : !atual.temperatura_oculta;
+  relogioAcao('alternar_' + qual, {oculto: oculto});
+}
+
+function relogioSalvar() {
+  var dados = {
+    acao: 'configurar',
+    cor_hora: RELOGIO_SEL.hora,
+    cor_temp: RELOGIO_SEL.temp,
+    cor_fundo: RELOGIO_SEL.fundo,
+    fator_hora: Number(document.getElementById('relogio_fator_hora').value),
+    fator_temp: Number(document.getElementById('relogio_fator_temp').value),
+    espacamento: Number(document.getElementById('relogio_espacamento').value),
+    fundo_opaco: document.getElementById('relogio_opaco').checked
+  };
+  apiPost('/api/remoto/relogio', dados).then(function(j) {
+    if (j && j.ok) aviso('Apar\u00eancia do rel\u00f3gio salva', '#238636');
+    relogioMostrar(j);
     atualizarEstado();
   });
 }
@@ -979,7 +1127,21 @@ function tipoItemMudou() {
   youtubeMudou();
 }
 
+// Aceita o link colado sem "https://" (youtu.be/ID, www.youtube.com/...):
+// sem isso a validação recusava o item e o título nunca era buscado.
+function normalizarUrlYoutube(url) {
+  url = String(url || '').trim();
+  if (!url) return '';
+  if (url.indexOf('//') === 0) return 'https:' + url;
+  var baixo = url.toLowerCase();
+  if (baixo.indexOf('http://') !== 0 && baixo.indexOf('https://') !== 0) {
+    return 'https://' + url;
+  }
+  return url;
+}
+
 function ehUrlYoutube(url) {
+  url = normalizarUrlYoutube(url);
   try {
     var u = new URL(url);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
@@ -995,6 +1157,7 @@ function tituloItemDigitado() {
 }
 
 function agendarInfoYoutube(url) {
+  url = normalizarUrlYoutube(url);
   if (YT_INFO_TIMER) { clearTimeout(YT_INFO_TIMER); YT_INFO_TIMER = null; }
   var abaixo = document.getElementById('item_titulo_url');
   var titulo = document.getElementById('item_titulo');
@@ -1159,11 +1322,13 @@ function salvarItem() {
   if (ITEM_EDIT_ID) dados.id = ITEM_EDIT_ID;
   // Vídeo do YouTube: guarda a URL em vez do arquivo (como no aplicativo).
   if (tipo === 'video' && document.getElementById('item_youtube').checked) {
-    var yurl = document.getElementById('item_youtube_url').value.trim();
+    var yurl = normalizarUrlYoutube(
+      document.getElementById('item_youtube_url').value);
     if (!ehUrlYoutube(yurl)) {
       aviso('URL inválida! Insira uma URL do YouTube');
       return;
     }
+    document.getElementById('item_youtube_url').value = yurl;
     // O título pode ser o capturado automaticamente ou o digitado pelo
     // operador. Se o yt-dlp falhar, salva assim mesmo: a URL é a mídia e o
     // título (ou a própria URL) é só o rótulo do item.
@@ -1357,11 +1522,12 @@ function atualizarEstado() {
     document.getElementById('midia_atual').textContent =
       j.midia.arquivo ? (j.midia.indice + 1) + '/' + j.midia.total + ' - ' + j.midia.arquivo
                       : 'nenhuma mídia';
+    var textoPlayer = !j.midia.tocando ? 'sem m\u00eddia'
+      : (j.midia.pausado ? '\u23F8 pausado' : '\u25B6 tocando');
     var pe = document.getElementById('player_estado');
-    if (pe) {
-      pe.textContent = !j.midia.tocando ? 'sem m\u00eddia'
-        : (j.midia.pausado ? '\u23F8 pausado' : '\u25B6 tocando');
-    }
+    if (pe) pe.textContent = textoPlayer;
+    var pse = document.getElementById('serv_player_estado');
+    if (pse) pse.textContent = textoPlayer;
     var t = j.telao.tamanho || {};
     document.getElementById('tam_texto').textContent = t.composicao
       ? 'texto ' + (Number(t.texto_escala) || 1).toFixed(2) + '×'
@@ -1381,6 +1547,8 @@ function iniciar() {
   carregarSelectsItem();
   carregarAnuncios();
   carregarServicos();
+  relogioMontarCores();
+  carregarRelogio();
   atualizarEstado();
   setInterval(atualizarEstado, 2500);
   setInterval(function() {
@@ -1413,6 +1581,7 @@ PAGINA = """<!DOCTYPE html>
   <button data-aba="biblia">&#128214; B&iacute;blia</button>
   <button data-aba="anuncio">&#128227; An&uacute;ncio</button>
   <button data-aba="servico">&#128203; Servi&ccedil;o</button>
+  <button data-aba="relogio">&#128336; Rel&oacute;gio</button>
   <button data-aba="medidor">&#9201; Medidor</button>
   <button data-aba="sorteio">&#127922; Sorteio</button>
 </nav>
@@ -1552,6 +1721,16 @@ PAGINA = """<!DOCTYPE html>
     </div>
   </div>
   <div class="card">
+    <h3>Reprodu&ccedil;&atilde;o</h3>
+    <div class="linha">
+      <button class="btn" onclick="controlePlayer('play_pause')">&#9199; Play/Pause</button>
+      <button class="btn vermelho" onclick="controlePlayer('parar')">&#9209; Parar</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <span class="pill" id="serv_player_estado">sem m&iacute;dia</span>
+    </div>
+  </div>
+  <div class="card">
     <h3>Itens do servi&ccedil;o</h3>
     <div id="serv_cabecalho" class="vazio">Toque em "Itens" num servi&ccedil;o acima.</div>
     <ul id="lista_itens_servico"></ul>
@@ -1598,6 +1777,53 @@ PAGINA = """<!DOCTYPE html>
       <button class="btn cinza" onclick="fecharFormItem()">Cancelar</button>
       <button class="btn verde" onclick="salvarItem()">&#128190; Salvar</button>
     </div>
+  </div>
+</section>
+
+<section id="aba-relogio">
+  <div class="card">
+    <h3>Rel&oacute;gio no tel&atilde;o</h3>
+    <div class="linha">
+      <span class="pill" id="relogio_modo">tel&atilde;o: -</span>
+      <span class="pill" id="relogio_temp">temperatura --</span>
+    </div>
+    <div class="linha" style="margin-top:10px">
+      <button class="btn verde" onclick="relogioAcao('projetar')">&#128336; Mostrar rel&oacute;gio</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn cinza" id="btn_ocultar_relogio"
+              onclick="relogioAlternar('relogio')">Ocultar rel&oacute;gio do tel&atilde;o</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn cinza" id="btn_ocultar_temp"
+              onclick="relogioAlternar('temperatura')">Ocultar temperatura do tel&atilde;o</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Apar&ecirc;ncia do rel&oacute;gio</h3>
+    <span class="campo">Cor do rel&oacute;gio</span>
+    <div class="cores" id="relogio_cores_hora"></div>
+    <span class="campo">Cor da temperatura</span>
+    <div class="cores" id="relogio_cores_temp"></div>
+    <span class="campo">Cor de fundo</span>
+    <div class="cores" id="relogio_cores_fundo"></div>
+    <label class="check">
+      <input type="checkbox" id="relogio_opaco">
+      <span>Fundo opaco (sem transpar&ecirc;ncia)</span>
+    </label>
+    <span class="campo">Tamanho do rel&oacute;gio
+      <span class="pill" id="relogio_fator_hora_txt">1,0&times;</span></span>
+    <input type="range" id="relogio_fator_hora" min="0.3" max="2"
+           step="0.1" oninput="relogioSlider('hora')">
+    <span class="campo">Tamanho da temperatura
+      <span class="pill" id="relogio_fator_temp_txt">1,0&times;</span></span>
+    <input type="range" id="relogio_fator_temp" min="0.3" max="2"
+           step="0.1" oninput="relogioSlider('temp')">
+    <span class="campo">Espa&ccedil;amento (hora &harr; temperatura)
+      <span class="pill" id="relogio_espacamento_txt">1,00</span></span>
+    <input type="range" id="relogio_espacamento" min="0" max="3"
+           step="0.05" oninput="relogioSlider('espacamento')">
+    <button class="btn verde" style="margin-top:8px" onclick="relogioSalvar()">&#128190; Salvar apar&ecirc;ncia</button>
   </div>
 </section>
 

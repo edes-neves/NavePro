@@ -10,16 +10,36 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import urllib.parse
+import urllib.request
 from urllib.parse import urlparse
 
 from navepro.core.ambiente import _ambiente_sem_appimage, _eh_flatpak
 from navepro.core.log import get_logger
 from navepro.core.player import localizar_executavel
+from navepro.core.ssl_context import _baixar
 
 log = get_logger("youtube")
 
 # Domínios oficiais usados para hospedar vídeos do YouTube.
 _DOMINIOS_YOUTUBE = ("youtube.com", "youtube-nocookie.com")
+
+
+def _normalizar_url_youtube(url: str) -> str:
+    """Devolve a URL com esquema https:// (aceita link colado sem esquema).
+
+    Quem cola ``youtu.be/ID`` ou ``www.youtube.com/watch?v=ID`` no celular
+    espera que funcione; sem isso a validação recusa e o item não salva.
+    URLs que já têm esquema são mantidas como estão.
+    """
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if url.startswith("//"):
+        return "https:" + url
+    if not url.lower().startswith(("http://", "https://")):
+        return "https://" + url
+    return url
 
 
 def _eh_url_youtube(url: str) -> bool:
@@ -107,3 +127,33 @@ def _obter_info_youtube(url: str, timeout: float = 15.0) -> dict | None:
     except (TypeError, ValueError):
         duracao = 0.0
     return {"titulo": titulo, "duracao": max(0.0, duracao)}
+
+
+def _obter_info_youtube_oembed(url: str, timeout: float = 8.0) -> dict | None:
+    """Obtém só o título do vídeo pelo oEmbed público do YouTube.
+
+    É a reserva para quando o yt-dlp não está instalado ou falha (vídeo
+    ao vivo, restrição de idade, bloqueio temporário). O oEmbed costuma
+    responder mesmo nesses casos, mas não informa a duração — por isso
+    devolve ``duracao`` 0.0. Nunca baixa o vídeo.
+    """
+    url = _normalizar_url_youtube(url)
+    if not _eh_url_youtube(url):
+        return None
+    consulta = ("https://www.youtube.com/oembed?format=json&url="
+                + urllib.parse.quote(url, safe=""))
+    try:
+        pedido = urllib.request.Request(
+            consulta, headers={"User-Agent": "NavePro"})
+        with _baixar(pedido, timeout=timeout) as resposta:
+            dados = json.loads(
+                (resposta.read() or b"{}").decode("utf-8", "replace"))
+    except (OSError, ValueError) as exc:
+        log.warning("⚠️ oEmbed não obteve informações de %s: %s", url, exc)
+        return None
+    if not isinstance(dados, dict):
+        return None
+    titulo = str(dados.get("title") or "").strip()
+    if not titulo:
+        return None
+    return {"titulo": titulo, "duracao": 0.0}
