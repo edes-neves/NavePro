@@ -25,7 +25,7 @@ from navepro.core.anuncios import (
 )
 from navepro.core.banco import db_query
 from navepro.core.log import get_logger
-from navepro.core.paths import CONFIG_FILE
+from navepro.core.paths import CONFIG_FILE, UPLOAD_FOLDER
 from navepro.core.rede import _ip_da_rede
 from navepro.core.servicos import (
     _SERVICO_PROXIMO_ITEM,
@@ -328,6 +328,10 @@ class ControleRemotoMixin:
                 'relogio': lambda d: self._remoto_relogio(d),
                 'abrir_config_projecao': lambda d:
                     self._remoto_abrir_config_projecao(),
+                'projecao_estado': lambda d: self._remoto_projecao_estado(),
+                'projecao_configurar': lambda d:
+                    self._remoto_projecao_configurar(d),
+                'projecao_imagens': lambda d: self._remoto_projecao_imagens(),
                 'sorteio_abrir': lambda d: self._remoto_sorteio_abrir(),
                 'sorteio_fechar': lambda d: self._remoto_sorteio_fechar(),
                 'sorteio_configurar': lambda d: self._remoto_sorteio_configurar(d),
@@ -351,6 +355,137 @@ class ControleRemotoMixin:
         """Abre no computador a janela Aparência da Projeção (opções da Bíblia)."""
         self.abrir_config_projecao_dialogo(mostrar_cor_ref=True)
         return {'ok': True}
+    @staticmethod
+    def _projecao_padrao() -> dict:
+        """Valores padrão da Aparência da Projeção (mesmos do telão)."""
+        return {
+            "fonte": "Montserrat",
+            "tamanho_pct": 5.0,
+            "cor": "#FFFFFF",
+            "duracao_seg": 30,
+            "cor_ref": "#A0A0A0",
+            "cor_fundo": "#000000",
+            "fundo_opaco": True,
+            "fundo_imagem": "",
+            "biblia_caixa": "normal",
+            "biblia_alinhamento": "centro",
+        }
+    def _remoto_projecao_estado(self) -> dict:
+        """Configuração atual da Aparência da Projeção para o celular."""
+        padrao = self._projecao_padrao()
+        cfg = dict(padrao)
+        config_data = getattr(self, "config_data", {})
+        if isinstance(config_data, dict) and isinstance(
+                config_data.get("projecao"), dict):
+            cfg.update({k: v for k, v in config_data["projecao"].items()
+                        if k in padrao and v not in (None, "")})
+        telao = getattr(getattr(self, "player", None), "telao", None)
+        atual = getattr(telao, "_proj_cfg", None)
+        if isinstance(atual, dict):
+            cfg.update({k: v for k, v in atual.items()
+                        if k in padrao and v not in (None, "")})
+        try:
+            cfg["tamanho_pct"] = float(cfg.get("tamanho_pct") or 5.0)
+        except (TypeError, ValueError):
+            cfg["tamanho_pct"] = 5.0
+        try:
+            cfg["duracao_seg"] = int(cfg.get("duracao_seg") or 30)
+        except (TypeError, ValueError):
+            cfg["duracao_seg"] = 30
+        cfg["fundo_opaco"] = bool(cfg.get("fundo_opaco"))
+        imagem = str(cfg.get("fundo_imagem") or "").strip()
+        return {"ok": True,
+                "config": {k: cfg.get(k) for k in padrao},
+                "tem_imagem": bool(imagem), "imagem": imagem}
+    def _remoto_projecao_configurar(self, dados: dict) -> dict:
+        """Salva a Aparência da Projeção pedida pelo celular.
+
+        Mesmos campos e limites da janela do computador. Campos ausentes
+        são preservados (o celular pode mandar só o que mudou).
+        """
+        base = dict(self._projecao_padrao())
+        config_data = getattr(self, "config_data", {})
+        if isinstance(config_data, dict) and isinstance(
+                config_data.get("projecao"), dict):
+            base.update(config_data["projecao"])
+        telao = getattr(getattr(self, "player", None), "telao", None)
+        atual = getattr(telao, "_proj_cfg", None)
+        if isinstance(atual, dict):
+            base.update({k: v for k, v in atual.items()
+                         if k in base and v not in (None, "")})
+        if "fonte" in dados:
+            fonte = str(dados.get("fonte") or "").strip()
+            if fonte not in ("Montserrat", "Roboto", "Digital-7"):
+                return {"ok": False, "erro": f"Fonte inválida: {fonte}"}
+            base["fonte"] = fonte
+        for chave in ("cor", "cor_ref", "cor_fundo"):
+            if chave not in dados:
+                continue
+            cor = str(dados.get(chave) or "").strip()
+            if not self._cor_hex_valida(cor):
+                return {"ok": False,
+                        "erro": f"Cor inválida para {chave}: {cor}"}
+            base[chave] = cor
+        if "tamanho_pct" in dados:
+            try:
+                valor = float(dados.get("tamanho_pct"))
+            except (TypeError, ValueError):
+                return {"ok": False,
+                        "erro": "Valor inválido para tamanho_pct."}
+            if valor != valor:  # NaN
+                return {"ok": False,
+                        "erro": "Valor inválido para tamanho_pct."}
+            base["tamanho_pct"] = max(1.0, min(15.0, valor))
+        if "duracao_seg" in dados:
+            try:
+                duracao = int(dados.get("duracao_seg"))
+            except (TypeError, ValueError):
+                return {"ok": False,
+                        "erro": "Valor inválido para duracao_seg."}
+            base["duracao_seg"] = max(1, duracao)
+        if "fundo_opaco" in dados:
+            base["fundo_opaco"] = self._bool_remoto(dados.get("fundo_opaco"))
+        if "fundo_imagem" in dados:
+            base["fundo_imagem"] = str(
+                dados.get("fundo_imagem") or "").strip()
+        if "biblia_caixa" in dados:
+            caixa = str(dados.get("biblia_caixa") or "").strip()
+            if caixa not in ("normal", "maiusculas", "minusculas"):
+                return {"ok": False,
+                        "erro": f"Caixa do versículo inválida: {caixa}"}
+            base["biblia_caixa"] = caixa
+        if "biblia_alinhamento" in dados:
+            alinhamento = str(
+                dados.get("biblia_alinhamento") or "").strip()
+            if alinhamento not in ("esquerda", "centro", "direita"):
+                return {"ok": False,
+                        "erro": "Alinhamento do versículo inválido: "
+                                f"{alinhamento}"}
+            base["biblia_alinhamento"] = alinhamento
+        self.salvar_config_projecao(base)
+        return self._remoto_projecao_estado()
+    def _remoto_projecao_imagens(self) -> dict:
+        """Imagens disponíveis no computador para o fundo da projeção."""
+        extensoes = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
+        caminhos: list[str] = []
+        vistos: set[str] = set()
+        try:
+            nomes = sorted(os.listdir(UPLOAD_FOLDER))
+        except OSError:
+            nomes = []
+        for nome in nomes:
+            caminho = os.path.join(UPLOAD_FOLDER, nome)
+            if not os.path.isfile(caminho):
+                continue
+            if os.path.splitext(nome)[1].lower() not in extensoes:
+                continue
+            real = os.path.realpath(caminho)
+            if real in vistos:
+                continue
+            vistos.add(real)
+            caminhos.append(caminho)
+        return {"ok": True, "imagens": [
+            {"nome": os.path.basename(c), "caminho": c} for c in caminhos]}
 
     def _remoto_sorteio_estado(self) -> dict:
         """Estado do Sorteio Profissional (para o controle remoto)."""

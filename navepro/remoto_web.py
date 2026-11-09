@@ -31,8 +31,12 @@ A API usada (tudo com o header `X-Token`):
   GET  /api/remoto/relogio     → configuração e estado do relógio
   POST /api/remoto/relogio     → {acao: configurar|projetar|
                                    alternar_relogio|alternar_temperatura}
+  GET  /api/remoto/projecao    → configuração atual da Aparência da Projeção
   POST /api/remoto/projecao    → abre no computador a janela Aparência da
                                    Projeção (com as opções da Bíblia)
+  POST /api/remoto/projecao/configurar → salva a Aparência da Projeção
+  GET  /api/remoto/projecao/imagens    → imagens disponíveis no computador
+  POST /api/remoto/projecao/imagem     → envia do celular uma imagem de fundo
   GET  /api/remoto/sorteio     → estado e configuração do Sorteio
   POST /api/remoto/sorteio/abrir      → abre o Sorteio
   POST /api/remoto/sorteio/fechar     → fecha o Sorteio
@@ -490,6 +494,203 @@ function relogioSalvar() {
   });
 }
 
+// ── Aparência da Projeção (aba Bíblia) ──
+// Reproduz no celular a janela "Aparência da Projeção" do computador:
+// fonte, tamanho, cores, versículo (caixa/alinhamento), fundo (cor/imagem)
+// e duração. A imagem de fundo pode ser escolhida entre as que já estão no
+// computador ou enviada direto do celular.
+var PROJ_ESTADO = null;
+var PROJ_SEL = {texto: '#FFFFFF', ref: '#A0A0A0', fundo: '#000000'};
+var PROJ_CORES = [
+  ['Amarelo', '#F5BE08'], ['Branco', '#FFFFFF'],
+  ['Vermelho', '#FF5555'], ['Azul', '#58A6FF'],
+  ['Verde', '#3FB950'], ['Roxo', '#D2A8FF'],
+  ['Ciano', '#00E5FF'], ['Laranja', '#FF9800']
+];
+var PROJ_FUNDOS = [
+  ['Preto', '#000000'], ['Cinza escuro', '#1a1a2e'],
+  ['Azul escuro', '#0d1b2a'], ['Verde escuro', '#0a1f0a'],
+  ['Vinho', '#2d0a0a']
+];
+var PROJ_FONTES = ['Montserrat', 'Roboto', 'Digital-7'];
+var PROJ_CAIXAS = [['Como est\u00e1', 'normal'],
+                   ['MAI\u00daSCULAS', 'maiusculas'],
+                   ['min\u00fasculas', 'minusculas']];
+var PROJ_ALINHAMENTOS = [['Esquerda', 'esquerda'],
+                         ['Centralizado', 'centro'],
+                         ['Direita', 'direita']];
+
+function projecaoMontarGrupo(id, lista, qual) {
+  var box = document.getElementById(id);
+  if (!box || box.children.length) return;
+  lista.forEach(function(item) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.cor = item[1];
+    b.title = item[0];
+    b.style.background = item[1];
+    b.onclick = function() { projecaoEscolher(qual, item[1]); };
+    box.appendChild(b);
+  });
+}
+
+function projecaoPreencherSelect(id, lista) {
+  var sel = document.getElementById(id);
+  if (!sel || sel.children.length) return;
+  lista.forEach(function(item) {
+    var o = document.createElement('option');
+    o.value = item[1];
+    o.textContent = item[0];
+    sel.appendChild(o);
+  });
+}
+
+function projecaoMontar() {
+  var sel = document.getElementById('proj_fonte');
+  if (sel && !sel.children.length) {
+    PROJ_FONTES.forEach(function(f) {
+      var o = document.createElement('option');
+      o.value = f;
+      o.textContent = f;
+      sel.appendChild(o);
+    });
+  }
+  projecaoPreencherSelect('proj_caixa', PROJ_CAIXAS);
+  projecaoPreencherSelect('proj_alinhamento', PROJ_ALINHAMENTOS);
+  projecaoMontarGrupo('proj_cores_texto', PROJ_CORES, 'texto');
+  projecaoMontarGrupo('proj_cores_ref', PROJ_CORES, 'ref');
+  projecaoMontarGrupo('proj_cores_fundo', PROJ_FUNDOS, 'fundo');
+}
+
+function projecaoEscolher(qual, cor) {
+  PROJ_SEL[qual] = cor;
+  var box = document.getElementById('proj_cores_' + qual);
+  var alvo = String(cor || '').toUpperCase();
+  [].forEach.call(box.querySelectorAll('button'), function(b) {
+    b.classList.toggle('on', String(b.dataset.cor).toUpperCase() === alvo);
+  });
+}
+
+function projecaoSlider() {
+  var valor = Number(document.getElementById('proj_tamanho').value);
+  document.getElementById('proj_tamanho_txt').textContent =
+    valor.toFixed(1).replace('.', ',') + '%';
+}
+
+function projecaoMostrar(j) {
+  if (!j || j.ok === false) return;
+  PROJ_ESTADO = j;
+  var c = j.config || {};
+  document.getElementById('proj_fonte').value = c.fonte || 'Montserrat';
+  document.getElementById('proj_tamanho').value =
+    relogioNum(c.tamanho_pct, 5);
+  projecaoSlider();
+  projecaoEscolher('texto', c.cor || '#FFFFFF');
+  projecaoEscolher('ref', c.cor_ref || '#A0A0A0');
+  projecaoEscolher('fundo', c.cor_fundo || '#000000');
+  document.getElementById('proj_caixa').value = c.biblia_caixa || 'normal';
+  document.getElementById('proj_alinhamento').value =
+    c.biblia_alinhamento || 'centro';
+  document.getElementById('proj_opaco').checked = !!c.fundo_opaco;
+  document.getElementById('proj_duracao').value =
+    relogioNum(c.duracao_seg, 30);
+  document.getElementById('proj_imagem').value = j.imagem || '';
+}
+
+function carregarImagensProjecao() {
+  var sel = document.getElementById('proj_imagens_lista');
+  if (!sel) return;
+  apiGet('/api/remoto/projecao/imagens').then(function(j) {
+    sel.innerHTML = '<option value="">Imagens no computador...</option>';
+    if (!j || !j.ok) return;
+    (j.imagens || []).forEach(function(img) {
+      var o = document.createElement('option');
+      o.value = img.caminho;
+      o.textContent = img.nome;
+      sel.appendChild(o);
+    });
+  }).catch(function() {});
+}
+
+function carregarProjecao() {
+  projecaoMontar();
+  apiGet('/api/remoto/projecao').then(projecaoMostrar).catch(function() {});
+  carregarImagensProjecao();
+}
+
+function abrirProjecaoBiblia() {
+  var card = document.getElementById('projecao_card');
+  card.style.display = 'block';
+  carregarProjecao();
+  card.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function abrirProjecaoNoComputador() {
+  apiPost('/api/remoto/projecao', {}).then(function(j) {
+    if (j && j.ok)
+      aviso('Janela Apar\u00eancia da Proje\u00e7\u00e3o aberta no computador',
+            '#238636');
+  });
+}
+
+function projecaoEscolherImagem() {
+  var sel = document.getElementById('proj_imagens_lista');
+  if (sel && sel.value)
+    document.getElementById('proj_imagem').value = sel.value;
+}
+
+function projecaoLimparImagem() {
+  document.getElementById('proj_imagem').value = '';
+  document.getElementById('proj_imagens_lista').value = '';
+}
+
+function projecaoEnviarImagem() {
+  var input = document.getElementById('proj_upload');
+  if (!input || !input.files || !input.files.length) return;
+  var fd = new FormData();
+  fd.append('arquivo', input.files[0]);
+  fetch(rota('/api/remoto/projecao/imagem'), {
+    method: 'POST',
+    headers: {'X-Token': TOKEN},
+    body: fd
+  }).then(function(r) {
+    if (r.status === 403) { pedirToken(); throw new Error('sem token'); }
+    if (r.status === 413) throw new Error('Imagem muito grande (m\u00e1x. 25 MB)');
+    if (!r.ok) throw new Error('Falha ao enviar a imagem');
+    return r.json();
+  }).then(function(j) {
+    if (j && j.ok) {
+      document.getElementById('proj_imagem').value = j.caminho;
+      carregarImagensProjecao();
+      aviso('Imagem enviada. Toque em Salvar apar\u00eancia.', '#238636');
+    } else if (j && j.erro) {
+      aviso(j.erro);
+    }
+  }).catch(function(e) { aviso(e && e.message ? e.message : 'Falha ao enviar'); });
+  input.value = '';
+}
+
+function projecaoSalvar() {
+  var dados = {
+    fonte: document.getElementById('proj_fonte').value,
+    tamanho_pct: Number(document.getElementById('proj_tamanho').value),
+    cor: PROJ_SEL.texto,
+    cor_ref: PROJ_SEL.ref,
+    cor_fundo: PROJ_SEL.fundo,
+    biblia_caixa: document.getElementById('proj_caixa').value,
+    biblia_alinhamento: document.getElementById('proj_alinhamento').value,
+    fundo_opaco: document.getElementById('proj_opaco').checked,
+    fundo_imagem: document.getElementById('proj_imagem').value.trim(),
+    duracao_seg: Number(document.getElementById('proj_duracao').value)
+  };
+  apiPost('/api/remoto/projecao/configurar', dados).then(function(j) {
+    if (j && j.ok)
+      aviso('Apar\u00eancia da Proje\u00e7\u00e3o salva', '#238636');
+    projecaoMostrar(j);
+    atualizarEstado();
+  });
+}
+
 // ── Bíblia ──
 // Abreviações dos livros (mesma ordem/ideia da janela Bíblia do app).
 var BIB_ABREVIACOES = {
@@ -772,15 +973,9 @@ function autoBiblia(ev) {
   el.addEventListener('change', autoBiblia);
 });
 
-// Abre no computador a janela "Aparência da Projeção" (a mesma da Bíblia
-// do app), com todas as opções: cor da referência, caixa e alinhamento.
-function abrirProjecaoBiblia() {
-  apiPost('/api/remoto/projecao', {}).then(function(j) {
-    if (j && j.ok)
-      aviso('Janela Apar\u00eancia da Proje\u00e7\u00e3o aberta no computador',
-            '#238636');
-  });
-}
+// A janela "Aparência da Projeção" agora abre no próprio celular
+// (`abrirProjecaoBiblia`); a rota antiga que a abria no computador continua
+// disponível no botão "Abrir no computador" (`abrirProjecaoNoComputador`).
 
 // Projeta por referência (livro + Cap + V:), versículo a versículo.
 // Sem `vers`, usa o campo "V:"; com `vers`, começa naquele versículo.
@@ -1561,6 +1756,7 @@ function iniciar() {
   carregarServicos();
   relogioMontarCores();
   carregarRelogio();
+  carregarProjecao();
   atualizarEstado();
   setInterval(atualizarEstado, 2500);
   setInterval(function() {
@@ -1708,6 +1904,53 @@ PAGINA = """<!DOCTYPE html>
         Preencha o vers&iacute;culo (V:): a proje&ccedil;&atilde;o come&ccedil;a sozinha.
       </div>
     </details>
+  </div>
+
+  <div class="card" id="projecao_card" style="display:none">
+    <h3>&#127912; Apar&ecirc;ncia da Proje&ccedil;&atilde;o</h3>
+    <span class="campo">Fonte</span>
+    <select id="proj_fonte"></select>
+    <span class="campo">Tamanho do texto (relativo &agrave; altura da tela)
+      <span class="pill" id="proj_tamanho_txt">5,0%</span></span>
+    <input type="range" id="proj_tamanho" min="1" max="15" step="0.2"
+           oninput="projecaoSlider()">
+    <span class="campo">Cor do texto</span>
+    <div class="cores" id="proj_cores_texto"></div>
+    <span class="campo">Cor da refer&ecirc;ncia b&iacute;blica
+      (livro cap:vers.)</span>
+    <div class="cores" id="proj_cores_ref"></div>
+    <span class="campo">Vers&iacute;culo (texto e alinhamento no cart&atilde;o)</span>
+    <div class="linha">
+      <select id="proj_caixa"></select>
+      <select id="proj_alinhamento"></select>
+    </div>
+    <span class="campo">Cor de fundo</span>
+    <div class="cores" id="proj_cores_fundo"></div>
+    <label class="check">
+      <input type="checkbox" id="proj_opaco">
+      <span>Fundo opaco (sem transpar&ecirc;ncia)</span>
+    </label>
+    <span class="campo">Imagem de fundo (opcional)</span>
+    <input id="proj_imagem" placeholder="/caminho/da/imagem.jpg">
+    <div class="linha">
+      <select id="proj_imagens_lista" onchange="projecaoEscolherImagem()">
+        <option value="">Imagens no computador...</option>
+      </select>
+      <button class="btn cinza mini" onclick="projecaoLimparImagem()">
+        &#10006; Limpar</button>
+    </div>
+    <span class="campo">Enviar imagem do celular</span>
+    <input type="file" id="proj_upload" accept="image/*"
+           onchange="projecaoEnviarImagem()">
+    <span class="campo">Dura&ccedil;&atilde;o antes de voltar ao rel&oacute;gio
+      (segundos)</span>
+    <input id="proj_duracao" inputmode="numeric" placeholder="30">
+    <button class="btn verde" style="margin-top:8px" onclick="projecaoSalvar()">
+      &#128190; Salvar apar&ecirc;ncia</button>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn cinza" onclick="abrirProjecaoNoComputador()">
+        &#128421; Abrir no computador</button>
+    </div>
   </div>
 
   <div class="card">

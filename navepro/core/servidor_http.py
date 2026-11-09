@@ -45,6 +45,7 @@ _ACOES_POST_REMOTO: dict = {
     '/api/remoto/tamanho': 'tamanho',
     '/api/remoto/relogio': 'relogio',
     '/api/remoto/projecao': 'abrir_config_projecao',
+    '/api/remoto/projecao/configurar': 'projecao_configurar',
     '/api/remoto/sorteio/abrir': 'sorteio_abrir',
     '/api/remoto/sorteio/fechar': 'sorteio_fechar',
     '/api/remoto/sorteio/configurar': 'sorteio_configurar',
@@ -229,6 +230,10 @@ class ServidorAsyncHTTP:
         limite_corpo = (_LIMITE_CORPO_REMOTO
                         if alvo.startswith('/api/remoto')
                         else _LIMITE_CORPO)
+        if alvo == '/api/remoto/projecao/imagem':
+            # A imagem de fundo vem do celular e pode ser bem maior que o
+            # JSON das outras rotas remotas (fotos de 10+ MB são comuns).
+            limite_corpo = 25 * 1024 * 1024
         try:
             tamanho = int(headers.get('content-length') or 0)
         except ValueError:
@@ -495,6 +500,10 @@ class ServidorAsyncHTTP:
             return ('relogio_estado', {})
         if path == '/api/remoto/sorteio':
             return ('sorteio_estado', {})
+        if path == '/api/remoto/projecao':
+            return ('projecao_estado', {})
+        if path == '/api/remoto/projecao/imagens':
+            return ('projecao_imagens', {})
         raise KeyError(path)
 
     def _executar_remoto(self, acao: str, dados: dict) -> bytes:
@@ -606,6 +615,11 @@ class ServidorAsyncHTTP:
         """Processa requisições POST."""
         if path == '/api/midia/upload':
             return self._handle_upload_bytes(headers, body)
+        if path == '/api/remoto/projecao/imagem':
+            bloqueio = self._exige_remoto(headers, params)
+            if bloqueio is not None:
+                return bloqueio
+            return self._handle_upload_projecao_bytes(headers, body)
         if path.startswith('/api/remoto'):
             bloqueio = self._exige_remoto(headers, params)
             if bloqueio is not None:
@@ -704,6 +718,75 @@ class ServidorAsyncHTTP:
             "tipo": tipo,
             "caminho": caminho
         }, 201)
+
+    def _handle_upload_projecao_bytes(self, headers: dict,
+                                      body: bytes) -> bytes:
+        """Recebe do celular uma imagem para o fundo da projeção.
+
+        Diferente do upload de mídia, não cadastra nada no banco: grava a
+        imagem em UPLOAD_FOLDER com o prefixo ``projecao_`` e devolve o
+        caminho, que o celular usa no campo "Imagem de fundo".
+        """
+        content_type = headers.get('content-type', '')
+        if 'multipart/form-data' not in content_type:
+            return self._responder_erro_bytes(
+                "Content-Type deve ser multipart/form-data")
+        try:
+            boundary = content_type.split('boundary=')[1].encode()
+        except (IndexError, ValueError):
+            return self._responder_erro_bytes("Boundary não encontrado")
+
+        arquivo_dados = None
+        nome_arquivo = None
+        for part in body.split(b'--' + boundary):
+            if b'Content-Disposition' not in part:
+                continue
+            match = re.search(rb'filename="([^"]*)"', part)
+            if not match:
+                continue
+            nome_arquivo = match.group(1).decode('utf-8', errors='ignore')
+            header_end = part.find(b'\r\n\r\n')
+            if header_end != -1:
+                arquivo_dados = part[header_end + 4:-2]
+            break
+
+        if not arquivo_dados or not nome_arquivo:
+            return self._responder_erro_bytes("Nenhuma imagem enviada")
+
+        nome_arquivo = os.path.basename(nome_arquivo.replace('\\', '/'))
+        if not nome_arquivo or nome_arquivo in ('.', '..'):
+            return self._responder_erro_bytes("Nome de arquivo inválido")
+
+        extensoes = ('.png', '.jpg', '.jpeg', '.bmp', '.webp', '.gif')
+        base, ext = os.path.splitext(nome_arquivo)
+        if ext.lower() not in extensoes:
+            return self._responder_erro_bytes(
+                f"Formato de imagem não suportado: {ext.lower()}")
+
+        try:
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        except OSError:
+            pass
+
+        caminho = os.path.join(UPLOAD_FOLDER, f"projecao_{base}{ext}")
+        contador = 1
+        while os.path.exists(caminho):
+            caminho = os.path.join(
+                UPLOAD_FOLDER, f"projecao_{base}_{contador}{ext}")
+            contador += 1
+
+        try:
+            with open(caminho, 'wb') as f:
+                f.write(arquivo_dados)
+        except OSError as e:
+            return self._responder_erro_bytes(
+                f"Falha ao salvar imagem: {e}", 500)
+
+        return self._responder_json_bytes({
+            "ok": True,
+            "nome": os.path.basename(caminho),
+            "caminho": caminho,
+        })
 
     async def _handle_delete(self, path: str, headers: dict,
                              peer_ip: str = '') -> bytes:
