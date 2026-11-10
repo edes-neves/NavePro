@@ -51,20 +51,6 @@ def _carregar_anuncios_json() -> list[dict]:
     return []
 
 
-def _salvar_anuncios_json(anuncios: list[dict]) -> bool:
-    """Persiste a lista de anúncios em ~/.navepro/anuncios.json.
-
-    Retorna True em caso de sucesso (ou False se o disco recusar a gravação).
-    """
-    try:
-        with open(ANUNCIOS_FILE, "w", encoding="utf-8") as f:
-            json.dump(anuncios, f, ensure_ascii=False, indent=2)
-        return True
-    except OSError as e:
-        log.exception(f"⚠️ Erro ao salvar anúncios: {e}")
-        return False
-
-
 # ────────────────────────────────────────────────────────────────────
 # ANÚNCIOS — PERSISTÊNCIA NO BANCO SQLite (a partir desta versão)
 # ────────────────────────────────────────────────────────────────────

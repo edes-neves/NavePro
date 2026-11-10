@@ -31,7 +31,6 @@ APP_ID_FLATPAK: str = "io.github.edes_neves.NavePro"
 EXTENSOES_VIDEO: frozenset = frozenset({'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm'})
 EXTENSOES_AUDIO: frozenset = frozenset({'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'})
 EXTENSOES_TEXTO: frozenset = frozenset({'.txt', '.pdf', '.doc', '.docx', '.md'})
-EXTENSOES_TODAS: frozenset = EXTENSOES_VIDEO | EXTENSOES_AUDIO | EXTENSOES_TEXTO
 
 SQLITE_TIMEOUT: int = 10
 CACHE_TTL_SEGUNDOS: int = 60

@@ -282,21 +282,6 @@ def _slides_versiculo_item(item: dict) -> list[tuple]:
     return [(letra, titulo)]
 
 
-def _reordenar_itens_servico(itens: list[dict], id_origem: int, id_destino: int) -> list[dict]:
-    """Move o item id_origem para a posição de id_destino, preservando o resto.
-
-    Retorna a nova lista (mesma list se origem/destino inexistentes ou iguais).
-    """
-    nova = list(itens)
-    idx_orig = next((i for i, it in enumerate(nova) if it.get("id") == id_origem), None)
-    idx_dest = next((i for i, it in enumerate(nova) if it.get("id") == id_destino), None)
-    if idx_orig is None or idx_dest is None or idx_orig == idx_dest:
-        return nova
-    item = nova.pop(idx_orig)
-    nova.insert(idx_dest, item)
-    return nova
-
-
 def _formatar_duracao_segundos(segundos: float | int | None) -> str:
     """Formata segundos como ``m:ss`` ou ``h:mm:ss`` (``—`` se inválido).
 

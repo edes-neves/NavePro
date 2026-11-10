@@ -9,6 +9,7 @@
 screeninfo>=0.7          # Detecção real de monitores (com fallback para xrandr/tkinter)
 Pillow>=10.0.0           # Logo/ícone na interface (ImageTk)
 pypdf>=4.0.0             # Importação de anúncios em PDF (extração de texto)
+defusedxml>=0.7.1        # Importação de Bíblias/hinos XML sem bombas XML
 
 # ── Opcionais (Sorteio: importar lista de nomes de arquivos) ──
 # São carregados sob demanda em navepro/sorteio/name_importer.py; sem eles o

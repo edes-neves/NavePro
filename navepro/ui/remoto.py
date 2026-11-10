@@ -105,7 +105,7 @@ class ControleRemotoMixin:
             remoto['token'] = ''
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.config_data, f, indent=2)
+                json.dump(self.config_data, f, indent=2, ensure_ascii=False)
             # O config.json guarda o token do controle remoto: restringe a
             # leitura ao próprio usuário (no Windows a proteção real vem
             # das permissões do perfil; o chmod não atrapalha).

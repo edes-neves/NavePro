@@ -236,7 +236,8 @@ def _rodar() -> int:
     # ── 8. JSON legado: round-trip e robustez ───────────────────────
     checar("JSON ausente → []",
            ns["_carregar_anuncios_json"]() == [])
-    ns["_salvar_anuncios_json"]([{"id": 1, "titulo": "Ação"}])
+    with open(anuncios_file, "w", encoding="utf-8") as f:
+        json.dump([{"id": 1, "titulo": "Ação"}], f, ensure_ascii=False)
     checar("round-trip salva/carrega (acentos preservados)",
            ns["_carregar_anuncios_json"]()
            == [{"id": 1, "titulo": "Ação"}])

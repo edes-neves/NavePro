@@ -26,10 +26,6 @@ from collections.abc import Callable
 
 from navepro.core.player import _arquivo_para_cmd_start, localizar_executavel
 
-# Extensões que o item de Ordem de Serviço entrega ao aplicativo externo.
-EXTENSOES_APRESENTACAO = frozenset(
-    {'.ppt', '.pptx', '.pps', '.ppsx', '.odp', '.pdf'})
-
 # Extensões abertas pelo PowerPoint no Windows. `.pps`/`.ppsx` já são
 # apresentações por associação; o `/s` mantém o mesmo comportamento.
 EXTENSOES_POWERPOINT = frozenset({'.ppt', '.pptx', '.pps', '.ppsx'})

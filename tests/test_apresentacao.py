@@ -21,7 +21,6 @@ RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
 
 from navepro.core.apresentacao import (  # noqa: E402
-    EXTENSOES_APRESENTACAO,
     EXTENSOES_POWERPOINT,
     _ambiente_apresentacao,
     _comando_apresentacao,
@@ -49,10 +48,6 @@ LO = '/usr/bin/libreoffice'
 LO_HOST = '/run/host/usr/bin/libreoffice'
 POWERPNT = r'C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE'
 
-check('.pptx está entre as extensões de apresentação',
-      '.pptx' in EXTENSOES_APRESENTACAO)
-check('.pdf está entre as extensões de apresentação',
-      '.pdf' in EXTENSOES_APRESENTACAO)
 check('.odp é tratado como apresentação do PowerPoint? Não',
       '.odp' not in EXTENSOES_POWERPOINT)
 

@@ -71,7 +71,7 @@ fi
 echo "✅ PyInstaller: $("$PYTHON_BIN" -m PyInstaller --version)"
 
 # Dependências obrigatórias do app (as mesmas que o NavePro.spec embute)
-for mod in PIL screeninfo pypdf; do
+for mod in PIL screeninfo pypdf defusedxml; do
     if ! "$PYTHON_BIN" -c "import $mod" >/dev/null 2>&1; then
         # Nome do pacote no pip (PIL é importado como Pillow)
         pkg="$mod"; [ "$mod" = "PIL" ] && pkg="Pillow"
@@ -87,7 +87,7 @@ for mod in PIL screeninfo pypdf; do
         fi
     fi
 done
-echo "✅ Dependências: PIL/Pillow, screeninfo e pypdf OK"
+echo "✅ Dependências: PIL/Pillow, screeninfo, pypdf e defusedxml OK"
 
 # ────────────────────────────────────────────────────────────────────
 # 1. Empacotar com PyInstaller (NavePro.spec — binário único)

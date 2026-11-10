@@ -11,13 +11,20 @@ import re
 import tkinter as tk
 import tkinter.messagebox
 import tkinter.simpledialog
-import xml.etree.ElementTree as ET
+import unicodedata
 from tkinter import ttk
+
+try:
+    # defusedxml recusa DTD/entidades externas (bombas XML). É opcional:
+    # sem o pacote, o app continua funcionando com o parser da stdlib.
+    from defusedxml import ElementTree as ET
+except ImportError:  # pragma: no cover - ambientes sem defusedxml
+    import xml.etree.ElementTree as ET
 
 from navepro.core.banco import _inserir_com_id_reuso, db_execute, db_query
 from navepro.core.log import get_logger
 from navepro.core.slides import _montar_slides_letra
-from navepro.core.textos import _numero_do_titulo, _termo_like
+from navepro.core.textos import _termo_like
 from navepro.core.util_tk import _centralizar_sobre
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
@@ -96,18 +103,44 @@ class JanelaHinosMixin:
             if busca and busca != placeholder:
                 if busca.isdigit():
                     # Número do hino está no começo do título (ex.: "11 - ...").
+                    # Filtra no SQL sem carregar a letra inteira de cada hino.
                     num = int(busca)
-                    rows = [r for r in db_query(
-                                f"SELECT {campos} FROM letras WHERE ativo = 1 "
-                                "ORDER BY titulo")
-                            if _numero_do_titulo(r["titulo"]) == num]
+                    rows = db_query(
+                        f"SELECT {campos} FROM letras WHERE ativo = 1 "
+                        "AND LTRIM(titulo) GLOB '[0-9]*' "
+                        "AND CAST(LTRIM(titulo) AS INTEGER) = ? "
+                        "ORDER BY titulo", (num,))
                 else:
                     busca_like = f"%{_termo_like(busca)}%"
-                    rows = db_query(
-                        f"SELECT {campos} FROM letras WHERE ativo = 1 AND "
-                        "(titulo LIKE ? ESCAPE '\\' OR artista LIKE ? ESCAPE '\\' "
-                        "OR letra_completa LIKE ? ESCAPE '\\') "
-                        "ORDER BY titulo", (busca_like, busca_like, busca_like))
+                    # FTS5 acelera; o LIKE mantém a semântica (trecho exato,
+                    # curingas literais). Sem FTS/resultado, cai no LIKE.
+                    tokens = re.findall(
+                        r"\w+",
+                        unicodedata.normalize('NFC', busca).casefold())
+                    match = " AND ".join(
+                        '"' + t.replace('"', '""') + '"*' for t in tokens)
+                    rows = []
+                    if tokens:
+                        try:
+                            rows = db_query(
+                                f"SELECT {campos} FROM letras WHERE ativo = 1 "
+                                "AND id IN (SELECT rowid FROM letras_fts "
+                                "WHERE letras_fts MATCH ?) AND "
+                                "(titulo LIKE ? ESCAPE '\\' "
+                                "OR artista LIKE ? ESCAPE '\\' "
+                                "OR letra_completa LIKE ? ESCAPE '\\') "
+                                "ORDER BY titulo",
+                                (match, busca_like, busca_like, busca_like))
+                        except Exception:
+                            rows = []
+                    if not rows:
+                        rows = db_query(
+                            f"SELECT {campos} FROM letras WHERE ativo = 1 AND "
+                            "(titulo LIKE ? ESCAPE '\\' "
+                            "OR artista LIKE ? ESCAPE '\\' "
+                            "OR letra_completa LIKE ? ESCAPE '\\') "
+                            "ORDER BY titulo",
+                            (busca_like, busca_like, busca_like))
             else:
                 rows = db_query(
                     f"SELECT {campos} FROM letras WHERE ativo = 1 ORDER BY titulo")

@@ -146,15 +146,6 @@ try:
     check("não devolve foco ao editor",
           foco._focar_apresentacao(alvo) is False)
 
-    # Captura assíncrona: espera a janela aparecer e guarda o id.
-    respostas = iter([None, janela(88, "PowerPoint Slide Show",
-                                   "screenClass", "POWERPNT.EXE")])
-    foco._localizar_janela_apresentacao = lambda _alvo: next(respostas)
-    alvo = foco._criar_alvo_apresentacao("Culto.pptx")
-    foco._registrar_janela_apresentacao(alvo, timeout=1.0)
-    check("captura a janela quando ela aparece",
-          alvo["janela"] == 88 and alvo["capturado"] is True, str(alvo))
-
     # Captura agendada no Tk (sem thread): só chama Xlib no callback.
     class RaizFalsa:
         def __init__(self):
@@ -180,11 +171,6 @@ try:
     check("agenda o reposicionamento do controle após capturar",
           len(raiz.agendados) == 3, str(len(raiz.agendados)))
 
-    # Alvo cancelado (apresentação terminou) não captura nada.
-    alvo = foco._criar_alvo_apresentacao("Culto.pptx")
-    alvo["cancelado"] = True
-    foco._registrar_janela_apresentacao(alvo, timeout=0.5)
-    check("não captura apresentação já encerrada", alvo["janela"] is None)
 finally:
     foco._localizar_janela_apresentacao = _orig_localizar
     foco._janela_viva = _orig_viva

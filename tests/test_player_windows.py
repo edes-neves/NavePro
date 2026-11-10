@@ -52,7 +52,6 @@ from navepro.core.player import (  # noqa: E402
     _arquivo_para_cmd_start,
     encerrar_arvore,
     esconder_janelas_auxiliares,
-    limpar_cache_executaveis,
     localizar_executavel,
     nome_pipe_mpv,
     posicionar_janela_player,
@@ -131,7 +130,6 @@ def _rodar() -> int:
             falhas += 1
 
     # ── 1. Descoberta de executável ──────────────────────────────────
-    limpar_cache_executaveis()
     achados = {nome: localizar_executavel(nome)
                for nome in ("mpv", "vlc", "smplayer")}
     for nome, caminho in achados.items():

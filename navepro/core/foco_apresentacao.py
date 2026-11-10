@@ -653,18 +653,6 @@ def _janela_dentro_do_monitor(janela: dict, monitor: tuple | None) -> bool:
     return mx <= x < mx + mw and my <= y < my + mh
 
 
-def _janela_ocupa_monitor(janela: dict, monitor: tuple | None) -> bool:
-    """True se a janela está em tela cheia sobre o monitor informado."""
-    if not monitor:
-        return False
-    _mx, _my, mw, mh = monitor
-    largura = int(janela.get("largura") or 0)
-    altura = int(janela.get("altura") or 0)
-    tol_w = max(8, int(mw * 0.02))
-    tol_h = max(8, int(mh * 0.02))
-    return (abs(largura - mw) <= tol_w and abs(altura - mh) <= tol_h)
-
-
 def _eh_janela_libreoffice(janela: dict) -> bool:
     """True se a janela pertence ao LibreOffice/Impress."""
     processo = _normalizar(os.path.basename(janela.get("processo") or ""))
@@ -873,21 +861,6 @@ def _agendar_reposicionamento_controle(root, alvo: dict) -> None:
             root.after(atraso, _mover)
         except Exception:
             pass
-
-
-def _registrar_janela_apresentacao(alvo: dict, timeout: float = 25.0) -> None:
-    """Espera a janela do slide show aparecer (uso síncrono/testes).
-
-    O NavePro usa `_agendar_captura_janela_apresentacao` para não chamar
-    Xlib fora da thread principal.
-    """
-    if not alvo or not (sys.platform.startswith(("win", "linux"))):
-        return
-    limite = time.monotonic() + max(0.5, timeout)
-    while time.monotonic() < limite:
-        if _tentar_capturar_janela_apresentacao(alvo):
-            return
-        time.sleep(0.25)
 
 
 def _focar_apresentacao(alvo: dict | None) -> bool:

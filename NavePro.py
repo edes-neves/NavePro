@@ -669,52 +669,6 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             self.entry_busca.config(fg='#F5BE08')
         self._reset_focus_timer()
 
-    def _on_focus_in_busca(self, event: object = None) -> None:
-        """FocusIn do campo de busca - destaca borda e mostra botão X."""
-        if self.entry_busca.get() == self.placeholder_busca:
-            self.entry_busca.delete(0, tk.END)
-            self.entry_busca.config(fg='#f0c040')
-        # Mostra botão X
-        self._clear_btn.pack(side='left', padx=(0, 8))
-        # Destaca borda do card
-        try:
-            busca_card = self.entry_busca.master.master
-            busca_card.config(highlightbackground='#6e40c9')
-        except Exception:
-            pass
-        self._reset_focus_timer()
-
-    def _on_focus_out_busca(self, event: object = None) -> None:
-        """FocusOut do campo de busca - restaura borda."""
-        termo = self.entry_busca.get().strip()
-        if not termo or termo == self.placeholder_busca:
-            self.entry_busca.delete(0, tk.END)
-            self.entry_busca.insert(0, self.placeholder_busca)
-            self.entry_busca.config(fg='#8b949e')
-            self._clear_btn.pack_forget()
-        try:
-            busca_card = self.entry_busca.master.master
-            busca_card.config(highlightbackground='#30363d')
-        except Exception:
-            pass
-        self._cancel_focus_timer()
-
-    def _limpar_busca(self, event: object = None) -> None:
-        """Limpa o campo de busca e redefine placeholder."""
-        self.entry_busca.delete(0, tk.END)
-        self.entry_busca.insert(0, self.placeholder_busca)
-        self.entry_busca.config(fg='#8b949e')
-        self._clear_btn.pack_forget()
-        try:
-            busca_card = self.entry_busca.master.master
-            busca_card.config(highlightbackground='#30363d')
-        except Exception:
-            pass
-        self.arquivos_encontrados = []
-        self.player.carregar_playlist([])
-        self.atualizar_lista()
-        self.root.focus_set()
-
     def _on_entry_keyrelease(self, event: object) -> None:
         """Handler único para KeyRelease no entry_busca."""
         self.on_busca_digitada(event)
@@ -733,8 +687,18 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         dados: dict[str, Any] = {}
         try:
             if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE) as f:
-                    dados = json.load(f)
+                try:
+                    # Toda gravação usa UTF-8 (ver salvar_config_projecao,
+                    # tema e controle remoto); ler com o encoding local no
+                    # Windows (cp1252) transformava acentos em mojibake ou
+                    # levantava UnicodeDecodeError e zerava a config.
+                    with open(CONFIG_FILE, encoding="utf-8") as f:
+                        dados = json.load(f)
+                except UnicodeDecodeError:
+                    # Arquivo antigo gravado na codificação local: mantém a
+                    # leitura anterior para não perder a configuração.
+                    with open(CONFIG_FILE) as f:
+                        dados = json.load(f)
         except Exception:
             dados = {}
         if not isinstance(dados, dict):
@@ -983,8 +947,8 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         """Persiste a configuração de aparência da projeção e aplica ao telão."""
         self.config_data["projecao"] = cfg
         try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(self.config_data, f, indent=2)
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.config_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             log.exception(f"Erro ao salvar config de projeção: {e}")
         if self.player and self.player.telao:
@@ -1230,8 +1194,8 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         """
         self.config_data["relogio"] = cfg
         try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(self.config_data, f, indent=2)
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.config_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             log.exception(f"Erro ao salvar config do relógio: {e}")
         if self.player and self.player.telao:
@@ -1257,8 +1221,8 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         self.estado_salvo = estado
 
         try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(self.config_data, f, indent=2)
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.config_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             log.exception(f"Erro ao salvar config: {e}")
 
@@ -1748,8 +1712,8 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         """Persiste a configuração de um medidor e aplica cores/transparência."""
         self.config_data[chave] = cfg
         try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(self.config_data, f, indent=2)
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.config_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             log.exception(f"Erro ao salvar config de {chave}: {e}")
 

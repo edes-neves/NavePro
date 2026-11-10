@@ -80,6 +80,7 @@ _HIDDEN = [
     "PIL.ImageFont",
     "screeninfo",
     "pypdf",
+    "defusedxml",
 ]
 
 a = Analysis(

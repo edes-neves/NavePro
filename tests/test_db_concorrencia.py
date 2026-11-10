@@ -137,7 +137,6 @@ def _rodar() -> int:
                     mgr.query("SELECT id FROM midia")
                     mgr.search("Hino")
                     mgr.search("1")
-                    mgr.get_all_ids()
                     mgr.get_by_id(1)
             except Exception as e:
                 erros.append(("leitor", repr(e)))

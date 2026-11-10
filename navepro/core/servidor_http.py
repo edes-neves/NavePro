@@ -70,6 +70,27 @@ _TIMEOUT_CORPO = 60.0
 # sem deixar a rede local esgotar o loop/memória com conexões penduradas.
 _MAX_CONEXOES = 64
 
+# Tamanho dos blocos do download por streaming (nunca carrega o arquivo
+# inteiro na memória).
+_BLOCO_DOWNLOAD = 1024 * 1024
+
+
+class _RespostaArquivo:
+    """Resposta HTTP cujo corpo é um arquivo, enviado em blocos.
+
+    Evita ler o arquivo inteiro na memória (vídeos grandes) e permite que
+    `_handle_connection` faça o streaming direto para o socket.
+    """
+
+    __slots__ = ("caminho", "mime", "nome", "tamanho")
+
+    def __init__(self, caminho: str, mime: str, nome: str,
+                 tamanho: int) -> None:
+        self.caminho = caminho
+        self.mime = mime
+        self.nome = nome
+        self.tamanho = tamanho
+
 
 def _host_local(host: str) -> bool:
     """True se o cabeçalho Host aponta para o próprio computador.
@@ -87,6 +108,29 @@ def _host_local(host: str) -> bool:
     else:
         nome = valor
     return nome in ('127.0.0.1', 'localhost', '::1')
+
+
+def _origem_local(headers: dict) -> bool:
+    """True se o POST não parece vir de outro site (proteção CSRF).
+
+    O upload de mídia é `multipart/form-data`, que o navegador envia como
+    "simple request" sem preflight — um site malicioso consegue disparar o
+    POST contra 127.0.0.1. Navegadores mandam `Origin` em POSTs: se vier,
+    precisa ser o próprio servidor. Clientes nativos (Python, curl) não
+    mandam `Origin` e continuam aceitos (a checagem de loopback/Host já foi
+    feita em `_midia_local`). `Sec-Fetch-Site` também é conferido quando
+    presente.
+    """
+    sitio = (headers.get('sec-fetch-site') or '').strip().lower()
+    if sitio and sitio not in ('same-origin', 'none'):
+        return False
+    origem = (headers.get('origin') or '').strip().lower()
+    if not origem:
+        return True
+    host = (headers.get('host') or '').strip().lower()
+    if not host:
+        return False
+    return origem in (f"http://{host}", f"https://{host}")
 
 
 class ServidorAsyncHTTP:
@@ -198,7 +242,10 @@ class ServidorAsyncHTTP:
         (é binário nos uploads) e é lido em blocos até Content-Length — a
         leitura única de 64 KB truncava qualquer arquivo maior.
         """
-        dados = b''
+        # bytearray: concatenar bytes em loop copia o buffer inteiro a cada
+        # bloco (O(n²)). Com 200 MB de upload isso significava dezenas de GB
+        # de cópia; `extend` cresce de forma amortizada.
+        dados = bytearray()
         while b'\r\n\r\n' not in dados:
             try:
                 bloco = await asyncio.wait_for(
@@ -207,7 +254,7 @@ class ServidorAsyncHTTP:
                 return None
             if not bloco:
                 return None
-            dados += bloco
+            dados.extend(bloco)
             if len(dados) > _LIMITE_CABECALHO:
                 return self._responder_erro_bytes("Cabeçalhos muito grandes", 431)
 
@@ -250,11 +297,15 @@ class ServidorAsyncHTTP:
                 break
             if not bloco:
                 break
-            corpo += bloco
+            corpo.extend(bloco)
 
         # Descarta bytes além do corpo declarado (Content-Length inválido
-        # ou requisições pipelined — o servidor responde e fecha).
-        return method, path_line, headers, corpo[:tamanho]
+        # ou requisições pipelined — o servidor responde e fecha). O corpo
+        # segue como bytearray (os handlers e o json.loads o aceitam), sem
+        # uma cópia final do arquivo inteiro.
+        if len(corpo) > tamanho:
+            del corpo[tamanho:]
+        return method, path_line, headers, corpo
 
     async def _handle_connection(self, reader: asyncio.StreamReader, 
                                   writer: asyncio.StreamWriter) -> None:
@@ -285,9 +336,14 @@ class ServidorAsyncHTTP:
                 # Processar requisição
                 response = await self._process_request(
                     method, path_line, headers, body_bytes, peer_ip)
-                
-                writer.write(response)
-                await writer.drain()
+
+                if isinstance(response, _RespostaArquivo):
+                    # Download: transmite o arquivo em blocos, sem carregá-lo
+                    # inteiro na memória (ver _handle_download_bytes).
+                    await self._enviar_arquivo(writer, response)
+                else:
+                    writer.write(response)
+                    await writer.drain()
             except Exception as e:
                 log.exception(f"Erro ao processar requisição: {e}")
                 error_response = (
@@ -309,6 +365,39 @@ class ServidorAsyncHTTP:
             except Exception:
                 pass
 
+    async def _enviar_arquivo(self, writer: asyncio.StreamWriter,
+                              resposta: _RespostaArquivo) -> None:
+        """Envia um arquivo em blocos, sem carregá-lo inteiro na memória."""
+        try:
+            arquivo = open(resposta.caminho, "rb")
+        except OSError:
+            writer.write(self._responder_erro_bytes("Erro ao ler arquivo", 500))
+            await writer.drain()
+            return
+        with arquivo:
+            # O nome vem do disco e pode conter aspas/quebras de linha;
+            # neutralize para não injetar cabeçalhos na resposta.
+            nome = resposta.nome or "arquivo"
+            for ruim in ('"', '\\', '\r', '\n'):
+                nome = nome.replace(ruim, '_')
+            header = (
+                "HTTP/1.1 200 OK\r\n"
+                f"Content-Type: {resposta.mime}\r\n"
+                f"Content-Disposition: attachment; "
+                f"filename=\"{nome}\"\r\n"
+                f"Content-Length: {resposta.tamanho}\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode()
+            writer.write(header)
+            await writer.drain()
+            while True:
+                bloco = await asyncio.to_thread(arquivo.read, _BLOCO_DOWNLOAD)
+                if not bloco:
+                    break
+                writer.write(bloco)
+                await writer.drain()
+
     def _midia_local(self, headers: dict, peer_ip: str) -> bool:
         """True se a requisição da API de mídia vem mesmo do computador local.
 
@@ -321,7 +410,7 @@ class ServidorAsyncHTTP:
 
     async def _process_request(self, method: str, path_full: str,
                                 headers: dict, body: bytes,
-                                peer_ip: str = '') -> bytes:
+                                peer_ip: str = '') -> bytes | _RespostaArquivo:
         """Processa uma requisição HTTP e retorna a resposta."""
         parsed = urllib.parse.urlparse(path_full)
         path = parsed.path
@@ -334,6 +423,15 @@ class ServidorAsyncHTTP:
                 headers, peer_ip):
             return self._responder_erro_bytes(
                 "API de mídia restrita ao computador local", 403)
+
+        # Upload é o único POST da API de mídia e chega como "simple
+        # request" (multipart), então um site aberto no navegador poderia
+        # dispará-lo contra 127.0.0.1. Rejeita origem cruzada de navegador;
+        # clientes nativos (sem Origin) seguem aceitos.
+        if method == 'POST' and path == '/api/midia/upload' \
+                and not _origem_local(headers):
+            return self._responder_erro_bytes(
+                "Origem da requisição não permitida", 403)
 
         # CORS preflight: o NavePro não serve nenhuma origem cruzada (a
         # página do celular é do MESMO servidor), então não há cabeçalhos
@@ -390,7 +488,7 @@ class ServidorAsyncHTTP:
         return None
 
     async def _handle_get(self, path: str, params: dict, headers: dict,
-                          peer_ip: str = '') -> bytes:
+                          peer_ip: str = '') -> bytes | _RespostaArquivo:
         """Processa requisições GET."""
         # ── Controle remoto ──
         if path == '/' or path == '/index.html':
@@ -408,6 +506,13 @@ class ServidorAsyncHTTP:
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: text/html; charset=utf-8\r\n"
                 "Cache-Control: no-store\r\n"
+                # A página usa JS/CSS inline, então 'unsafe-inline' é
+                # necessário; o restante fica preso à própria origem.
+                "Content-Security-Policy: default-src 'self'; "
+                "img-src 'self' data: blob:; media-src 'self' blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; connect-src 'self'; "
+                "object-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\n"
                 f"Content-Length: {len(corpo)}\r\n"
                 "Connection: close\r\n"
                 "\r\n"
@@ -578,8 +683,13 @@ class ServidorAsyncHTTP:
 
         return self._responder_json_bytes(resultados)
 
-    async def _handle_download_bytes(self, path: str) -> bytes:
-        """Processa download de arquivo."""
+    async def _handle_download_bytes(self, path: str) -> bytes | _RespostaArquivo:
+        """Processa download de arquivo.
+
+        Devolve uma `_RespostaArquivo` (streaming) em vez do conteúdo: ler
+        um vídeo inteiro na memória e duplicá-lo no header causava picos de
+        ~2× o tamanho do arquivo (risco de OOM em PCs modestos).
+        """
         try:
             midia_id = int(path.split('/')[3])
         except (IndexError, ValueError):
@@ -594,21 +704,18 @@ class ServidorAsyncHTTP:
         if not os.path.exists(caminho):
             return self._responder_erro_bytes("Arquivo não encontrado no disco", 404)
 
-        mime, _ = mimetypes.guess_type(caminho)
         try:
-            with open(caminho, 'rb') as f:
-                conteudo = f.read()
-        except Exception:
+            tamanho = os.path.getsize(caminho)
+        except OSError:
             return self._responder_erro_bytes("Erro ao ler arquivo", 500)
 
-        header = (
-            f"HTTP/1.1 200 OK\r\n"
-            f"Content-Type: {mime or 'application/octet-stream'}\r\n"
-            f"Content-Disposition: attachment; filename=\"{os.path.basename(caminho)}\"\r\n"
-            f"Content-Length: {len(conteudo)}\r\n"
-            f"\r\n"
-        ).encode()
-        return header + conteudo
+        mime, _ = mimetypes.guess_type(caminho)
+        return _RespostaArquivo(
+            caminho,
+            mime or 'application/octet-stream',
+            os.path.basename(caminho),
+            tamanho,
+        )
 
     async def _handle_post(self, path: str, params: dict, headers: dict,
                            body: bytes, peer_ip: str = '') -> bytes:

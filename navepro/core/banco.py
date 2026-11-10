@@ -173,21 +173,12 @@ class DatabaseManager:
 
             return results
 
-    def get_all_ids(self) -> list[int]:
-        """Retorna todos os IDs em cache."""
-        return [rec['id'] for rec in self._cache]
-
     def get_by_id(self, midia_id: int) -> dict[str, Any] | None:
         """Retorna um registro pelo ID."""
         for rec in self._cache:
             if rec['id'] == midia_id:
                 return rec
         return None
-
-    def get_path_by_id(self, midia_id: int) -> str | None:
-        """Retorna o caminho do arquivo pelo ID."""
-        rec = self.get_by_id(midia_id)
-        return rec['caminho_arquivo'] if rec else None
 
     # Métodos para operações de banco (INSERT/UPDATE/DELETE) – usam conexão persistente
     def execute(self, query: str, params: tuple = ()) -> int | None:

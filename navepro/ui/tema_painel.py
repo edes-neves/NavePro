@@ -184,23 +184,47 @@ class TemaPainelMixin:
         except tk.TclError:
             pass
     def _varrer_toplevels_tema(self) -> None:
-        """Recoloriza janelas auxiliares (Toplevel) criadas após o app.
+        """Recoloriza apenas janelas auxiliares (Toplevel) novas.
 
-        Chamado periodicamente (junto do loop do telão). Cada janela
-        recria estilos escuros ao ser aberta; aqui garantimos que o tema
-        ativo seja sempre respeitado sem tocar no código de criação.
+        Antes esta rotina recolorizava a árvore inteira a cada 500 ms, o
+        que gastava CPU mesmo com o aplicativo parado. Agora ela só observa
+        as janelas de topo e aplica o tema quando uma nova aparece; cada
+        janela recria estilos escuros ao ser aberta, então o tema ativo
+        continua sendo respeitado sem tocar no código de criação.
         """
+        # No tema escuro as janelas já nascem com o visual correto; a
+        # varredura só é necessária no claro (e o _aplicar_tema cuida de
+        # todas ao alternar). Assim o loop fica ocioso de verdade.
+        if self.tema != 'claro':
+            return
         try:
-            self._aplicar_tema_ttk()
-            if self.tema != 'claro':
-                return
-            self._recolorir_arvore(self.root, capturar=True)
-            self._recolorir_arvore(self.root)
+            vistas = getattr(self, '_toplevels_tema_vistas', None)
+            if vistas is None:
+                vistas = self._toplevels_tema_vistas = set()
+            atuais = set()
+            novas = []
             for filho in self.root.winfo_children():
                 try:
-                    if filho.winfo_class() == 'Toplevel':
-                        self._recolorir_arvore(filho, capturar=True)
-                        self._recolorir_arvore(filho)
+                    if filho.winfo_class() != 'Toplevel':
+                        continue
+                    chave = str(filho)
+                    atuais.add(chave)
+                    if chave not in vistas:
+                        novas.append(filho)
+                except tk.TclError:
+                    continue
+            # Esquece janelas fechadas para o conjunto não crescer.
+            vistas.intersection_update(atuais)
+            if not novas:
+                return
+            self._aplicar_tema_ttk()
+            self._recolorir_arvore(self.root, capturar=True)
+            self._recolorir_arvore(self.root)
+            for filho in novas:
+                try:
+                    self._recolorir_arvore(filho, capturar=True)
+                    self._recolorir_arvore(filho)
+                    vistas.add(str(filho))
                 except tk.TclError:
                     pass
         except tk.TclError:

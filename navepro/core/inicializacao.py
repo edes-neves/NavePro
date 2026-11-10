@@ -182,6 +182,55 @@ def init_db() -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_anuncios_titulo ON anuncios(titulo)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_anuncios_ativo ON anuncios(ativo)")
 
+    # ── Busca textual (FTS5) ───────────────────────────────────────
+    # Índice invertido opcional para hinos, versículos e mídias. Se o
+    # SQLite da distribuição não trouxer o módulo FTS5, o `try` falha e o
+    # app continua com as buscas LIKE (as funções de busca têm fallback).
+    # Criado ANTES das migrações para não depender do estado de `anuncios`.
+    try:
+        _fts_tabelas = (
+            ("letras_fts", "letras", ("titulo", "artista", "letra_completa")),
+            ("versiculos_fts", "versiculos", ("texto",)),
+            ("midia_fts", "midia", ("nome_exibicao", "nome_original")),
+        )
+        for nome_fts, tabela, colunas in _fts_tabelas:
+            existia = cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (nome_fts,)).fetchone()
+            cursor.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS {nome_fts} USING fts5("
+                + ", ".join(colunas)
+                + f", content='{tabela}', content_rowid='id', "
+                  "tokenize='unicode61 remove_diacritics 2')")
+            if not existia:
+                # Primeira criação: indexa o conteúdo já existente.
+                cursor.execute(
+                    f"INSERT INTO {nome_fts}({nome_fts}) VALUES('rebuild')")
+            lista_cols = ", ".join(colunas)
+            novos = ", ".join(
+                f"COALESCE(new.{c}, '')" for c in colunas)
+            antigos = ", ".join(
+                f"COALESCE(old.{c}, '')" for c in colunas)
+            cursor.execute(
+                f"CREATE TRIGGER IF NOT EXISTS {tabela}_ai "
+                f"AFTER INSERT ON {tabela} BEGIN "
+                f"INSERT INTO {nome_fts}(rowid, {lista_cols}) "
+                f"VALUES (new.id, {novos}); END")
+            cursor.execute(
+                f"CREATE TRIGGER IF NOT EXISTS {tabela}_ad "
+                f"AFTER DELETE ON {tabela} BEGIN "
+                f"INSERT INTO {nome_fts}({nome_fts}, rowid, {lista_cols}) "
+                f"VALUES ('delete', old.id, {antigos}); END")
+            cursor.execute(
+                f"CREATE TRIGGER IF NOT EXISTS {tabela}_au "
+                f"AFTER UPDATE ON {tabela} BEGIN "
+                f"INSERT INTO {nome_fts}({nome_fts}, rowid, {lista_cols}) "
+                f"VALUES ('delete', old.id, {antigos}); "
+                f"INSERT INTO {nome_fts}(rowid, {lista_cols}) "
+                f"VALUES (new.id, {novos}); END")
+    except sqlite3.OperationalError as e:
+        log.info(f"ℹ️ FTS5 indisponível; buscas usam LIKE: {e}")
+
     # Garante o esquema base ANTES de migrar: se uma migração falhar, o
     # rollback dela não desfaz a criação das tabelas.
     conn.commit()

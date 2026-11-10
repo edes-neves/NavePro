@@ -13,8 +13,14 @@ import os
 import re
 import sqlite3
 import unicodedata
-import xml.etree.ElementTree as ET
 from functools import lru_cache
+
+try:
+    # defusedxml recusa DTD/entidades externas (bombas XML). É opcional:
+    # sem o pacote, o app continua funcionando com o parser da stdlib.
+    from defusedxml import ElementTree as ET
+except ImportError:  # pragma: no cover - ambientes sem defusedxml
+    import xml.etree.ElementTree as ET
 
 from navepro.config import SQLITE_TIMEOUT
 from navepro.core.banco import _gerador_id_livre, db_query

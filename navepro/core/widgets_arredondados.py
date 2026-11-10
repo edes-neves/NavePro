@@ -223,9 +223,6 @@ class BotaoArredondado(tk.Frame):
             return self._command()
         return None
 
-    def flash(self) -> None:
-        return None
-
     # O ``Canvas`` cobre o frame, então os eventos de mouse chegam nele.
     # Repassamos ``<Enter>``/``<Leave>`` para o canvas (tooltips do app são
     # registradas no botão-fachada).

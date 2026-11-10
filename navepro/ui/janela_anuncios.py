@@ -209,10 +209,6 @@ class JanelaAnunciosMixin:
                 log.exception(f"⚠️ Erro ao ler PDF de anúncio {caminho}: {e}")
                 return None
 
-        def _adicionar_anuncio(dados: dict) -> bool:
-            """Adiciona um anúncio na tabela 'anuncios'. True se salvou."""
-            return _inserir_anuncio_db(dados) is not None
-
         def _importar_anuncios(caminhos: tuple) -> tuple:
             """Importa TXT/PDF como anúncios tipo 'slide'.
 

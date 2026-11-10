@@ -257,11 +257,6 @@ def localizar_executavel(nome: str) -> str | None:
     return achado
 
 
-def limpar_cache_executaveis() -> None:
-    """Esquece os caminhos já localizados (usado se o PATH mudar em runtime)."""
-    _CACHE_EXECUTAVEIS.clear()
-
-
 def encerrar_arvore(pid: int, timeout: float = 3.0) -> bool:
     """Encerra o processo `pid` e todos os filhos dele.
 
@@ -494,7 +489,6 @@ _SWP_FRAMECHANGED = 0x0020
 _SWP_SHOWWINDOW = 0x0040
 _HWND_TOPMOST = -1
 _SW_HIDE = 0
-_SW_SHOW = 5
 
 # Títulos das janelas de saída de vídeo dos players conhecidos. O VLC cria
 # uma janela por fora ("VLC (Direct3D11 output)" / "(OpenGL output)") e outra

@@ -7,7 +7,7 @@ import re
 import unicodedata
 
 from navepro.core.banco import db_query
-from navepro.core.textos import _numero_do_titulo, _termo_like
+from navepro.core.textos import _termo_like
 
 
 def _montar_slides_letra(titulo: str, letra_completa: str) -> list:
@@ -67,11 +67,34 @@ def _buscar_hino_por_termo(termo: str) -> list[dict]:
     m = re.match(r"^\s*(\d+)", termo)
     if m:
         num = int(m.group(1))
-        rows = [r for r in db_query("SELECT * FROM letras WHERE ativo = 1 ORDER BY titulo")
-                if _numero_do_titulo(r["titulo"]) == num]
+        # Número do hino = dígitos iniciais do título ("11 - Nome"). Filtra
+        # no SQL (sem carregar a letra inteira de todos os hinos).
+        rows = db_query(
+            "SELECT * FROM letras WHERE ativo = 1 "
+            "AND LTRIM(titulo) GLOB '[0-9]*' "
+            "AND CAST(LTRIM(titulo) AS INTEGER) = ? ORDER BY titulo", (num,))
         if rows:
             return rows
     busca_like = f"%{_termo_like(termo)}%"
+    # FTS5 acelera a busca textual; o LIKE preserva a semântica original
+    # (curingas literais e trecho exato). Sem FTS (ou sem resultado), cai
+    # no LIKE completo.
+    tokens = re.findall(
+        r"\w+", unicodedata.normalize('NFC', termo).casefold())
+    if tokens:
+        match = " AND ".join(
+            '"' + t.replace('"', '""') + '"*' for t in tokens)
+        try:
+            rows = db_query(
+                "SELECT * FROM letras WHERE ativo = 1 AND id IN ("
+                "SELECT rowid FROM letras_fts WHERE letras_fts MATCH ?) AND "
+                "(titulo LIKE ? ESCAPE '\\' OR artista LIKE ? ESCAPE '\\' "
+                "OR letra_completa LIKE ? ESCAPE '\\') "
+                "ORDER BY titulo", (match, busca_like, busca_like, busca_like))
+            if rows:
+                return rows
+        except Exception:
+            pass
     return db_query(
         "SELECT * FROM letras WHERE ativo = 1 AND "
         "(titulo LIKE ? ESCAPE '\\' OR artista LIKE ? ESCAPE '\\' "
@@ -116,7 +139,24 @@ def _buscar_midia_por_termo(termo: str, tipo: str = 'video') -> list[dict]:
                 "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND id = ?",
                 (tipo, num))
         return rows
-    busca_like = f"%{_termo_like(unicodedata.normalize('NFC', termo).casefold())}%"
+    normalizado = unicodedata.normalize('NFC', termo).casefold()
+    busca_like = f"%{_termo_like(normalizado)}%"
+    tokens = re.findall(r"\w+", normalizado)
+    if tokens:
+        match = " AND ".join(
+            '"' + t.replace('"', '""') + '"*' for t in tokens)
+        try:
+            rows = db_query(
+                "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND id IN ("
+                "SELECT rowid FROM midia_fts WHERE midia_fts MATCH ?) AND ("
+                "LOWER(nome_exibicao) LIKE ? ESCAPE '\\' "
+                "OR LOWER(nome_original) LIKE ? ESCAPE '\\'"
+                ") ORDER BY nome_exibicao",
+                (tipo, match, busca_like, busca_like))
+            if rows:
+                return rows
+        except Exception:
+            pass
     return db_query(
         "SELECT * FROM midia WHERE ativo = 1 AND tipo = ? AND ("
         "LOWER(nome_exibicao) LIKE ? ESCAPE '\\' "
@@ -147,7 +187,24 @@ def _buscar_versiculos_por_texto(versao: str, termo: str) -> list[dict]:
     termo = (termo or "").strip()
     if not termo:
         return []
+    busca_like = f"%{_termo_like(termo)}%"
+    tokens = re.findall(
+        r"\w+", unicodedata.normalize('NFC', termo).casefold())
+    if tokens:
+        match = " AND ".join(
+            '"' + t.replace('"', '""') + '"*' for t in tokens)
+        try:
+            rows = db_query(
+                "SELECT * FROM versiculos WHERE versao = ? AND id IN ("
+                "SELECT rowid FROM versiculos_fts WHERE versiculos_fts MATCH ?) "
+                "AND texto LIKE ? ESCAPE '\\' "
+                "ORDER BY livro, capitulo, versiculo LIMIT 50",
+                (versao, match, busca_like))
+            if rows:
+                return rows
+        except Exception:
+            pass
     return db_query(
         "SELECT * FROM versiculos WHERE versao = ? AND texto LIKE ? ESCAPE '\\' "
         "ORDER BY livro, capitulo, versiculo LIMIT 50",
-        (versao, f"%{_termo_like(termo)}%"))
+        (versao, busca_like))
