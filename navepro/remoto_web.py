@@ -203,6 +203,22 @@ _REMOTO_CSS = """
   .item-servico.em-execucao { background: #0d2818; border-radius: 8px;
                               padding-left: 10px;
                               box-shadow: inset 3px 0 0 #f0c040; }
+  /* Botão "Cartões": liga/desliga as caixas dos itens do serviço. */
+  .serv-cabecalho-linha {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 8px;
+  }
+  .serv-cabecalho-linha h3 { margin: 0; }
+  #lista_itens_servico.cartoes li.item-servico {
+    background: #21262d; border: 1px solid #30363d; border-radius: 10px;
+    padding: 14px 10px; margin-bottom: 8px;
+  }
+  #lista_itens_servico.cartoes li.item-servico.em-execucao {
+    background: #0d2818; border-color: #238636;
+  }
+  #lista_itens_servico:not(.cartoes) li.item-servico { padding: 12px 2px; }
+  #lista_itens_servico:not(.cartoes) .item-titulo b { font-weight: 400; }
+  #btn_cartoes.off { color: #f0c040; }
   #toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     background: #da3633; color: #fff; padding: 11px 18px; border-radius: 8px;
@@ -1098,6 +1114,8 @@ function carregarAnuncios() {
 
 // ── Serviço ──
 var SERVICO_SEL = null;   // {id, nome} do serviço aberto
+// Preferência visual da lista de itens: cartões (padrão) ou linhas sem caixas.
+var CARTOES_ATIVO = localStorage.getItem('navepro_cartoes') !== '0';
 var YT_INFO_URL = '';     // URL cujas informações do YouTube já foram confirmadas
 var YT_INFO_PENDING = ''; // URL da consulta em andamento
 var YT_INFO_TOKEN = 0;    // invalida respostas atrasadas ao trocar a URL
@@ -1175,6 +1193,28 @@ function executarServico(id, itemId, nome) {
     atualizarEstado();
     return j;
   });
+}
+
+function atualizarBotaoCartoes() {
+  var b = document.getElementById('btn_cartoes');
+  var ul = document.getElementById('lista_itens_servico');
+  if (b) {
+    b.textContent = CARTOES_ATIVO ? '\U0001F5C2 Cart\u00f5es'
+                                  : '\U0001F5C2 Sem caixas';
+    b.className = 'btn mini ' + (CARTOES_ATIVO ? 'on' : 'cinza off');
+  }
+  if (ul) {
+    if (CARTOES_ATIVO) ul.classList.add('cartoes');
+    else ul.classList.remove('cartoes');
+  }
+}
+
+function alternarCartoes() {
+  CARTOES_ATIVO = !CARTOES_ATIVO;
+  try {
+    localStorage.setItem('navepro_cartoes', CARTOES_ATIVO ? '1' : '0');
+  } catch (e) {}
+  atualizarBotaoCartoes();
 }
 
 function carregarServicos() {
@@ -1750,6 +1790,7 @@ function atualizarEstado() {
 
 function iniciar() {
   apiGet('/api/remoto/biblia?q=').then(carregarVersoes).catch(function() {});
+  atualizarBotaoCartoes();
   carregarLivros();
   carregarSelectsItem();
   carregarAnuncios();
@@ -1987,9 +2028,13 @@ PAGINA = """<!DOCTYPE html>
     </div>
   </div>
   <div class="card">
-    <h3>Itens do servi&ccedil;o</h3>
+    <div class="serv-cabecalho-linha">
+      <h3>Itens do servi&ccedil;o</h3>
+      <button class="btn mini on" id="btn_cartoes"
+              onclick="alternarCartoes()">&#128450; Cart&otilde;es</button>
+    </div>
     <div id="serv_cabecalho" class="vazio">Toque em "Itens" num servi&ccedil;o acima.</div>
-    <ul id="lista_itens_servico"></ul>
+    <ul id="lista_itens_servico" class="cartoes"></ul>
     <button class="btn verde" id="btn_add_item" style="margin-top:10px;display:none"
             onclick="abrirFormItem(null)">&#10133; Adicionar item</button>
   </div>

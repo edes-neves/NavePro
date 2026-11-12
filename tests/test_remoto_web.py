@@ -55,6 +55,12 @@ check("uma única tag <style>", PAGINA.count("<style>") == 1)
 check("uma única tag </style>", PAGINA.count("</style>") == 1)
 check("uma única tag <script>", PAGINA.count("<script>") == 1)
 check("uma única tag </script>", PAGINA.count("</script>") == 1)
+try:
+    PAGINA.encode("utf-8")
+    _utf8_ok = True
+except UnicodeEncodeError:
+    _utf8_ok = False
+check("PAGINA codifica em UTF-8 (sem surrogate isolado)", _utf8_ok)
 
 # ── 2. Nada que feche a tag por dentro ───────────────────────────────
 check("CSS não contém '</style>'", "</style>" not in CSS)
@@ -68,7 +74,21 @@ check(f"todo getElementById tem id no HTML ({len(ids_usados)} ids)",
       not faltando, ", ".join(faltando))
 check("há ids (o regex não passou em branco)", bool(ids_usados))
 
-# ── 4. Rotas da página existem no servidor ───────────────────────────
+# ── 4. Aba Serviço: alternância Cartões/sem caixas ───────────────────
+check("aba Serviço tem o botão Cartões",
+      'id="btn_cartoes"' in PAGINA and "alternarCartoes()" in PAGINA)
+check("lista de itens começa com cartões",
+      'id="lista_itens_servico" class="cartoes"' in PAGINA)
+check("cartões têm caixa e o modo sem caixas tira a borda",
+      "#lista_itens_servico.cartoes li.item-servico" in CSS
+      and "#lista_itens_servico:not(.cartoes) li.item-servico" in CSS)
+check("preferência dos cartões sobrevive ao recarregar a página",
+      "localStorage.getItem('navepro_cartoes')" in JS
+      and "localStorage.setItem('navepro_cartoes'" in JS)
+check("o botão reflete o estado ao iniciar",
+      "atualizarBotaoCartoes();" in JS)
+
+# ── 5. Rotas da página existem no servidor ───────────────────────────
 rotas_pagina = set(re.findall(r"/api/remoto/[a-z_/]+", PAGINA))
 rotas_servidor = set(re.findall(r"/api/remoto/[a-z_/]+", _SRV_SRC))
 orfa = sorted(rotas_pagina - rotas_servidor)
