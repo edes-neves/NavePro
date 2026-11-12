@@ -88,7 +88,20 @@ check("preferência dos cartões sobrevive ao recarregar a página",
 check("o botão reflete o estado ao iniciar",
       "atualizarBotaoCartoes();" in JS)
 
-# ── 5. Rotas da página existem no servidor ───────────────────────────
+# ── 5. Botões "Buscar": lupa e texto cabem dentro do botão ───────────
+_botoes_busca = re.findall(
+    r'<button class="([^"]*)"[^>]*>\s*&#128269;\s*Buscar</button>', PAGINA)
+check("há botões Buscar na página", len(_botoes_busca) == 3,
+      f"{len(_botoes_busca)} encontrados")
+check("todo botão Buscar usa a classe de folga lateral",
+      all("btn-busca" in classes.split() for classes in _botoes_busca))
+check("CSS do botão Buscar dá folga lateral e não quebra o texto",
+      ".btn.btn-busca" in CSS
+      and "padding-left: 18px" in CSS
+      and "padding-right: 18px" in CSS
+      and "white-space: nowrap" in CSS)
+
+# ── 6. Rotas da página existem no servidor ───────────────────────────
 rotas_pagina = set(re.findall(r"/api/remoto/[a-z_/]+", PAGINA))
 rotas_servidor = set(re.findall(r"/api/remoto/[a-z_/]+", _SRV_SRC))
 orfa = sorted(rotas_pagina - rotas_servidor)

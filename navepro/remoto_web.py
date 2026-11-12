@@ -93,6 +93,13 @@ _REMOTO_CSS = """
   .btn.verde { background: #238636; }
   .btn.mini { flex: 0 0 auto; padding: 9px 14px; font-size: 14px; }
   .btn.on { background: #6e40c9; }
+  /* Buscar: a lupa (emoji) e o texto precisam de folga lateral para não
+     encostar/transbordar a borda do botão no celular. */
+  .btn.btn-busca {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding-left: 18px; padding-right: 18px; white-space: nowrap;
+    min-width: max-content;
+  }
   input, select, textarea {
     width: 100%; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
     border-radius: 8px; padding: 12px; font-size: 16px; margin-bottom: 8px;
@@ -1913,13 +1920,13 @@ PAGINA = """<!DOCTYPE html>
   <div class="card">
     <h3>Buscar hino (letra)</h3>
     <input id="hino_busca" placeholder="N&uacute;mero ou trecho..." enterkeyhint="search">
-    <button class="btn" onclick="buscarHino()">&#128269; Buscar</button>
+    <button class="btn btn-busca" onclick="buscarHino()">&#128269; Buscar</button>
   </div>
   <div class="card"><ul id="lista_hinos"><li class="vazio">Busque um hino.</li></ul></div>
   <div class="card">
     <h3>Executar m&uacute;sica/v&iacute;deo (BD)</h3>
     <input id="midia_busca" placeholder="N&uacute;mero ou nome do arquivo..." enterkeyhint="search">
-    <button class="btn verde" onclick="buscarMidia()">&#128269; Buscar</button>
+    <button class="btn verde btn-busca" onclick="buscarMidia()">&#128269; Buscar</button>
   </div>
   <div class="card"><ul id="lista_midias"><li class="vazio">Busque uma m&uacute;sica ou v&iacute;deo.</li></ul></div>
   <div class="card">
@@ -2033,7 +2040,7 @@ PAGINA = """<!DOCTYPE html>
   <div class="card">
     <h3>Buscar vers&iacute;culo (texto)</h3>
     <input id="bib_busca" placeholder="Texto do vers&iacute;culo..." enterkeyhint="search">
-    <button class="btn" onclick="buscarBiblia()">&#128269; Buscar</button>
+    <button class="btn btn-busca" onclick="buscarBiblia()">&#128269; Buscar</button>
   </div>
   <div class="card"><ul id="lista_biblia_busca"><li class="vazio">Busque um vers&iacute;culo.</li></ul></div>
 </section>
