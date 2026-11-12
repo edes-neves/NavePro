@@ -227,6 +227,11 @@ _REMOTO_CSS = """
   #lista_itens_servico:not(.cartoes) .item-titulo b { font-weight: 400; }
   #btn_cartoes.off { color: #f0c040; }
   #btn_caixa_versiculo.off { color: #f0c040; }
+  /* "+ Adicionar item": o sinal de + e o texto precisam de folga lateral
+     para não encostar/transbordar a borda do botão no celular. */
+  #btn_add_item {
+    padding-left: 18px; padding-right: 18px; white-space: nowrap;
+  }
   #toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     background: #da3633; color: #fff; padding: 11px 18px; border-radius: 8px;

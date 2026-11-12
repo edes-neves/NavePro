@@ -100,6 +100,13 @@ check("CSS do botão Buscar dá folga lateral e não quebra o texto",
       and "padding-left: 18px" in CSS
       and "padding-right: 18px" in CSS
       and "white-space: nowrap" in CSS)
+_bloco_add = (CSS.split("#btn_add_item", 1)[-1].split("}", 1)[0]
+              if "#btn_add_item" in CSS else "")
+check("botão + Adicionar item também tem folga lateral",
+      'id="btn_add_item"' in PAGINA
+      and "padding-left: 18px" in _bloco_add
+      and "padding-right: 18px" in _bloco_add
+      and "white-space: nowrap" in _bloco_add)
 
 # ── 6. Rotas da página existem no servidor ───────────────────────────
 rotas_pagina = set(re.findall(r"/api/remoto/[a-z_/]+", PAGINA))
