@@ -111,6 +111,130 @@ def _limitar_ao_monitor(
 
 
 # ────────────────────────────────────────────────────────────────────
+# MAXIMIZAR/RESTAURAR JANELAS SECUNDÁRIAS
+# ────────────────────────────────────────────────────────────────────
+
+
+def _janela_maximizada(janela) -> bool:
+    """Diz se `janela` está maximizada (funciona em Windows e Linux/X11)."""
+    try:
+        if bool(janela.attributes("-zoomed")):
+            return True
+    except (tk.TclError, ValueError):
+        pass
+    try:
+        return janela.state() == "zoomed"
+    except tk.TclError:
+        return False
+
+
+def _habilitar_maximizar_janela(
+        janela, geometria_inicial: str | None = None):
+    """Permite maximizar/restaurar `janela` pelo botão do meio da barra de
+    título (ou F11), voltando exatamente à geometria normal anterior.
+
+    Alguns window managers não devolvem a janela transiente ao tamanho de
+    antes ao desmaximizar. Aqui a última geometria normal é lembrada e
+    reaplicada quando a janela sai do estado maximizado. Devolve a função
+    que alterna maximizado/restaurado.
+    """
+    try:
+        janela.resizable(True, True)
+    except tk.TclError:
+        pass
+
+    estado = {
+        "geo": geometria_inicial or "",
+        "maximizada": _janela_maximizada(janela),
+        "restaurando": False,
+    }
+
+    def _geometria() -> str:
+        try:
+            geo = janela.geometry()
+            if geo and not geo.startswith("1x1"):
+                return geo
+        except tk.TclError:
+            geo = ""
+        try:
+            janela.update_idletasks()
+            w = janela.winfo_width()
+            h = janela.winfo_height()
+            if w <= 1 or h <= 1:
+                w = janela.winfo_reqwidth()
+                h = janela.winfo_reqheight()
+            return f"{w}x{h}+{janela.winfo_x()}+{janela.winfo_y()}"
+        except tk.TclError:
+            return geo
+
+    if not estado["geo"]:
+        estado["geo"] = _geometria()
+
+    def _restaurar_geometria() -> None:
+        if not estado["geo"] or estado["restaurando"]:
+            return
+        estado["restaurando"] = True
+        try:
+            janela.geometry(str(estado["geo"]))
+        except tk.TclError:
+            pass
+        finally:
+            try:
+                janela.after_idle(
+                    lambda: estado.__setitem__("restaurando", False))
+            except tk.TclError:
+                estado["restaurando"] = False
+
+    def _definir_maximizada(maximizar: bool) -> None:
+        if maximizar == _janela_maximizada(janela):
+            return
+        if maximizar:
+            atual = _geometria()
+            if atual:
+                estado["geo"] = atual
+            try:
+                janela.attributes("-zoomed", True)
+            except (tk.TclError, ValueError):
+                try:
+                    janela.state("zoomed")
+                except tk.TclError:
+                    pass
+        else:
+            try:
+                janela.attributes("-zoomed", False)
+            except (tk.TclError, ValueError):
+                try:
+                    janela.state("normal")
+                except tk.TclError:
+                    pass
+            _restaurar_geometria()
+        estado["maximizada"] = _janela_maximizada(janela)
+
+    def _alternar(event=None):
+        _definir_maximizada(not _janela_maximizada(janela))
+        return "break"
+
+    def _on_configure(event=None) -> None:
+        if event is not None and getattr(event, "widget", janela) is not janela:
+            return
+        max_now = _janela_maximizada(janela)
+        if estado["maximizada"] and not max_now:
+            _restaurar_geometria()
+        elif not max_now and not estado["restaurando"]:
+            atual = _geometria()
+            if atual:
+                estado["geo"] = atual
+        estado["maximizada"] = max_now
+
+    try:
+        janela.bind("<F11>", _alternar, add="+")
+        janela.bind("<Configure>", _on_configure, add="+")
+    except tk.TclError:
+        pass
+    return _alternar
+
+
+# ────────────────────────────────────────────────────────────────────
 # TELÃO - JANELA DE PROJEÇÃO (mantido)
 # ────────────────────────────────────────────────────────────────────
 

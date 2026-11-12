@@ -13,6 +13,7 @@ teste cobre:
 import ast
 import os
 import sys
+import tkinter as tk
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -20,6 +21,8 @@ sys.path.insert(0, RAIZ)
 
 from navepro.core.util_tk import (  # noqa: E402
     _centralizar_sobre,
+    _habilitar_maximizar_janela,
+    _janela_maximizada,
     _limitar_ao_monitor,
 )
 
@@ -305,6 +308,122 @@ check(
     _area_operador(_AppSemMonitor()) is None,
 )
 
+
+# ── 3c) Maximizar/restaurar janelas secundárias ──
+class _FakeJanelaMax:
+    """Toplevel mínimo para exercitar o helper sem display."""
+
+    def __init__(self, geo="640x620+100+100"):
+        self._geo = geo
+        self.zoomed = False
+        self.resizable_cfg = None
+        self.binds = {}
+        self.w, self.h, self.x, self.y = 640, 620, 100, 100
+
+    def resizable(self, w, h):
+        self.resizable_cfg = (w, h)
+
+    def attributes(self, nome, valor=None):
+        if nome != "-zoomed":
+            raise tk.TclError("atributo não suportado")
+        if valor is None:
+            return self.zoomed
+        self.zoomed = bool(valor)
+        return None
+
+    def state(self, novo=None):
+        if novo is None:
+            return "zoomed" if self.zoomed else "normal"
+        self.zoomed = novo == "zoomed"
+
+    def geometry(self, g=None):
+        if g is not None:
+            self._geo = str(g)
+        return self._geo
+
+    def update_idletasks(self):
+        pass
+
+    def winfo_width(self):
+        return self.w
+
+    def winfo_height(self):
+        return self.h
+
+    def winfo_reqwidth(self):
+        return self.w
+
+    def winfo_reqheight(self):
+        return self.h
+
+    def winfo_x(self):
+        return self.x
+
+    def winfo_y(self):
+        return self.y
+
+    def bind(self, seq, func, add=None):
+        self.binds[seq] = func
+
+    def after_idle(self, func):
+        func()
+
+    def disparar_configure(self):
+        self.binds["<Configure>"]()
+
+
+f = _FakeJanelaMax()
+alternar = _habilitar_maximizar_janela(f)
+check("helper torna a janela redimensionável", f.resizable_cfg == (True, True),
+      str(f.resizable_cfg))
+check("helper registra F11 e <Configure>",
+      "<F11>" in f.binds and "<Configure>" in f.binds)
+f.disparar_configure()
+alternar()
+check("F11 maximiza a janela", f.zoomed is True)
+f._geo = "1366x768+0+0"
+f.disparar_configure()
+alternar()
+check("F11 restaura exatamente a geometria anterior",
+      f.zoomed is False and f._geo == "640x620+100+100", f._geo)
+
+f = _FakeJanelaMax()
+_habilitar_maximizar_janela(f)
+f.disparar_configure()
+f._geo = "700x700+50+50"
+f.disparar_configure()
+f.zoomed = True
+f._geo = "1366x768+0+0"
+f.disparar_configure()
+f.zoomed = False
+f._geo = "800x600+0+0"
+f.disparar_configure()
+check("maximizar pelo botão do meio também restaura o tamanho",
+      f._geo == "700x700+50+50", f._geo)
+check("helper identifica o estado maximizado", _janela_maximizada(f) is False)
+
+# Todas as janelas secundárias que abrem em tamanho normal usam o helper.
+for _arquivo, _rotulo in (
+    ("navepro/ui/janela_anuncios.py", "Anúncios"),
+    ("navepro/ui/janela_hinos.py", "Hinos"),
+    ("navepro/ui/janela_biblia.py", "Bíblia (busca)"),
+    ("navepro/ui/gerenciador_midias.py", "Gerenciar mídias"),
+    ("navepro/ui/janela_transferencia.py", "Transferência"),
+    ("navepro/ui/config_relogio.py", "Configura Relógio"),
+    ("navepro/ui/janela_ordem_servico.py", "Ordem de Serviço (item)"),
+    ("navepro/ui/apoio.py", "Seletor de arquivos"),
+    ("navepro/ui/atualizacao.py", "Atualização via Flatpak"),
+):
+    _src = open(os.path.join(RAIZ, _arquivo), encoding="utf-8").read()
+    check(f"{_rotulo}: janela pode ser maximizada/restaurada",
+          "_habilitar_maximizar_janela(" in _src)
+
+check("Aparência da Projeção também pode ser maximizada/restaurada",
+      "_habilitar_maximizar_janela(cfg_win)" in _SRC)
+check("Configura Relógio não bloqueia as outras janelas",
+      ".grab_set(" not in open(
+          os.path.join(RAIZ, "navepro", "ui", "config_relogio.py"),
+          encoding="utf-8").read())
 
 # ── 4) Sorteio embutido ──
 check(

@@ -40,7 +40,11 @@ from navepro.core.slides import (
     _buscar_midia_por_termo_ou_id,
 )
 from navepro.core.textos import _numero_do_titulo
-from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+    _limitar_ao_monitor,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.core.youtube import _eh_url_youtube, _obter_info_youtube
 from navepro.ui.apoio import (
@@ -1191,6 +1195,7 @@ class JanelaOrdemServicoMixin:
             add_win.configure(bg='#0d1117')
             add_win.transient(janela)
             _centralizar_sobre(add_win, janela)
+            _habilitar_maximizar_janela(add_win)
             add_win.after(50, add_win.grab_set)
 
             add_main = tk.Frame(add_win, bg='#0d1117')

@@ -22,7 +22,11 @@ from navepro.core.banco import _listar_midias_ativas, db_execute
 from navepro.core.log import get_logger
 from navepro.core.paths import UPLOAD_FOLDER
 from navepro.core.textos import detectar_tipo_arquivo
-from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+    _limitar_ao_monitor,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 
 log = get_logger("_janela_gerenciar_midias")
@@ -42,6 +46,7 @@ class GerenciadorMidiasMixin:
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root,
                            area=self._area_monitor_operador())
+        _habilitar_maximizar_janela(janela)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -491,6 +496,7 @@ class GerenciadorMidiasMixin:
         janela.configure(bg='#0d1117')
         janela.transient(janela_pai)
         _centralizar_sobre(janela, janela_pai)
+        _habilitar_maximizar_janela(janela)
         janela.after(50, janela.grab_set)
 
         # Caminho atual

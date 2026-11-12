@@ -14,7 +14,11 @@ from tkinter import ttk
 
 from navepro.config import SUFIXOS_IMAGEM
 from navepro.core.log import get_logger
-from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+    _limitar_ao_monitor,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
 
@@ -91,7 +95,9 @@ class ConfigRelogioMixin:
         cfg_win.transient(self.root)
         _centralizar_sobre(cfg_win, self.root,
                            area=self._area_monitor_operador())
-        cfg_win.after(50, cfg_win.grab_set)
+        # Não usa grab_set: o operador pode abrir outras janelas enquanto
+        # ajusta o relógio/cronômetro/contagem.
+        _habilitar_maximizar_janela(cfg_win)
 
         c_main = tk.Frame(cfg_win, bg='#0d1117')
         c_main.pack(fill='both', expand=True, padx=15, pady=15)

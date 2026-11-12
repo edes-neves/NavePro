@@ -34,7 +34,10 @@ from navepro.core.atualizacao import (
 )
 from navepro.core.log import get_logger
 from navepro.core.ssl_context import _ssl_context
-from navepro.core.util_tk import _centralizar_sobre
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 
 log = get_logger("atualizacao_ui")
@@ -125,6 +128,7 @@ class AtualizacaoMixin:
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)
+        _habilitar_maximizar_janela(janela)
         janela.grab_set()
 
         saida = tk.Text(janela, height=9, font=("monospace", 9),

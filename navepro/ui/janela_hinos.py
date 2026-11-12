@@ -25,7 +25,10 @@ from navepro.core.banco import _inserir_com_id_reuso, db_execute, db_query
 from navepro.core.log import get_logger
 from navepro.core.slides import _montar_slides_letra
 from navepro.core.textos import _termo_like
-from navepro.core.util_tk import _centralizar_sobre
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
 from navepro.ui.navegacao import (
@@ -49,6 +52,7 @@ class JanelaHinosMixin:
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)
+        _habilitar_maximizar_janela(janela)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -449,6 +453,7 @@ class JanelaHinosMixin:
             editar_win.configure(bg='#0d1117')
             editar_win.transient(janela)
             _centralizar_sobre(editar_win, janela)
+            _habilitar_maximizar_janela(editar_win)
             editar_win.after(50, editar_win.grab_set)
 
             e_main = tk.Frame(editar_win, bg='#0d1117')

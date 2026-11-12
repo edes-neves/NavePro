@@ -32,7 +32,10 @@ from navepro.core.transferencia import (
 from navepro.core.transferencia import (
     _nome_arquivo as _nome_arquivo_transferencia,
 )
-from navepro.core.util_tk import _centralizar_sobre
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
 
@@ -57,6 +60,7 @@ class JanelaTransferenciaMixin:
         if parent is not None:
             janela.transient(parent)
         _centralizar_sobre(janela, parent if parent is not None else self.root)
+        _habilitar_maximizar_janela(janela)
         _aplicar_icone_janela(janela)
 
         estado = {"ocupado": False}

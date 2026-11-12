@@ -18,7 +18,10 @@ from navepro.core.biblia_import import importar_biblias
 from navepro.core.log import get_logger
 from navepro.core.servicos import _analisar_faixa_versiculos
 from navepro.core.slides import _buscar_versiculos_por_texto
-from navepro.core.util_tk import _centralizar_sobre
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
 from navepro.ui.biblia_grade import _invalidar_cache_biblia
@@ -38,6 +41,7 @@ class JanelaBibliaMixin:
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)
+        _habilitar_maximizar_janela(janela)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)

@@ -12,7 +12,10 @@ from __future__ import annotations
 import tkinter as tk
 import tkinter.messagebox
 
-from navepro.core.util_tk import _centralizar_sobre
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 
 # Botões e campos de digitação desenham cantos arredondados: `tk` vira uma
@@ -116,6 +119,7 @@ def _escolher_arquivos_usuario(
     if parent is not None:
         dial.transient(parent)
     _centralizar_sobre(dial, parent)
+    _habilitar_maximizar_janela(dial)
 
     def _encurtar(texto: str, limite: int = 58) -> str:
         return texto if len(texto) <= limite else "…" + texto[-(limite - 1):]

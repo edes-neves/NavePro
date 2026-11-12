@@ -33,7 +33,11 @@ from navepro.core.fontes_pil import (
 from navepro.core.log import get_logger
 from navepro.core.paths import UPLOAD_FOLDER
 from navepro.core.servicos import _extrair_texto_pdf
-from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
+from navepro.core.util_tk import (
+    _centralizar_sobre,
+    _habilitar_maximizar_janela,
+    _limitar_ao_monitor,
+)
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.ui.apoio import _escolher_arquivos_usuario
 from navepro.ui.navegacao import (
@@ -65,6 +69,7 @@ class JanelaAnunciosMixin:
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)
+        _habilitar_maximizar_janela(janela)
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -519,6 +524,7 @@ class JanelaAnunciosMixin:
             editar_win.configure(bg='#0d1117')
             editar_win.transient(janela)
             _centralizar_sobre(editar_win, janela)
+            _habilitar_maximizar_janela(editar_win)
             editar_win.after(50, editar_win.grab_set)
 
             e_main = tk.Frame(editar_win, bg='#0d1117')
@@ -1429,6 +1435,7 @@ class JanelaAnunciosMixin:
                     prev_win.configure(bg='#0d1117')
                     prev_win.transient(editar_win)
                     _centralizar_sobre(prev_win, editar_win)
+                    _habilitar_maximizar_janela(prev_win)
 
                     def _salvar_previa():
                         slide["texto"] = \
