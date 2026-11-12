@@ -16,6 +16,9 @@ import tempfile
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
+sys.path.insert(0, _AQUI)
+
+from fixture_log import log  # noqa: E402
 
 _SRC = open(os.path.join(RAIZ, "navepro", "ui", "remoto.py"),
             encoding="utf-8").read()
@@ -53,7 +56,7 @@ _METODOS = (
     "_remoto_projecao_configurar",
     "_remoto_projecao_imagens",
 )
-ns: dict = {"os": os, "UPLOAD_FOLDER": "/tmp"}
+ns: dict = {"os": os, "UPLOAD_FOLDER": "/tmp", "log": log}
 for _nome in _METODOS:
     exec(compile(_extrair(_nome), f"<{_nome}>", "exec"), ns)  # noqa: S102
 
@@ -65,8 +68,13 @@ class FakeTelao:
             "duracao_seg": 30, "cor_ref": "#A0A0A0",
             "cor_fundo": "#000000", "fundo_opaco": True,
             "fundo_imagem": "", "biblia_caixa": "normal",
-            "biblia_alinhamento": "centro",
+            "biblia_alinhamento": "centro", "biblia_mostrar_caixa": True,
         }
+        self.redesenhou = 0
+
+    def reaplicar_projecao_atual(self):
+        self.redesenhou += 1
+        return True
 
 
 class FakePlayer:
@@ -100,7 +108,9 @@ checar("padrão tem os campos da janela do computador",
        set(ns["_projecao_padrao"]()) == {
            "fonte", "tamanho_pct", "cor", "duracao_seg", "cor_ref",
            "cor_fundo", "fundo_opaco", "fundo_imagem", "biblia_caixa",
-           "biblia_alinhamento"})
+           "biblia_alinhamento", "biblia_mostrar_caixa"})
+checar("caixa do versículo começa ligada",
+       ns["_projecao_padrao"]()["biblia_mostrar_caixa"] is True)
 fake = _ligar(FakeApp())
 j = fake._remoto_projecao_estado()
 checar("estado devolve ok e config padrão",
@@ -133,6 +143,7 @@ j = fake._remoto_projecao_configurar({
     "fundo_imagem": "  /tmp/fundo.jpg  ",
     "biblia_caixa": "maiusculas",
     "biblia_alinhamento": "direita",
+    "biblia_mostrar_caixa": False,
 })
 checar("configurar devolve ok", j["ok"])
 checar("fonte é aplicada", fake.salvo["fonte"] == "Roboto")
@@ -149,6 +160,11 @@ checar("imagem é normalizada sem espaços",
 checar("caixa e alinhamento do versículo são salvos",
        fake.salvo["biblia_caixa"] == "maiusculas"
        and fake.salvo["biblia_alinhamento"] == "direita")
+checar("caixa do versículo pode ser desligada pelo celular",
+       fake.salvo["biblia_mostrar_caixa"] is False
+       and j["config"]["biblia_mostrar_caixa"] is False)
+checar("desligar a caixa redesenha a projeção atual",
+       fake.player.telao.redesenhou == 1)
 checar("campo desconhecido da config sobrevive",
        fake.salvo.get("campo_futuro") == "mantém")
 checar("config salva chega ao telão",
@@ -161,6 +177,16 @@ fake._remoto_projecao_configurar({"cor": "#111111"})
 checar("configurar só a cor preserva os outros campos",
        fake.salvo["cor"] == "#111111"
        and fake.salvo["cor_ref"] == "#ABCDEF")
+
+# Só o toggle da caixa, como faz o botão da aba Bíblia no celular.
+fake = _ligar(FakeApp())
+fake.player.telao._proj_cfg["cor"] = "#ABCDEF"
+fake.player.telao._proj_cfg["biblia_mostrar_caixa"] = True
+j = fake._remoto_projecao_configurar({"biblia_mostrar_caixa": "false"})
+checar("toggle da caixa aceita booleano como texto e preserva o resto",
+       j["ok"] and fake.salvo["biblia_mostrar_caixa"] is False
+       and fake.salvo["cor"] == "#ABCDEF"
+       and fake.player.telao.redesenhou == 1)
 
 # ── 3. Entradas inválidas não salvam ────────────────────────────────
 for dados, desc in (
@@ -294,6 +320,13 @@ checar("abrir no computador continua disponível",
        and "apiPost('/api/remoto/projecao', {})" in _WEB)
 checar("upload do celular usa FormData",
        "new FormData()" in _WEB and "input.files[0]" in _WEB)
+checar("aba Bíblia tem o botão de ligar/desligar a caixa do versículo",
+       'id="btn_caixa_versiculo"' in _WEB
+       and "function alternarCaixaVersiculo()" in _WEB
+       and "function atualizarBotaoCaixaVersiculo()" in _WEB)
+checar("botão da caixa salva pela rota de configuração da projeção",
+       "apiPost('/api/remoto/projecao/configurar'," in _WEB
+       and "biblia_mostrar_caixa: novo" in _WEB)
 
 print()
 if falhas:

@@ -219,6 +219,7 @@ _REMOTO_CSS = """
   #lista_itens_servico:not(.cartoes) li.item-servico { padding: 12px 2px; }
   #lista_itens_servico:not(.cartoes) .item-titulo b { font-weight: 400; }
   #btn_cartoes.off { color: #f0c040; }
+  #btn_caixa_versiculo.off { color: #f0c040; }
   #toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     background: #da3633; color: #fff; padding: 11px 18px; border-radius: 8px;
@@ -611,6 +612,37 @@ function projecaoMostrar(j) {
   document.getElementById('proj_duracao').value =
     relogioNum(c.duracao_seg, 30);
   document.getElementById('proj_imagem').value = j.imagem || '';
+  atualizarBotaoCaixaVersiculo();
+}
+
+// Botão da aba Bíblia: liga/desliga a caixa (cartão) atrás do versículo.
+function caixaVersiculoLigada() {
+  return !(PROJ_ESTADO && PROJ_ESTADO.config &&
+           PROJ_ESTADO.config.biblia_mostrar_caixa === false);
+}
+
+function atualizarBotaoCaixaVersiculo() {
+  var b = document.getElementById('btn_caixa_versiculo');
+  if (!b) return;
+  var ligada = caixaVersiculoLigada();
+  b.textContent = ligada ? '\U0001F5C2 Caixa: Ligada'
+                         : '\U0001F5C2 Caixa: Desligada';
+  b.className = 'btn ' + (ligada ? 'on' : 'cinza off');
+}
+
+function alternarCaixaVersiculo() {
+  var novo = !caixaVersiculoLigada();
+  apiPost('/api/remoto/projecao/configurar',
+          {biblia_mostrar_caixa: novo}).then(function(j) {
+    if (j && j.ok) {
+      projecaoMostrar(j);
+      aviso('Caixa do vers\u00edculo ' + (novo ? 'ligada' : 'desligada'),
+            '#238636');
+    } else if (j && j.erro) {
+      aviso(j.erro);
+    }
+    atualizarBotaoCaixaVersiculo();
+  });
 }
 
 function carregarImagensProjecao() {
@@ -1928,6 +1960,10 @@ PAGINA = """<!DOCTYPE html>
     <div class="linha" style="margin-top:8px">
       <button class="btn" onclick="abrirProjecaoBiblia()">&#127912; Proje&ccedil;&atilde;o</button>
       <button class="btn vermelho" onclick="slide('parar')">&#9209; Encerrar (rel&oacute;gio)</button>
+    </div>
+    <div class="linha" style="margin-top:8px">
+      <button class="btn on" id="btn_caixa_versiculo"
+              onclick="alternarCaixaVersiculo()">&#128450; Caixa: Ligada</button>
     </div>
     <details style="margin-top:10px">
       <summary style="cursor:pointer;color:#8b949e;font-size:13px">

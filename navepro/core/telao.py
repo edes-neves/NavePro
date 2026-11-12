@@ -186,6 +186,7 @@ class TelaoWindow:
             "fundo_imagem": "",
             "biblia_caixa": "normal",
             "biblia_alinhamento": "centro",
+            "biblia_mostrar_caixa": True,
         }
         self._fundo_imagem_item = None
         self._fundo_imagem_to_tk = None
@@ -560,6 +561,7 @@ class TelaoWindow:
             "fundo_imagem": "",
             "biblia_caixa": "normal",
             "biblia_alinhamento": "centro",
+            "biblia_mostrar_caixa": True,
         }
         merged = dict(defaults)
         if isinstance(cfg, dict):
@@ -974,7 +976,9 @@ class TelaoWindow:
         # Calcula largura de quebra e fonte inicial
         w = self.canvas.winfo_width() or self._monitor.width
         h = self.canvas.winfo_height() or self._monitor.height
-        usar_caixa = bool(referencia and texto.strip() and not largura_max)
+        mostrar_caixa = bool(cfg.get("biblia_mostrar_caixa", True))
+        usar_caixa = bool(
+            referencia and texto.strip() and not largura_max and mostrar_caixa)
         wrap_width = max(200, int(w * 0.95))
         if largura_max:
             wrap_width = max(120, min(wrap_width, int(largura_max)))
@@ -1594,6 +1598,17 @@ class TelaoWindow:
             texto, ref = slide, ""
         self._desenhar_texto_no_canvas(texto, referencia=ref)
         return True
+    def reaplicar_projecao_atual(self) -> bool:
+        """Redesenha o slide atual (ex.: após ligar/desligar a caixa).
+
+        Só age quando há uma projeção em slides ativa; assim não mexe em
+        imagens nem anúncios compostos, que têm desenho próprio.
+        """
+        if not getattr(self, "rodando", False) or not self._raiz_viva():
+            return False
+        if not (getattr(self, "_em_slides", False) and self._slides):
+            return False
+        return self._mostrar_slide(self._slide_index)
     def slide_proximo(self) -> bool:
         """Avança para o próximo slide.
         Se já estiver no último slide, encerra a apresentação como a tecla

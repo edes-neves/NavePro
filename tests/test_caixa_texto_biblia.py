@@ -62,11 +62,16 @@ telao.configurar_projecao()
 checar("padrão bíblico: texto normal e centralizado",
        telao._proj_cfg.get("biblia_caixa") == "normal"
        and telao._proj_cfg.get("biblia_alinhamento") == "centro")
+checar("caixa do versículo começa ligada por padrão",
+       telao._proj_cfg.get("biblia_mostrar_caixa") is True)
 telao.configurar_projecao({
     "biblia_caixa": "maiusculas", "biblia_alinhamento": "direita"})
 checar("configuração preserva as opções bíblicas",
        telao._proj_cfg.get("biblia_caixa") == "maiusculas"
        and telao._proj_cfg.get("biblia_alinhamento") == "direita")
+telao.configurar_projecao({"biblia_mostrar_caixa": False})
+checar("caixa do versículo pode ser desligada na configuração",
+       telao._proj_cfg.get("biblia_mostrar_caixa") is False)
 
 
 def _lum(cor):
@@ -101,7 +106,8 @@ checar("caixa não sai do retângulo informado",
 # Invariantes no código real: a referência bíblica e a limpeza do cartão.
 corpo_texto = ast.get_source_segment(fonte, nos["_desenhar_texto_no_canvas"])
 checar("texto com referência bíblica ativa a caixa",
-       "usar_caixa = bool(referencia" in corpo_texto)
+       "usar_caixa = bool(" in corpo_texto
+       and "biblia_mostrar_caixa" in corpo_texto)
 checar("texto com referência desenha o cartão",
        "_desenhar_caixa_texto(" in corpo_texto)
 checar("cartão é limpo antes de redesenhar",
@@ -134,6 +140,34 @@ checar("janela de Projeção oferece alinhamento à esquerda/direita/centro",
        '"biblia_alinhamento"' in _NAVEPRO
        and '"Esquerda"' in _NAVEPRO and '"Direita"' in _NAVEPRO
        and '"Centralizado"' in _NAVEPRO)
+checar("NavePro alterna a caixa e persiste a escolha",
+       "def alternar_caixa_versiculo" in _NAVEPRO
+       and 'cfg["biblia_mostrar_caixa"] = novo' in _NAVEPRO
+       and "self.salvar_config_projecao(cfg)" in _NAVEPRO)
+checar("telão sabe redesenhar a projeção após alternar a caixa",
+       "def reaplicar_projecao_atual" in fonte)
+checar("Aparência da Projeção preserva o estado da caixa ao salvar",
+       'novo["biblia_mostrar_caixa"] = bool(' in _NAVEPRO)
+
+_JANELA_BIBLIA = open(os.path.join(RAIZ, "navepro", "ui", "janela_biblia.py"),
+                      encoding="utf-8").read()
+_GRADE = open(os.path.join(RAIZ, "navepro", "ui", "biblia_grade.py"),
+              encoding="utf-8").read()
+_REMOTO = open(os.path.join(RAIZ, "navepro", "ui", "remoto.py"),
+               encoding="utf-8").read()
+_REMOTO_WEB = open(os.path.join(RAIZ, "navepro", "remoto_web.py"),
+                   encoding="utf-8").read()
+checar("janela Bíblia tem botão para ligar/desligar a caixa",
+       "btn_caixa_versiculo" in _JANELA_BIBLIA
+       and "self.alternar_caixa_versiculo()" in _JANELA_BIBLIA)
+checar("Bíblia em grade também tem o botão da caixa",
+       "btn_caixa_versiculo" in _GRADE
+       and "self.alternar_caixa_versiculo()" in _GRADE)
+checar("controle remoto expõe biblia_mostrar_caixa na API",
+       '"biblia_mostrar_caixa"' in _REMOTO)
+checar("página do controle remoto tem o botão da caixa",
+       'id="btn_caixa_versiculo"' in _REMOTO_WEB
+       and "alternarCaixaVersiculo" in _REMOTO_WEB)
 
 
 # ── Posição real da referência: dentro do cartão, canto inferior direito ──
@@ -240,6 +274,29 @@ try:
            and caixa[1] < coords_ref[1] < caixa[3]
            and coords_ref[0] > (caixa[0] + caixa[2]) // 2
            and coords_ref[1] > (caixa[1] + caixa[3]) // 2)
+
+    janela_sem_caixa = object.__new__(TelaoWindow)
+    janela_sem_caixa.root = _RootJanelaFalsa()
+    janela_sem_caixa.canvas = _CanvasFalso(1920, 1080)
+    janela_sem_caixa._monitor = _MonitorFalso()
+    janela_sem_caixa.overlay_text = "texto"
+    janela_sem_caixa.ref_text = "ref"
+    janela_sem_caixa.temp_text = "temp"
+    janela_sem_caixa._raiz_viva = lambda: True
+    janela_sem_caixa._proj_cfg = {
+        "fonte": "DejaVu Sans", "tamanho_pct": 5.0, "cor": "#FFFFFF",
+        "cor_ref": "#A0A0A0", "cor_fundo": "#000000",
+        "biblia_caixa": "normal", "biblia_alinhamento": "centro",
+        "biblia_mostrar_caixa": False,
+    }
+    janela_sem_caixa._caixa_texto_itens = []
+    janela_sem_caixa._desenhar_texto_no_canvas(
+        "No princípio era o Verbo, e o Verbo estava com Deus.",
+        referencia="João 1:1")
+    checar("com a caixa desligada o versículo continua sendo desenhado",
+           janela_sem_caixa._current_text != ""
+           and janela_sem_caixa._caixa_texto_box is None
+           and not janela_sem_caixa._caixa_texto_itens)
 finally:
     telao_mod.tkfont.Font = _fonte_real
     telao_mod.tkfont.families = _familias_real

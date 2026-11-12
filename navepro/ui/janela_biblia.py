@@ -493,6 +493,31 @@ class JanelaBibliaMixin:
                   command=lambda: _restaurar_fonte(), cursor='hand2', padx=10, pady=2
                   ).pack(side='left', padx=2)
 
+        btn_caixa_versiculo = tk.Button(
+            nav_frame, text="🗂️ Caixa: Ligada", font=("Arial", 11, "bold"),
+            bg='#8b5cf6', fg='white', activebackground='#a371f7',
+            command=lambda: _alternar_caixa_versiculo(), cursor='hand2',
+            padx=10, pady=2)
+        btn_caixa_versiculo.pack(side='left', padx=(12, 2))
+
+        def _atualizar_botao_caixa() -> None:
+            cfg = getattr(self.player.telao, "_proj_cfg", None) or {}
+            ativo = bool(cfg.get("biblia_mostrar_caixa", True))
+            try:
+                btn_caixa_versiculo.config(
+                    text="🗂️ Caixa: Ligada" if ativo
+                    else "🗂️ Caixa: Desligada",
+                    bg='#8b5cf6' if ativo else '#21262d',
+                    fg='white' if ativo else '#f0c040')
+            except tk.TclError:
+                pass
+
+        def _alternar_caixa_versiculo() -> None:
+            self.alternar_caixa_versiculo()
+            _atualizar_botao_caixa()
+
+        _atualizar_botao_caixa()
+
         label_slide = tk.Label(nav_frame, text="Sem projeção",
                                font=("Arial", 11, "bold"), fg='#8b949e', bg='#161b22')
         label_slide.pack(side='right', padx=10)

@@ -954,6 +954,25 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         if self.player and self.player.telao:
             self.player.telao.configurar_projecao(cfg)
 
+    def alternar_caixa_versiculo(self) -> bool:
+        """Liga/desliga a caixa (cartão) atrás do versículo projetado.
+
+        A escolha é persistida em config.json e aplicada na hora à projeção
+        em slides. Devolve o novo estado (True = caixa ligada).
+        """
+        telao = getattr(getattr(self, "player", None), "telao", None)
+        if telao is None:
+            return False
+        cfg = dict(getattr(telao, "_proj_cfg", None) or {})
+        novo = not bool(cfg.get("biblia_mostrar_caixa", True))
+        cfg["biblia_mostrar_caixa"] = novo
+        self.salvar_config_projecao(cfg)
+        try:
+            telao.reaplicar_projecao_atual()
+        except Exception as e:  # noqa: BLE001 — só redesenho visual
+            log.warning(f"Não foi possível redesenhar a projeção: {e}")
+        return novo
+
     def abrir_config_projecao_dialogo(self, parent=None,
                                       mostrar_cor_ref: bool = False) -> None:
         """Abre a janela de ajuste da aparência da projeção no telão.
@@ -974,6 +993,7 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         cfg_atual.setdefault("fundo_imagem", "")
         cfg_atual.setdefault("biblia_caixa", "normal")
         cfg_atual.setdefault("biblia_alinhamento", "centro")
+        cfg_atual.setdefault("biblia_mostrar_caixa", True)
 
         cfg_win = tk.Toplevel(janela)
         cfg_win.title("🎨 Aparência da Projeção (Telão)")
@@ -1166,6 +1186,12 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                 "fundo_opaco": bool(var_fundo_opaco.get()),
                 "fundo_imagem": var_fundo_imagem.get().strip(),
             }
+            # A caixa do versículo é togglada fora deste diálogo (Bíblia e
+            # controle remoto); preserva o estado vivo para não desfazê-lo.
+            cfg_vivo = getattr(
+                getattr(self.player, "telao", None), "_proj_cfg", {}) or {}
+            novo["biblia_mostrar_caixa"] = bool(
+                cfg_vivo.get("biblia_mostrar_caixa", True))
             if mostrar_cor_ref:
                 novo["cor_ref"] = var_cor_ref.get()
                 novo["biblia_caixa"] = mapa_caixa.get(

@@ -369,6 +369,7 @@ class ControleRemotoMixin:
             "fundo_imagem": "",
             "biblia_caixa": "normal",
             "biblia_alinhamento": "centro",
+            "biblia_mostrar_caixa": True,
         }
     def _remoto_projecao_estado(self) -> dict:
         """Configuração atual da Aparência da Projeção para o celular."""
@@ -462,7 +463,17 @@ class ControleRemotoMixin:
                         "erro": "Alinhamento do versículo inválido: "
                                 f"{alinhamento}"}
             base["biblia_alinhamento"] = alinhamento
+        if "biblia_mostrar_caixa" in dados:
+            base["biblia_mostrar_caixa"] = self._bool_remoto(
+                dados.get("biblia_mostrar_caixa"))
         self.salvar_config_projecao(base)
+        telao = getattr(getattr(self, "player", None), "telao", None)
+        reaplicar = getattr(telao, "reaplicar_projecao_atual", None)
+        if callable(reaplicar):
+            try:
+                reaplicar()
+            except Exception as e:  # noqa: BLE001 — só redesenho visual
+                log.warning(f"Não foi possível redesenhar a projeção: {e}")
         return self._remoto_projecao_estado()
     def _remoto_projecao_imagens(self) -> dict:
         """Imagens disponíveis no computador para o fundo da projeção."""
