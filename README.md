@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.3.6.AppImage
-   ./NavePro-2.3.6.AppImage
+   chmod +x NavePro-2.3.7.AppImage
+   ./NavePro-2.3.7.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.3.6          # gera NavePro-2.3.6.AppImage
+./build.sh 2.3.7          # gera NavePro-2.3.7.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.3.6
+   ./build.sh 2.3.7
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.3.6: ..."
-   git tag v2.3.6
-   git push origin main v2.3.6
+   git add -A && git commit -m "NavePro 2.3.7: ..."
+   git tag v2.3.7
+   git push origin main v2.3.7
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.3.6 NavePro-2.3.6.AppImage \
-     --title "NavePro 2.3.6" --notes "O que mudou nesta versão..."
+   gh release create v2.3.7 NavePro-2.3.7.AppImage \
+     --title "NavePro 2.3.7" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -554,6 +554,25 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.3.7
+
+- **Janelas**: Anúncios, Hinos/Letras, Gerenciar Banco, Configurações e
+  Aparência da Projeção agora maximizam pelo botão do meio da barra de título e
+  voltam ao tamanho anterior. A janela **Configura Relógio / Cronômetro /
+  Contagem** não bloqueia mais as outras janelas.
+- **Ordem de Serviço**: o botão **Restaurar** volta ao tamanho original (antes
+  não fazia nada no Linux) e a janela também maximiza pela barra de título.
+- **Ordem de Serviço**: cartões com botão para alternar entre cartões e linhas,
+  seleção múltipla (Ctrl/Shift), arrastar para reordenar, apagar em lote e prévia
+  automática de hino/vídeo.
+- **Controle remoto**: botão **Cartões** na aba Serviço, configuração completa da
+  Aparência da Projeção pelo celular e folga lateral nos botões **Buscar** e
+  **+ Adicionar item**.
+- **Bíblia**: botão para ligar/desligar a caixa do versículo no painel, na grade
+  e no controle remoto.
+- **Desempenho e segurança**: busca FTS5 com fallback, streaming de
+  downloads/uploads, proteções CSRF/Origin/CSP e dependências mais seguras.
 
 ### 2.3.6
 

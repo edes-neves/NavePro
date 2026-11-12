@@ -35,6 +35,19 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.3.7" date="2026-11-12">
+      <description>
+        <ul>
+          <li>Janelas: Anúncios, Hinos/Letras, Gerenciar Banco, Configurações e Aparência da Projeção maximizam pelo botão do meio da barra de título e voltam ao tamanho anterior</li>
+          <li>Configura Relógio / Cronômetro / Contagem não bloqueia mais as outras janelas</li>
+          <li>Ordem de Serviço: botão Restaurar volta ao tamanho original e a janela maximiza pela barra de título</li>
+          <li>Ordem de Serviço: cartões, seleção múltipla, arrastar para reordenar, apagar em lote e prévia de hino/vídeo</li>
+          <li>Controle remoto: botão Cartões, configuração completa da Aparência da Projeção pelo celular e folga lateral nos botões Buscar e + Adicionar item</li>
+          <li>Bíblia: botão para ligar/desligar a caixa do versículo no painel, na grade e no controle remoto</li>
+          <li>Desempenho e segurança: FTS5 com fallback, streaming de downloads/uploads e proteções CSRF/Origin/CSP</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.6" date="2026-11-08">
       <description>
         <ul>

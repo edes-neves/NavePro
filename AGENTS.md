@@ -53,7 +53,7 @@ ruff check .
 
 | Artefato | Comando | Obs. |
 |---|---|---|
-| AppImage | `./build.sh 2.3.1` | usa o `.venv`; exige Tk 8.6; gera `NavePro-2.3.1.AppImage` |
+| AppImage | `./build.sh 2.3.7` | usa o `.venv`; exige Tk 8.6; gera `NavePro-2.3.7.AppImage` |
 | .exe | `build-windows.bat` (só Windows) | usa o `NavePro.spec` |
 | Flatpak (bundle local) | `./build-flatpak.sh` | manifest: `flatpak/io.github.edes_neves.NavePro.yaml` |
 
@@ -149,6 +149,14 @@ icones/                    # PNGs dos botões (fallback; gerados por gerar_icone
   módulo em `NavePro.py`); **não** use `print` em código de produção. Nível por
   `NAVEPRO_LOG` (padrão `WARNING`), arquivo `~/.navepro/navepro.log`. Trechos
   extraídos via AST nos testes referenciam `log`: injete o stub de `tests/fixture_log.py`.
+- **Janelas secundárias maximizáveis:** use
+  `_habilitar_maximizar_janela(janela, area=self._area_monitor_operador())` de
+  `navepro/core/util_tk.py`. No Linux, `transient()` faz o gerenciador tratar a
+  janela como diálogo e **desabilitar o botão nativo de maximizar**; o helper
+  aplica `-type normal`, então não remova o `transient` sem testar. O helper
+  restaura a geometria anterior e, com `ao_mudar_estado`, atualiza rótulos
+  Maximizar/Restaurar (caso da Ordem de Serviço). Não use `grab_set` em janelas
+  que precisam conviver com as demais (ex.: Configura Relógio).
 - **Janela do editor da Ordem de Serviço:** ao alterar a geometria, aplique **só o
   tamanho** (`geometry("WxH")`, nunca coordenadas) e use `_centralizar_sobre(...)`;
   coordenadas fixas fazem a janela pular para o canto superior esquerdo
