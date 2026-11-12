@@ -1002,7 +1002,7 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         cfg_win.configure(bg='#0d1117')
         cfg_win.transient(janela)
         _centralizar_sobre(cfg_win, janela)
-        _habilitar_maximizar_janela(cfg_win)
+        _habilitar_maximizar_janela(cfg_win, area=self._area_monitor_operador())
         cfg_win.after(50, cfg_win.grab_set)
 
         c_main = tk.Frame(cfg_win, bg='#0d1117')

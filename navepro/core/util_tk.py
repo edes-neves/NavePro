@@ -115,29 +115,63 @@ def _limitar_ao_monitor(
 # ────────────────────────────────────────────────────────────────────
 
 
-def _janela_maximizada(janela) -> bool:
-    """Diz se `janela` está maximizada (funciona em Windows e Linux/X11)."""
+def _janela_maximizada(janela, area=None) -> bool:
+    """Diz se `janela` está maximizada.
+
+    No Windows/macOS o Tk expõe o estado; em alguns ambientes Linux/X11 o
+    Tk 8.6 não aceita "zoomed", então, quando `area` é informada, compara a
+    geometria com a área do monitor para reconhecer a maximização feita pelo
+    gerenciador de janelas.
+    """
     try:
         if bool(janela.attributes("-zoomed")):
             return True
     except (tk.TclError, ValueError):
         pass
     try:
-        return janela.state() == "zoomed"
+        if janela.state() == "zoomed":
+            return True
     except tk.TclError:
-        return False
+        pass
+    if area is not None:
+        try:
+            ax, ay, aw, ah = (int(v) for v in area)
+            w = janela.winfo_width()
+            h = janela.winfo_height()
+            x = janela.winfo_x()
+            y = janela.winfo_y()
+            if aw > 1 and ah > 1:
+                if w >= aw * 0.98 and h >= ah * 0.90:
+                    return True
+                if (w >= aw * 0.90 and h >= ah * 0.85
+                        and x <= ax + 8 and y <= ay + 80):
+                    return True
+        except (tk.TclError, TypeError, ValueError):
+            pass
+    return False
 
 
 def _habilitar_maximizar_janela(
-        janela, geometria_inicial: str | None = None):
+        janela, geometria_inicial: str | None = None, area=None,
+        ao_mudar_estado=None):
     """Permite maximizar/restaurar `janela` pelo botão do meio da barra de
     título (ou F11), voltando exatamente à geometria normal anterior.
 
-    Alguns window managers não devolvem a janela transiente ao tamanho de
-    antes ao desmaximizar. Aqui a última geometria normal é lembrada e
-    reaplicada quando a janela sai do estado maximizado. Devolve a função
-    que alterna maximizado/restaurado.
+    Em alguns ambientes Linux/X11 o Tk 8.6 ignora ``wm attributes -zoomed``
+    e não aceita ``wm state zoomed``; nesse caso a maximização é feita pela
+    geometria da área do monitor (quando `area` é informada). Também marca a
+    janela como ``normal``: janelas ``transient`` recebem do gerenciador de
+    janelas o tipo "diálogo", que desabilita o botão nativo de maximizar.
+
+    `ao_mudar_estado`, se informado, é chamado com ``True``/``False`` sempre
+    que o estado maximizado mudar (útil para atualizar o rótulo do botão).
+    Devolve a função que alterna maximizado/restaurado e retorna o novo
+    estado.
     """
+    try:
+        janela.attributes("-type", "normal")
+    except tk.TclError:
+        pass
     try:
         janela.resizable(True, True)
     except tk.TclError:
@@ -145,8 +179,9 @@ def _habilitar_maximizar_janela(
 
     estado = {
         "geo": geometria_inicial or "",
-        "maximizada": _janela_maximizada(janela),
+        "maximizada": _janela_maximizada(janela, area),
         "restaurando": False,
+        "aplicando": False,
     }
 
     def _geometria() -> str:
@@ -170,6 +205,13 @@ def _habilitar_maximizar_janela(
     if not estado["geo"]:
         estado["geo"] = _geometria()
 
+    def _notificar() -> None:
+        if ao_mudar_estado is not None:
+            try:
+                ao_mudar_estado(estado["maximizada"])
+            except Exception:
+                pass
+
     def _restaurar_geometria() -> None:
         if not estado["geo"] or estado["restaurando"]:
             return
@@ -185,9 +227,43 @@ def _habilitar_maximizar_janela(
             except tk.TclError:
                 estado["restaurando"] = False
 
-    def _definir_maximizada(maximizar: bool) -> None:
-        if maximizar == _janela_maximizada(janela):
+    def _maximizar_pela_area() -> None:
+        try:
+            if area is not None:
+                x, y, w, h = (int(v) for v in area)
+            else:
+                x = y = 0
+                w = janela.winfo_screenwidth()
+                h = janela.winfo_screenheight()
+            if w > 1 and h > 1:
+                janela.geometry(f"{w}x{h}+{x}+{y}")
+        except (tk.TclError, TypeError, ValueError):
+            pass
+
+    def _limpar_aplicando() -> None:
+        estado["aplicando"] = False
+
+    def _marcar_aplicando() -> None:
+        estado["aplicando"] = True
+        try:
+            janela.after(300, _limpar_aplicando)
+        except tk.TclError:
+            estado["aplicando"] = False
+
+    def _conferir_maximizacao() -> None:
+        """Fallback para WMs que ignoram -zoomed silenciosamente."""
+        if not estado["maximizada"]:
             return
+        if _janela_maximizada(janela, area):
+            return
+        _maximizar_pela_area()
+        estado["maximizada"] = _janela_maximizada(janela, area)
+        _notificar()
+
+    def _definir_maximizada(maximizar: bool) -> None:
+        if maximizar == estado["maximizada"]:
+            return
+        _marcar_aplicando()
         if maximizar:
             atual = _geometria()
             if atual:
@@ -198,7 +274,8 @@ def _habilitar_maximizar_janela(
                 try:
                     janela.state("zoomed")
                 except tk.TclError:
-                    pass
+                    _maximizar_pela_area()
+            estado["maximizada"] = True
         else:
             try:
                 janela.attributes("-zoomed", False)
@@ -208,29 +285,34 @@ def _habilitar_maximizar_janela(
                 except tk.TclError:
                     pass
             _restaurar_geometria()
-        estado["maximizada"] = _janela_maximizada(janela)
+            estado["maximizada"] = False
+        _notificar()
+        if maximizar:
+            try:
+                janela.after(400, _conferir_maximizacao)
+            except tk.TclError:
+                pass
 
     def _alternar(event=None):
-        _definir_maximizada(not _janela_maximizada(janela))
-        return "break"
+        _definir_maximizada(not _janela_maximizada(janela, area))
+        return estado["maximizada"]
 
     def _on_configure(event=None) -> None:
         if event is not None and getattr(event, "widget", janela) is not janela:
             return
-        max_now = _janela_maximizada(janela)
-        if estado["maximizada"] and not max_now:
-            _restaurar_geometria()
-        elif not max_now and not estado["restaurando"]:
-            atual = _geometria()
-            if atual:
-                estado["geo"] = atual
-        estado["maximizada"] = max_now
+        if estado["aplicando"]:
+            return
+        max_now = _janela_maximizada(janela, area)
+        if max_now != estado["maximizada"]:
+            estado["maximizada"] = max_now
+            _notificar()
 
     try:
         janela.bind("<F11>", _alternar, add="+")
         janela.bind("<Configure>", _on_configure, add="+")
     except tk.TclError:
         pass
+    _notificar()
     return _alternar
 
 

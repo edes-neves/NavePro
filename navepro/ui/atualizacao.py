@@ -128,7 +128,7 @@ class AtualizacaoMixin:
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)
-        _habilitar_maximizar_janela(janela)
+        _habilitar_maximizar_janela(janela, area=self._area_monitor_operador())
         janela.grab_set()
 
         saida = tk.Text(janela, height=9, font=("monospace", 9),

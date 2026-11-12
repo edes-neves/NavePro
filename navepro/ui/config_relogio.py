@@ -97,7 +97,7 @@ class ConfigRelogioMixin:
                            area=self._area_monitor_operador())
         # Não usa grab_set: o operador pode abrir outras janelas enquanto
         # ajusta o relógio/cronômetro/contagem.
-        _habilitar_maximizar_janela(cfg_win)
+        _habilitar_maximizar_janela(cfg_win, area=self._area_monitor_operador())
 
         c_main = tk.Frame(cfg_win, bg='#0d1117')
         c_main.pack(fill='both', expand=True, padx=15, pady=15)

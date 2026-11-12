@@ -46,7 +46,7 @@ class GerenciadorMidiasMixin:
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root,
                            area=self._area_monitor_operador())
-        _habilitar_maximizar_janela(janela)
+        _habilitar_maximizar_janela(janela, area=self._area_monitor_operador())
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -496,7 +496,7 @@ class GerenciadorMidiasMixin:
         janela.configure(bg='#0d1117')
         janela.transient(janela_pai)
         _centralizar_sobre(janela, janela_pai)
-        _habilitar_maximizar_janela(janela)
+        _habilitar_maximizar_janela(janela, area=self._area_monitor_operador())
         janela.after(50, janela.grab_set)
 
         # Caminho atual

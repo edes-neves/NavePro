@@ -60,7 +60,7 @@ class JanelaTransferenciaMixin:
         if parent is not None:
             janela.transient(parent)
         _centralizar_sobre(janela, parent if parent is not None else self.root)
-        _habilitar_maximizar_janela(janela)
+        _habilitar_maximizar_janela(janela, area=self._area_monitor_operador())
         _aplicar_icone_janela(janela)
 
         estado = {"ocupado": False}

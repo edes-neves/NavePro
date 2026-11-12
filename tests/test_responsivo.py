@@ -12,6 +12,7 @@ teste cobre:
 
 import ast
 import os
+import re
 import sys
 import tkinter as tk
 
@@ -260,8 +261,8 @@ check(
 )
 check(
     "OS: janela pode ser maximizada/restaurada",
-    "attributes('-zoomed', True)" in _SRC_OS
-    and "attributes('-zoomed', False)" in _SRC_OS,
+    "_habilitar_maximizar_janela(" in _SRC_OS
+    and "ao_mudar_estado=_atualizar_botao_max" in _SRC_OS,
 )
 check(
     "OS: mínimo cabe em telas 800x600",
@@ -313,18 +314,28 @@ check(
 class _FakeJanelaMax:
     """Toplevel mínimo para exercitar o helper sem display."""
 
-    def __init__(self, geo="640x620+100+100"):
+    def __init__(self, geo="640x620+100+100", suporta_zoomed=True):
         self._geo = geo
         self.zoomed = False
+        self.suporta_zoomed = suporta_zoomed
+        self.tipo = None
         self.resizable_cfg = None
         self.binds = {}
         self.w, self.h, self.x, self.y = 640, 620, 100, 100
+        self.geometry(geo)
 
     def resizable(self, w, h):
         self.resizable_cfg = (w, h)
 
     def attributes(self, nome, valor=None):
+        if nome == "-type":
+            if valor is None:
+                return self.tipo
+            self.tipo = valor
+            return None
         if nome != "-zoomed":
+            raise tk.TclError("atributo não suportado")
+        if not self.suporta_zoomed:
             raise tk.TclError("atributo não suportado")
         if valor is None:
             return self.zoomed
@@ -334,11 +345,16 @@ class _FakeJanelaMax:
     def state(self, novo=None):
         if novo is None:
             return "zoomed" if self.zoomed else "normal"
+        if novo == "zoomed" and not self.suporta_zoomed:
+            raise tk.TclError('bad argument "zoomed"')
         self.zoomed = novo == "zoomed"
 
     def geometry(self, g=None):
         if g is not None:
             self._geo = str(g)
+            m = re.match(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)", self._geo)
+            if m:
+                self.w, self.h, self.x, self.y = (int(v) for v in m.groups())
         return self._geo
 
     def update_idletasks(self):
@@ -368,6 +384,11 @@ class _FakeJanelaMax:
     def after_idle(self, func):
         func()
 
+    def after(self, ms, func=None):
+        if func is not None:
+            func()
+        return "after"
+
     def disparar_configure(self):
         self.binds["<Configure>"]()
 
@@ -376,6 +397,8 @@ f = _FakeJanelaMax()
 alternar = _habilitar_maximizar_janela(f)
 check("helper torna a janela redimensionável", f.resizable_cfg == (True, True),
       str(f.resizable_cfg))
+check("helper troca o tipo diálogo por normal (habilita o botão nativo)",
+      f.tipo == "normal", str(f.tipo))
 check("helper registra F11 e <Configure>",
       "<F11>" in f.binds and "<Configure>" in f.binds)
 f.disparar_configure()
@@ -387,20 +410,44 @@ alternar()
 check("F11 restaura exatamente a geometria anterior",
       f.zoomed is False and f._geo == "640x620+100+100", f._geo)
 
+estados = []
 f = _FakeJanelaMax()
-_habilitar_maximizar_janela(f)
-f.disparar_configure()
-f._geo = "700x700+50+50"
+alternar = _habilitar_maximizar_janela(f, ao_mudar_estado=estados.append)
 f.disparar_configure()
 f.zoomed = True
-f._geo = "1366x768+0+0"
+f.geometry("1366x768+0+0")
 f.disparar_configure()
-f.zoomed = False
-f._geo = "800x600+0+0"
-f.disparar_configure()
+check("detecta a maximização feita pelo botão do meio",
+      estados and estados[-1] is True, str(estados))
+alternar()
 check("maximizar pelo botão do meio também restaura o tamanho",
-      f._geo == "700x700+50+50", f._geo)
+      f.zoomed is False and f._geo == "640x620+100+100", f._geo)
 check("helper identifica o estado maximizado", _janela_maximizada(f) is False)
+
+# Linux/X11: o Tk 8.6 ignora -zoomed e recusa state("zoomed"); o helper
+# precisa cair na geometria da área do monitor.
+estados = []
+f = _FakeJanelaMax(geo="640x620+100+100", suporta_zoomed=False)
+alternar = _habilitar_maximizar_janela(
+    f, area=(0, 0, 1366, 768), ao_mudar_estado=estados.append)
+alternar()
+check("X11: maximiza pela área do monitor",
+      f._geo == "1366x768+0+0" and estados[-1] is True, f._geo)
+alternar()
+check("X11: restaura a geometria original",
+      f._geo == "640x620+100+100" and estados[-1] is False, f._geo)
+
+estados.clear()
+f = _FakeJanelaMax(geo="640x620+100+100", suporta_zoomed=False)
+alternar = _habilitar_maximizar_janela(
+    f, area=(0, 0, 1366, 768), ao_mudar_estado=estados.append)
+f.geometry("1366x768+0+0")
+f.disparar_configure()
+check("X11: reconhece a maximização feita pelo gerenciador",
+      estados and estados[-1] is True, str(estados))
+alternar()
+check("X11: botão restaura depois da maximização nativa",
+      f._geo == "640x620+100+100" and estados[-1] is False, f._geo)
 
 # Todas as janelas secundárias que abrem em tamanho normal usam o helper.
 for _arquivo, _rotulo in (
@@ -419,7 +466,7 @@ for _arquivo, _rotulo in (
           "_habilitar_maximizar_janela(" in _src)
 
 check("Aparência da Projeção também pode ser maximizada/restaurada",
-      "_habilitar_maximizar_janela(cfg_win)" in _SRC)
+      "_habilitar_maximizar_janela(cfg_win" in _SRC)
 check("Configura Relógio não bloqueia as outras janelas",
       ".grab_set(" not in open(
           os.path.join(RAIZ, "navepro", "ui", "config_relogio.py"),

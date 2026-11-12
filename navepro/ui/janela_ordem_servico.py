@@ -93,89 +93,19 @@ class JanelaOrdemServicoMixin:
         except tk.TclError:
             pass
 
-        _estado_max = {"geo": "", "maximizada": False}
-
-        def _esta_maximizada() -> bool:
+        def _atualizar_botao_max(maximizada: bool) -> None:
             try:
-                if bool(janela.attributes('-zoomed')):
-                    return True
-            except (tk.TclError, ValueError):
-                pass
-            try:
-                return janela.state() == 'zoomed'
-            except tk.TclError:
-                return False
-
-        def _definir_maximizada(maximizar: bool) -> None:
-            if maximizar:
-                try:
-                    _estado_max["geo"] = janela.geometry()
-                    largura_antes = janela.winfo_width()
-                    altura_antes = janela.winfo_height()
-                except tk.TclError:
-                    _estado_max["geo"] = ""
-                    largura_antes = altura_antes = 0
-                try:
-                    janela.attributes('-zoomed', True)
-                except (tk.TclError, ValueError):
-                    try:
-                        janela.state('zoomed')
-                    except tk.TclError:
-                        area = self._area_monitor_operador()
-                        if area:
-                            x, y, w, h = area
-                            try:
-                                janela.geometry(f"{w}x{h}+{x}+{y}")
-                            except tk.TclError:
-                                pass
-
-                def _conferir_maximizacao():
-                    """Fallback p/ WMs que ignoram -zoomed silenciosamente."""
-                    if not _estado_max.get("maximizada"):
-                        return
-                    try:
-                        if (janela.winfo_width() > largura_antes + 20
-                                or janela.winfo_height() > altura_antes + 20):
-                            return
-                    except tk.TclError:
-                        return
-                    area = self._area_monitor_operador()
-                    if not area:
-                        return
-                    x, y, w, h = area
-                    if w <= largura_antes and h <= altura_antes:
-                        return
-                    try:
-                        janela.geometry(f"{w}x{h}+{x}+{y}")
-                    except tk.TclError:
-                        pass
-
-                try:
-                    janela.after(150, _conferir_maximizacao)
-                except tk.TclError:
-                    pass
-            else:
-                try:
-                    janela.attributes('-zoomed', False)
-                except (tk.TclError, ValueError):
-                    try:
-                        janela.state('normal')
-                    except tk.TclError:
-                        pass
-                if _estado_max.get("geo"):
-                    try:
-                        janela.geometry(str(_estado_max["geo"]))
-                    except tk.TclError:
-                        pass
-            _estado_max["maximizada"] = bool(maximizar)
-            try:
-                btn_max.configure(text="⛶ Restaurar" if maximizar
+                btn_max.configure(text="⛶ Restaurar" if maximizada
                                   else "⛶ Maximizar")
-            except tk.TclError:
+            except (tk.TclError, NameError):
                 pass
+
+        alternar_maximizar = _habilitar_maximizar_janela(
+            janela, area=self._area_monitor_operador(),
+            ao_mudar_estado=_atualizar_botao_max)
 
         def _alternar_maximizar() -> None:
-            _definir_maximizada(not _esta_maximizada())
+            alternar_maximizar()
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -1195,7 +1125,7 @@ class JanelaOrdemServicoMixin:
             add_win.configure(bg='#0d1117')
             add_win.transient(janela)
             _centralizar_sobre(add_win, janela)
-            _habilitar_maximizar_janela(add_win)
+            _habilitar_maximizar_janela(add_win, area=self._area_monitor_operador())
             add_win.after(50, add_win.grab_set)
 
             add_main = tk.Frame(add_win, bg='#0d1117')

@@ -52,7 +52,7 @@ class JanelaHinosMixin:
         janela.configure(bg='#0d1117')
         janela.transient(self.root)
         _centralizar_sobre(janela, self.root)
-        _habilitar_maximizar_janela(janela)
+        _habilitar_maximizar_janela(janela, area=self._area_monitor_operador())
 
         main = tk.Frame(janela, bg='#0d1117')
         main.pack(fill='both', expand=True, padx=15, pady=15)
@@ -453,7 +453,7 @@ class JanelaHinosMixin:
             editar_win.configure(bg='#0d1117')
             editar_win.transient(janela)
             _centralizar_sobre(editar_win, janela)
-            _habilitar_maximizar_janela(editar_win)
+            _habilitar_maximizar_janela(editar_win, area=self._area_monitor_operador())
             editar_win.after(50, editar_win.grab_set)
 
             e_main = tk.Frame(editar_win, bg='#0d1117')
