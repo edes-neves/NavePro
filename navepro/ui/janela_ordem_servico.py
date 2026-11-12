@@ -36,8 +36,10 @@ from navepro.core.servicos import (
 from navepro.core.slides import (
     _buscar_hino_por_termo,
     _buscar_hino_por_termo_ou_id,
+    _buscar_midia_por_termo,
     _buscar_midia_por_termo_ou_id,
 )
+from navepro.core.textos import _numero_do_titulo
 from navepro.core.util_tk import _centralizar_sobre, _limitar_ao_monitor
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.core.youtube import _eh_url_youtube, _obter_info_youtube
@@ -251,37 +253,177 @@ class JanelaOrdemServicoMixin:
 
         combo_servico.bind("<<ComboboxSelected>>", _on_servico_select)
 
-        # ── Itens do serviço (Treeview) ──
-        tree_frame = tk.Frame(main, bg='#161b22')
-        tree_frame.grid(row=2, column=0, sticky='nsew', pady=5)
+        # ── Itens do serviço (cartões com rolagem) ──
+        # Cada item é um Frame com borda (sua própria "caixa"), título em
+        # negrito e rolagem própria. O botão "Cartões" remove as caixas e o
+        # negrito sem perder seleção múltipla, arrastar ou menu de contexto.
+        COR_FUNDO_LISTA = '#161b22'
+        COR_CARD = '#21262d'
+        COR_BORDA = '#30363d'
+        COR_SELECAO = '#6e40c9'
+        COR_TEXTO = '#c9d1d9'
+        COR_TEXTO_FRACO = '#8b949e'
+        COR_TITULO = '#f0f0f0'
+        COR_DESTAQUE = '#f0c040'
+        COR_IND = '#58a6ff'
+        COR_IND_BRILHO = '#79c0ff'
 
-        colunas = ("#", "Tipo", "Título", "Duração")
-        tree = ttk.Treeview(tree_frame, columns=colunas, show='headings', height=10,
-                            style="OrdemServico.Treeview")
-        tree.heading("#", text="#")
-        tree.heading("Tipo", text="Tipo")
-        tree.heading("Título", text="Título")
-        tree.heading("Duração", text="Duração")
-        tree.column("#", width=40, anchor='center', stretch=False)
-        tree.column("Tipo", width=120, stretch=False)
-        tree.column("Título", width=350, stretch=True)
-        tree.column("Duração", width=130, anchor='center', stretch=False)
+        cartoes_ativo = {"on": True}
 
-        scroll_y = tk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=scroll_y.set)
-        tree.pack(side='left', fill='both', expand=True)
-        scroll_y.pack(side='right', fill='y')
+        lista_frame = tk.Frame(main, bg=COR_FUNDO_LISTA)
+        lista_frame.grid(row=2, column=0, sticky='nsew', pady=5)
+        lista_frame.rowconfigure(0, weight=1)
+        lista_frame.columnconfigure(0, weight=1)
 
-        style = ttk.Style()
-        style.configure("Treeview", background="#21262d", foreground="#c9d1d9",
-                        fieldbackground="#21262d", font=("Arial", 10))
-        style.configure("Treeview.Heading", background="#161b22", foreground="#f0c040",
-                        font=("Arial", 10, "bold"))
-        style.map('Treeview', background=[('selected', '#6e40c9')],
-                  foreground=[('selected', '#ffffff')])
-        # Espaçamento maior entre os itens (só nesta janela; as demais
-        # Treeviews continuam com a altura padrão).
-        style.configure("OrdemServico.Treeview", rowheight=32)
+        lista_canvas = tk.Canvas(lista_frame, bg=COR_FUNDO_LISTA,
+                                 highlightthickness=0, bd=0,
+                                 yscrollincrement=24)
+        scroll_y = tk.Scrollbar(lista_frame, orient="vertical",
+                                command=lista_canvas.yview)
+        lista_canvas.configure(yscrollcommand=scroll_y.set)
+        lista_canvas.grid(row=0, column=0, sticky='nsew')
+        scroll_y.grid(row=0, column=1, sticky='ns')
+
+        cards_host = tk.Frame(lista_canvas, bg=COR_FUNDO_LISTA)
+        _canvas_window = lista_canvas.create_window(
+            (0, 0), window=cards_host, anchor='nw')
+
+        _cards: dict[str, dict] = {}
+        _ordem: list[str] = []
+        _selecionados: set[str] = set()
+        _ancora: dict[str, str | None] = {"id": None}
+        _foco: dict[str, str | None] = {"id": None}
+
+        def _card_existe(iid: str) -> bool:
+            return iid in _cards
+
+        def _definir_duracao_card(iid: str, texto: str) -> None:
+            dados = _cards.get(iid)
+            if dados is None:
+                return
+            try:
+                dados["duracao"].configure(text=texto)
+            except tk.TclError:
+                pass
+
+        def _atualizar_selecao_visual() -> None:
+            for iid, dados in _cards.items():
+                selecionado = iid in _selecionados
+                fundo = COR_SELECAO if selecionado else (
+                    COR_CARD if cartoes_ativo["on"] else COR_FUNDO_LISTA)
+                try:
+                    for frame in dados["frames"]:
+                        frame.configure(bg=fundo)
+                    for widget, cor_normal in dados["fundos"]:
+                        widget.configure(
+                            bg=fundo,
+                            fg='#ffffff' if selecionado else cor_normal)
+                except tk.TclError:
+                    pass
+
+        def _definir_selecao(novos) -> None:
+            _selecionados.clear()
+            _selecionados.update(i for i in novos if i in _cards)
+            if _foco["id"] not in _selecionados:
+                _foco["id"] = next(iter(_selecionados), None)
+            _atualizar_selecao_visual()
+
+        def _ids_selecionados() -> list[str]:
+            return [iid for iid in _ordem if iid in _selecionados]
+
+        def _ver_item(iid: str) -> None:
+            dados = _cards.get(iid)
+            if dados is None:
+                return
+            try:
+                lista_canvas.update_idletasks()
+                frame = dados["frame"]
+                total = max(1, cards_host.winfo_height())
+                topo = frame.winfo_y()
+                base = topo + frame.winfo_height()
+                visivel_topo = lista_canvas.canvasy(0)
+                visivel_base = visivel_topo + lista_canvas.winfo_height()
+                if topo < visivel_topo:
+                    lista_canvas.yview_moveto(max(0.0, topo / total))
+                elif base > visivel_base:
+                    lista_canvas.yview_moveto(
+                        max(0.0, (base - lista_canvas.winfo_height()) / total))
+            except tk.TclError:
+                pass
+
+        def _selecionar_item(iid: str | None, ver: bool = False) -> None:
+            if not iid or iid not in _cards:
+                return
+            _definir_selecao({iid})
+            _ancora["id"] = iid
+            _foco["id"] = iid
+            if ver:
+                _ver_item(iid)
+
+        def _atualizar_layout_canvas(event=None) -> None:
+            try:
+                largura = max(1, lista_canvas.winfo_width())
+                lista_canvas.itemconfigure(_canvas_window, width=largura)
+                wrap = max(180, largura - 230)
+                for dados in _cards.values():
+                    dados["titulo"].configure(wraplength=wrap)
+                    url = dados.get("url")
+                    if url is not None:
+                        url.configure(wraplength=wrap)
+                lista_canvas.configure(
+                    scrollregion=lista_canvas.bbox('all'))
+            except tk.TclError:
+                pass
+
+        lista_canvas.bind('<Configure>', _atualizar_layout_canvas)
+        cards_host.bind(
+            '<Configure>',
+            lambda _e: lista_canvas.configure(
+                scrollregion=lista_canvas.bbox('all')))
+
+        def _rolar_lista(event):
+            delta = getattr(event, 'delta', 0)
+            if getattr(event, 'num', None) == 4 or delta > 0:
+                unidades = -3
+            elif getattr(event, 'num', None) == 5 or delta < 0:
+                unidades = 3
+            else:
+                return None
+            try:
+                lista_canvas.yview_scroll(unidades, 'units')
+            except tk.TclError:
+                pass
+            return "break"
+
+        def _ligar_rolagem(widget) -> None:
+            widget.bind('<MouseWheel>', _rolar_lista)
+            widget.bind('<Button-4>', _rolar_lista)
+            widget.bind('<Button-5>', _rolar_lista)
+
+        _ligar_rolagem(lista_canvas)
+        _ligar_rolagem(cards_host)
+
+        btn_cartoes = tk.Button(
+            serv_frame, text="🗂️ Cartões", font=("Arial", 10, "bold"),
+            bg=COR_SELECAO, fg='white', activebackground='#8b5cf6',
+            activeforeground='white', cursor='hand2', padx=10, pady=3)
+        btn_cartoes.pack(side='right', padx=8)
+
+        def _atualizar_botao_cartoes() -> None:
+            if cartoes_ativo["on"]:
+                btn_cartoes.config(text="🗂️ Cartões", bg=COR_SELECAO,
+                                   fg='white')
+            else:
+                btn_cartoes.config(text="🗂️ Sem caixas", bg='#21262d',
+                                   fg=COR_DESTAQUE)
+
+        def _alternar_cartoes() -> None:
+            cartoes_ativo["on"] = not cartoes_ativo["on"]
+            _atualizar_botao_cartoes()
+            _carregar_itens()
+
+        btn_cartoes.config(command=_alternar_cartoes)
+        _atualizar_botao_cartoes()
 
         # Escolha do operador na lista de itens: vale UMA única vez no
         # próximo clique em "Executar Serviço". Só é registrada por gestos
@@ -426,11 +568,7 @@ class JanelaOrdemServicoMixin:
                         _textos_base[iid] = texto
                         if _contagem["iid"] == iid:
                             continue
-                        try:
-                            if tree.exists(iid):
-                                tree.set(iid, "Duração", texto)
-                        except tk.TclError:
-                            pass
+                        _definir_duracao_card(iid, texto)
 
                 try:
                     self.root.after(0, _aplicar)
@@ -441,12 +579,8 @@ class JanelaOrdemServicoMixin:
                              name="navepro-duracao-item").start()
 
         # ── Indicador animado de inserção (drag & drop) ──
-        _cor_ind = "#58a6ff"
-        _cor_ind_brilho = "#79c0ff"
-        _cor_ind_fundo = "#1f6feb"
         _ind: dict[str, object] = {
-            "glow": None, "line": None, "dot": None, "dot_oval": None,
-            "anim": None, "visivel": False, "fase": False}
+            "line": None, "anim": None, "visivel": False, "fase": False}
 
         def _pulsar_indicador():
             _ind["anim"] = None
@@ -456,16 +590,7 @@ class JanelaOrdemServicoMixin:
             fase = not bool(_ind.get("fase"))
             _ind["fase"] = fase
             try:
-                line.configure(bg=_cor_ind_brilho if fase else _cor_ind)
-                dot = _ind.get("dot")
-                oval = _ind.get("dot_oval")
-                if dot is not None and oval is not None:
-                    if fase:
-                        dot.coords(oval, 4, 4, 14, 14)
-                        dot.itemconfigure(oval, fill=_cor_ind_brilho)
-                    else:
-                        dot.coords(oval, 6, 6, 12, 12)
-                        dot.itemconfigure(oval, fill=_cor_ind_fundo)
+                line.configure(bg=COR_IND_BRILHO if fase else COR_IND)
                 _ind["anim"] = janela.after(280, _pulsar_indicador)
             except tk.TclError:
                 return
@@ -473,27 +598,14 @@ class JanelaOrdemServicoMixin:
         def _mostrar_indicador(y: int) -> None:
             if _ind.get("line") is None:
                 try:
-                    _ind["glow"] = tk.Frame(tree, bg=_cor_ind_fundo, height=9)
-                    _ind["line"] = tk.Frame(tree, bg=_cor_ind, height=3)
-                    dot = tk.Canvas(tree, width=18, height=18,
-                                    highlightthickness=0, bd=0)
-                    _ind["dot"] = dot
-                    _ind["dot_oval"] = dot.create_oval(
-                        6, 6, 12, 12, outline=_cor_ind,
-                        fill=_cor_ind_fundo, width=2)
+                    _ind["line"] = tk.Frame(cards_host, bg=COR_IND, height=3)
                 except tk.TclError:
                     return
             _ind["visivel"] = True
-            y = max(0, int(y))
             try:
-                fundo = ttk.Style().lookup("Treeview", "background") or "#21262d"
-                _ind["dot"].configure(bg=fundo)
-                _ind["glow"].place(x=0, y=max(0, y - 3), relwidth=1, height=9)
-                _ind["line"].place(x=0, y=y, relwidth=1, height=3)
-                _ind["dot"].place(x=2, y=max(0, y - 8), width=18, height=18)
-                _ind["glow"].lift()
+                _ind["line"].place(x=4, y=max(0, int(y) - 1),
+                                   relwidth=1, height=3)
                 _ind["line"].lift()
-                _ind["dot"].lift()
             except tk.TclError:
                 return
             if _ind.get("anim") is None:
@@ -508,85 +620,101 @@ class JanelaOrdemServicoMixin:
                 except tk.TclError:
                     pass
                 _ind["anim"] = None
-            for chave in ("glow", "line", "dot"):
-                widget = _ind.get(chave)
-                if widget is not None:
-                    try:
-                        widget.place_forget()
-                    except tk.TclError:
-                        pass
+            line = _ind.get("line")
+            if line is not None:
+                try:
+                    line.place_forget()
+                except tk.TclError:
+                    pass
 
-        # ── Drag & drop para reordenar itens dentro da tree ──
+        # ── Arrastar e soltar para reordenar os cartões ──
         _drag_state: dict[str, object] = {
             "origem": None, "press_y": None, "dragging": False, "pos": None}
 
         def _calcular_posicao(y: int):
-            """Devolve (posição de inserção, y da linha, iid alvo) ou None."""
-            linhas = list(tree.get_children())
-            if not linhas:
+            """Devolve (posição de inserção, y da linha) para o y informado."""
+            if not _ordem:
                 return None
-            alvo = tree.identify_row(y)
-            if alvo:
-                bbox = tree.bbox(alvo)
-                if not bbox:
-                    return None
-                _x, topo, _w, altura = bbox
-                indice = linhas.index(alvo)
+            pos = len(_ordem)
+            linha_y = None
+            for idx, iid in enumerate(_ordem):
+                dados = _cards.get(iid)
+                if dados is None:
+                    continue
+                frame = dados["frame"]
+                try:
+                    topo = frame.winfo_y()
+                    altura = frame.winfo_height()
+                except tk.TclError:
+                    continue
                 if y < topo + altura / 2:
-                    return indice, topo, alvo
-                return indice + 1, topo + altura - 1, alvo
-            bbox_primeiro = tree.bbox(linhas[0])
-            bbox_ultimo = tree.bbox(linhas[-1])
-            if not bbox_primeiro or not bbox_ultimo:
+                    return idx, topo
+                linha_y = topo + altura
+            if linha_y is None:
                 return None
-            if y < bbox_primeiro[1]:
-                return 0, bbox_primeiro[1], None
-            if y > bbox_ultimo[1] + bbox_ultimo[3]:
-                return len(linhas), bbox_ultimo[1] + bbox_ultimo[3] - 1, None
-            return None
+            return pos, linha_y
 
-        def _on_tree_button_press(event):
-            if tree.identify_region(event.x, event.y) in ("heading", "separator"):
-                return
-            item = tree.identify_row(event.y)
-            if not item:
-                return
-            _registrar_escolha(item)
-            _drag_state.update(origem=item, press_y=event.y,
+        def _on_card_button_press(event, iid):
+            _fechar_menu_contexto()
+            _registrar_escolha(iid)
+            _foco["id"] = iid
+            ctrl = bool(event.state & 0x4)
+            shift = bool(event.state & 0x1)
+            if shift and _ancora["id"] in _ordem and iid in _ordem:
+                idx_a = _ordem.index(_ancora["id"])
+                idx_b = _ordem.index(iid)
+                ini, fim = sorted((idx_a, idx_b))
+                _definir_selecao(set(_ordem[ini:fim + 1]))
+            elif ctrl:
+                novos = set(_selecionados)
+                if iid in novos:
+                    novos.discard(iid)
+                else:
+                    novos.add(iid)
+                _definir_selecao(novos)
+                _ancora["id"] = iid
+            else:
+                _definir_selecao({iid})
+                _ancora["id"] = iid
+            _drag_state.update(origem=iid, press_y=event.y_root,
                                dragging=False, pos=None)
+            return "break"
 
-        def _on_tree_motion(event):
+        def _on_card_motion(event):
             origem = _drag_state.get("origem")
             if not origem:
-                return
+                return None
             press_y = _drag_state.get("press_y")
-            if press_y is not None and not _drag_state.get("dragging"):
-                if abs(event.y - press_y) < 5:
-                    return
+            if not _drag_state.get("dragging"):
+                if press_y is None or abs(event.y_root - press_y) < 6:
+                    return None
                 _drag_state["dragging"] = True
                 try:
-                    tree.configure(cursor="fleur")
+                    lista_canvas.configure(cursor="fleur")
                 except tk.TclError:
                     pass
-            if tree.identify_region(event.x, event.y) == "heading":
-                _drag_state["pos"] = None
-                _esconder_indicador()
-                return
-            alvo = _calcular_posicao(event.y)
+            try:
+                y = event.y_root - cards_host.winfo_rooty()
+            except tk.TclError:
+                return None
+            alvo = _calcular_posicao(y)
             if alvo is None:
                 _drag_state["pos"] = None
                 _esconder_indicador()
-                return
-            pos, linha_y, _alvo = alvo
-            _drag_state["pos"] = pos
-            _mostrar_indicador(linha_y)
+            else:
+                pos, linha_y = alvo
+                _drag_state["pos"] = pos
+                _mostrar_indicador(linha_y)
             try:
-                if event.y < 28:
-                    tree.yview_scroll(-1, "units")
-                elif event.y > tree.winfo_height() - 28:
-                    tree.yview_scroll(1, "units")
+                topo_tela = lista_canvas.winfo_rooty()
+                altura_tela = lista_canvas.winfo_height()
+                if event.y_root < topo_tela + 30:
+                    lista_canvas.yview_scroll(-1, "units")
+                elif event.y_root > topo_tela + altura_tela - 30:
+                    lista_canvas.yview_scroll(1, "units")
             except tk.TclError:
                 pass
+            return "break"
 
         def _reordenar_com_posicao(serv: dict, origem: str, pos: int | None):
             if pos is None:
@@ -606,7 +734,7 @@ class JanelaOrdemServicoMixin:
             novo.insert(pos, item)
             return novo
 
-        def _on_tree_button_release(event):
+        def _on_card_button_release(event):
             origem = _drag_state.get("origem")
             pos = _drag_state.get("pos")
             arrastou = bool(_drag_state.get("dragging"))
@@ -614,48 +742,72 @@ class JanelaOrdemServicoMixin:
                                dragging=False, pos=None)
             _esconder_indicador()
             try:
-                tree.configure(cursor="")
+                lista_canvas.configure(cursor="")
             except tk.TclError:
                 pass
             if not origem or not arrastou:
-                return
+                return "break"
             serv = _servico_atual()
             if not serv:
-                return
+                return "break"
             novo = _reordenar_com_posicao(serv, str(origem), pos)
             if novo is None:
-                return
+                return "break"
             itens_antigos = serv.get("itens")
             serv["itens"] = novo
             if not _salvar_servicos_json(dados):
                 serv["itens"] = itens_antigos
                 log.warning("Não foi possível salvar a reordenação por arrastar.")
-                return
+                return "break"
             _carregar_itens()
-            if tree.exists(str(origem)):
-                tree.selection_set(str(origem))
-                tree.focus(str(origem))
-                tree.see(str(origem))
+            _selecionar_item(str(origem), ver=True)
+            return "break"
 
-        tree.bind("<ButtonPress-1>", _on_tree_button_press)
-        tree.bind("<B1-Motion>", _on_tree_motion)
-        tree.bind("<ButtonRelease-1>", _on_tree_button_release)
+        def _on_card_leave(_event=None):
+            if _drag_state.get("dragging"):
+                _drag_state["pos"] = None
+                _esconder_indicador()
 
-        def _on_tree_leave(_event=None):
-            _drag_state["pos"] = None
-            _esconder_indicador()
+        janela.bind("<Escape>", _on_card_leave, add="+")
 
-        tree.bind("<Leave>", _on_tree_leave)
-        janela.bind("<Escape>", _on_tree_leave, add="+")
+        def _on_card_double_click(event, iid):
+            _definir_selecao({iid})
+            _ancora["id"] = iid
+            _foco["id"] = iid
+            serv = _servico_atual()
+            if not serv:
+                return "break"
+            it = next((x for x in (serv.get("itens") or [])
+                       if str(x.get("id")) == iid), None)
+            if it is not None:
+                _abrir_editor_item(it)
+            return "break"
 
-        def _on_tree_double_click(event):
-            if tree.identify_region(event.x, event.y) == "heading":
-                return
-            if not tree.identify_row(event.y):
-                return
-            _editar_item_selecionado()
+        def _on_card_button_right(event, iid):
+            _fechar_menu_contexto()
+            _registrar_escolha(iid)
+            if iid not in _selecionados:
+                _definir_selecao({iid})
+                _ancora["id"] = iid
+            _foco["id"] = iid
+            menu_ctx = tk.Menu(janela, tearoff=0, bg='#21262d', fg='#c9d1d9',
+                               activebackground='#6e40c9',
+                               activeforeground='#ffffff', font=("Arial", 10))
+            menu_ctx.add_command(label="🗑️ Apagar Item(ns) Selecionado(s)",
+                                 command=_apagar_item_contexto)
+            _menu_ctx_aberto["menu"] = menu_ctx
+            menu_ctx.tk_popup(event.x_root, event.y_root, 0)
+            return "break"
 
-        tree.bind("<Double-1>", _on_tree_double_click)
+        def _clique_vazio(event=None):
+            if _drag_state.get("dragging"):
+                return None
+            _definir_selecao(set())
+            _ancora["id"] = None
+            return None
+
+        lista_canvas.bind("<Button-1>", _clique_vazio)
+        cards_host.bind("<Button-1>", _clique_vazio)
 
         # ── Menu de contexto (clique direito): apagar item ──
         _menu_ctx_aberto = {"menu": None}
@@ -671,51 +823,48 @@ class JanelaOrdemServicoMixin:
                     pass
 
         def _apagar_item_contexto():
+            """Apaga um ou vários itens selecionados na lista, com confirmação."""
             _fechar_menu_contexto()
-            sel = tree.selection()
+            sel = _ids_selecionados()
             if not sel:
                 return
             serv = _servico_atual()
             if not serv:
                 return
-            item_id = int(sel[0])
-            it = next((x for x in (serv.get("itens") or [])
-                       if x.get("id") == item_id), None)
-            if it is None:
+            ids_ordenados = [int(iid) for iid in sel if str(iid).isdigit()]
+            itens_por_id = {x.get("id"): x for x in (serv.get("itens") or [])}
+            alvos = [itens_por_id[i] for i in ids_ordenados
+                     if i in itens_por_id]
+            if not alvos:
                 return
-            titulo = (it.get("titulo_custom") or "").strip() or f"Item {item_id}"
+            titulos = [
+                (it.get("titulo_custom") or "").strip()
+                or f"Item {it.get('id')}" for it in alvos]
+            if len(alvos) == 1:
+                mensagem = f'Remover o item "{titulos[0]}"?'
+            else:
+                resumo = "\n".join(f"• {t}" for t in titulos[:10])
+                if len(titulos) > 10:
+                    resumo += f"\n… e mais {len(titulos) - 10}"
+                mensagem = (f"Remover os {len(alvos)} itens selecionados?\n\n"
+                            f"{resumo}")
             if not tkinter.messagebox.askyesno(
-                    "Confirmar", f"Remover o item \"{titulo}\"?", parent=janela):
+                    "Confirmar", mensagem, parent=janela):
                 return
-            serv["itens"] = [x for x in serv.get("itens", [])
-                             if x.get("id") != item_id]
+            itens_antigos = serv.get("itens")
+            ids_remover = {it.get("id") for it in alvos}
+            serv["itens"] = [x for x in (serv.get("itens") or [])
+                             if x.get("id") not in ids_remover]
             if not _salvar_servicos_json(dados):
+                serv["itens"] = itens_antigos
                 tkinter.messagebox.showwarning(
                     "⚠️", "Não foi possível salvar a remoção em servicos.json.",
                     parent=janela)
                 return
+            # A escolha do operador não pode apontar para um item removido.
+            if _item_escolhido.get("id") in ids_remover:
+                _item_escolhido["id"] = None
             _carregar_itens()
-
-        def _menu_contexto_item(event):
-            _fechar_menu_contexto()
-            if tree.identify_region(event.x, event.y) in ("heading", "separator"):
-                return "break"
-            item_id = tree.identify_row(event.y)
-            if not item_id:
-                return "break"
-            _registrar_escolha(item_id)
-            tree.selection_set(item_id)
-            tree.focus(item_id)
-            menu_ctx = tk.Menu(janela, tearoff=0, bg='#21262d', fg='#c9d1d9',
-                               activebackground='#6e40c9',
-                               activeforeground='#ffffff', font=("Arial", 10))
-            menu_ctx.add_command(label="🗑️ Apagar Item",
-                                 command=_apagar_item_contexto)
-            _menu_ctx_aberto["menu"] = menu_ctx
-            menu_ctx.tk_popup(event.x_root, event.y_root, 0)
-            return "break"
-
-        tree.bind("<Button-3>", _menu_contexto_item)
 
         # Clicar em qualquer outro lugar da janela (ou rolar/teclar Esc) fecha
         # o menu de contexto se ele estiver aberto. O bind na janela propaga
@@ -725,49 +874,131 @@ class JanelaOrdemServicoMixin:
             janela.bind(_evento, _fechar_menu_contexto)
         janela.bind("<Escape>", _fechar_menu_contexto)
 
+        def _criar_card(it: dict, indice: int) -> None:
+            """Monta um cartão (ou linha) para um item da ordem de serviço."""
+            tipo = (it.get("tipo") or "slide").strip().lower() or "slide"
+            tipo_emoji = {"hino": "📖", "versiculo": "✝️", "video": "🎬",
+                          "audio": "🎵", "slide": "📄", "anuncio": "📢",
+                          "sermao": "🎤", "youtube": "▶️"}.get(tipo, "📁")
+            iid = str(it.get("id"))
+            caminho = _caminho_item(it)
+            texto_duracao = _texto_duracao_item(it, caminho)
+            texto_titulo = _texto_titulo_item(it, indice)
+            if "\n" in texto_titulo:
+                titulo, url = texto_titulo.split("\n", 1)
+            else:
+                titulo, url = texto_titulo, ""
+
+            ativo = cartoes_ativo["on"]
+            fundo = COR_CARD if ativo else COR_FUNDO_LISTA
+            card = tk.Frame(cards_host, bg=fundo, bd=0,
+                            highlightthickness=1 if ativo else 0,
+                            highlightbackground=COR_BORDA,
+                            highlightcolor=COR_BORDA)
+            card.pack(fill='x', padx=8, pady=4 if ativo else 2)
+            card.columnconfigure(2, weight=1)
+
+            lbl_num = tk.Label(card, text=str(indice), bg=fundo,
+                               fg=COR_DESTAQUE, width=3, anchor='center',
+                               font=("Arial", 11, "bold"))
+            lbl_num.grid(row=0, column=0, sticky='nw',
+                         padx=(10, 4), pady=(8, 8))
+
+            lbl_tipo = tk.Label(card, text=f"{tipo_emoji} {tipo.title()}",
+                                bg=fundo, fg=COR_TEXTO_FRACO, anchor='w',
+                                font=("Arial", 9, "bold"))
+            lbl_tipo.grid(row=0, column=1, sticky='nw',
+                          padx=(0, 10), pady=(9, 8))
+
+            titulo_frame = tk.Frame(card, bg=fundo)
+            titulo_frame.grid(row=0, column=2, sticky='ew', pady=(6, 6))
+            titulo_frame.columnconfigure(0, weight=1)
+            lbl_titulo = tk.Label(
+                titulo_frame, text=titulo, bg=fundo, fg=COR_TITULO,
+                anchor='w', justify='left', wraplength=380,
+                font=("Arial", 11, "bold" if ativo else "normal"))
+            lbl_titulo.grid(row=0, column=0, sticky='ew')
+            lbl_url = None
+            if url:
+                lbl_url = tk.Label(titulo_frame, text=url, bg=fundo,
+                                   fg='#58a6ff', anchor='w', justify='left',
+                                   wraplength=380, font=("Arial", 9))
+                lbl_url.grid(row=1, column=0, sticky='ew', pady=(2, 0))
+
+            lbl_dur = tk.Label(card, text=texto_duracao, bg=fundo,
+                               fg=COR_TEXTO, width=12, anchor='e',
+                               font=("Arial", 10))
+            lbl_dur.grid(row=0, column=3, sticky='ne',
+                         padx=(8, 12), pady=(9, 8))
+
+            fundos = [(lbl_num, COR_DESTAQUE),
+                      (lbl_tipo, COR_TEXTO_FRACO),
+                      (lbl_titulo, COR_TITULO),
+                      (lbl_dur, COR_TEXTO)]
+            if lbl_url is not None:
+                fundos.append((lbl_url, '#58a6ff'))
+            _cards[iid] = {
+                "frame": card,
+                "frames": [card, titulo_frame],
+                "titulo": lbl_titulo,
+                "url": lbl_url,
+                "duracao": lbl_dur,
+                "fundos": fundos,
+            }
+            _ordem.append(iid)
+            _textos_base[iid] = texto_duracao
+            if caminho:
+                _linhas_path[iid] = caminho
+                if _eh_url_youtube(caminho):
+                    # Só consulta a rede se o item antigo ainda não tem a
+                    # duração capturada do YouTube.
+                    if not (it.get("duracao_estimada_segundos") or 0):
+                        _pedir_duracao(caminho)
+                elif _extensao_midia(caminho) and os.path.isfile(caminho):
+                    _pedir_duracao(caminho)
+
+            widgets = [card, lbl_num, lbl_tipo, titulo_frame, lbl_titulo,
+                       lbl_dur]
+            if lbl_url is not None:
+                widgets.append(lbl_url)
+            for widget in widgets:
+                widget.bind("<ButtonPress-1>",
+                            lambda e, i=iid: _on_card_button_press(e, i))
+                widget.bind("<B1-Motion>", _on_card_motion)
+                widget.bind("<ButtonRelease-1>", _on_card_button_release)
+                widget.bind("<Double-1>",
+                            lambda e, i=iid: _on_card_double_click(e, i))
+                widget.bind("<Button-3>",
+                            lambda e, i=iid: _on_card_button_right(e, i))
+                _ligar_rolagem(widget)
+
         def _carregar_itens():
-            for item in tree.get_children():
-                tree.delete(item)
+            for widget in cards_host.winfo_children():
+                if widget is _ind.get("line"):
+                    continue
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
+            _cards.clear()
+            _ordem.clear()
             _linhas_path.clear()
             _textos_base.clear()
             _contagem["iid"] = None
             _esconder_indicador()
             serv = _servico_atual()
             if not serv:
-                return
-            itens = list(serv.get("itens") or [])
-            # A URL do YouTube ocupa a segunda linha do título. Só nesse
-            # caso as linhas ficam mais altas; serviços sem YouTube mantêm
-            # o espaçamento compacto.
-            tem_youtube = any((it.get("tipo") or "").strip().lower() == "youtube"
-                              for it in itens)
-            try:
-                style.configure("OrdemServico.Treeview",
-                                rowheight=48 if tem_youtube else 32)
-            except tk.TclError:
-                pass
-            for i, it in enumerate(itens):
-                tipo = it.get("tipo") or "slide"
-                tipo_emoji = {"hino": "📖", "versiculo": "✝️", "video": "🎬",
-                              "audio": "🎵", "slide": "📄", "anuncio": "📢",
-                              "sermao": "🎤", "youtube": "▶️"}.get(tipo, "📁")
-                iid = str(it.get("id"))
-                caminho = _caminho_item(it)
-                texto = _texto_duracao_item(it, caminho)
-                tree.insert("", tk.END, iid=iid,
-                            values=(i + 1, f"{tipo_emoji} {tipo.title()}",
-                                    _texto_titulo_item(it, i + 1),
-                                    texto))
-                _textos_base[iid] = texto
-                if caminho:
-                    _linhas_path[iid] = caminho
-                    if _eh_url_youtube(caminho):
-                        # Só consulta a rede se o item antigo ainda não tem a
-                        # duração capturada do YouTube.
-                        if not (it.get("duracao_estimada_segundos") or 0):
-                            _pedir_duracao(caminho)
-                    elif _extensao_midia(caminho) and os.path.isfile(caminho):
-                        _pedir_duracao(caminho)
+                _definir_selecao(set())
+            else:
+                for i, it in enumerate(list(serv.get("itens") or [])):
+                    _criar_card(it, i + 1)
+                _selecionados.intersection_update(_cards)
+                if _ancora["id"] not in _cards:
+                    _ancora["id"] = None
+                if _foco["id"] not in _cards:
+                    _foco["id"] = None
+                _atualizar_selecao_visual()
+            _atualizar_layout_canvas()
 
         def _item_em_reproducao():
             """Item da lista que está tocando agora (ou None)."""
@@ -795,11 +1026,7 @@ class JanelaOrdemServicoMixin:
             texto = _textos_base.get(iid)
             if texto is None:
                 return
-            try:
-                if tree.exists(iid):
-                    tree.set(iid, "Duração", texto)
-            except tk.TclError:
-                pass
+            _definir_duracao_card(iid, texto)
 
         def _atualizar_contagem() -> None:
             player = getattr(self, "player", None)
@@ -809,7 +1036,7 @@ class JanelaOrdemServicoMixin:
                 _contagem["iid"] = None
                 return
             _item, iid, caminho = alvo
-            if not tree.exists(iid):
+            if not _card_existe(iid):
                 _contagem["iid"] = None
                 return
             duracao = getattr(player, "duracao_total", None)
@@ -830,11 +1057,7 @@ class JanelaOrdemServicoMixin:
                     if path == caminho:
                         _textos_base[outro_iid] = texto
                         if outro_iid != iid:
-                            try:
-                                if tree.exists(outro_iid):
-                                    tree.set(outro_iid, "Duração", texto)
-                            except tk.TclError:
-                                pass
+                            _definir_duracao_card(outro_iid, texto)
             if _contagem["iid"] and _contagem["iid"] != iid:
                 _restaurar_duracao(_contagem["iid"])
             restante = float(duracao)
@@ -844,11 +1067,8 @@ class JanelaOrdemServicoMixin:
                 pass
             restante = max(0.0, restante)
             icone = "⏸" if pausado else "⏳"
-            try:
-                tree.set(iid, "Duração",
-                         f"{icone} {_formatar_duracao_segundos(restante)}")
-            except tk.TclError:
-                return
+            _definir_duracao_card(
+                iid, f"{icone} {_formatar_duracao_segundos(restante)}")
             _contagem["iid"] = iid
 
         def _tick_contagem():
@@ -1145,6 +1365,16 @@ class JanelaOrdemServicoMixin:
                 command=lambda: _copiar_previa(preview_hino))
             btn_copia_hino.pack(anchor='e', pady=(0, 2))
 
+            def _mostrar_preview_hino(texto: str) -> None:
+                """Troca o texto do preview do hino sem depender do botão."""
+                try:
+                    preview_hino.config(state='normal')
+                    preview_hino.delete('1.0', tk.END)
+                    preview_hino.insert(tk.END, texto)
+                    preview_hino.config(state='disabled')
+                except tk.TclError:
+                    pass
+
             def _ver_letra_hino():
                 """Resolve o nº/termo digitado → letra do hino e mostra preview."""
                 res = _resolver_hino()
@@ -1152,10 +1382,7 @@ class JanelaOrdemServicoMixin:
                     tkinter.messagebox.showwarning("Hino", res[1], parent=add_win)
                     return
                 _, _, letra_snap, ref_display, _rid = res
-                preview_hino.config(state='normal')
-                preview_hino.delete('1.0', tk.END)
-                preview_hino.insert(tk.END, letra_snap)
-                preview_hino.config(state='disabled')
+                _mostrar_preview_hino(letra_snap)
 
             def _resolver_hino():
                 """Resolve hino por nº/termo.
@@ -1178,6 +1405,48 @@ class JanelaOrdemServicoMixin:
                 ref_disp = ref_hino.get("titulo", "") or "Item (Hino)"
                 return (True, "", letra_snap, ref_disp, rid)
 
+            # Prevê a letra enquanto o operador digita o número, sem exigir o
+            # clique em "🔍 Ver letra". O timer evita uma consulta por tecla.
+            _estado_prev_hino = {"timer": None}
+
+            def _atualizar_preview_hino(*_args) -> None:
+                termo = hino_num_var.get().strip()
+                if not termo:
+                    _mostrar_preview_hino("")
+                    return
+                rows_match = _buscar_hino_por_termo(termo)
+                if not rows_match:
+                    _mostrar_preview_hino(
+                        f'Nenhum hino encontrado para: "{termo}".')
+                    return
+                _mostrar_preview_hino(
+                    rows_match[0].get("letra_completa", ""))
+
+            def _confirmar_preview_hino() -> None:
+                _estado_prev_hino["timer"] = None
+                try:
+                    if not add_win.winfo_exists():
+                        return
+                except tk.TclError:
+                    return
+                _atualizar_preview_hino()
+
+            def _agendar_preview_hino(*_args) -> None:
+                timer = _estado_prev_hino.get("timer")
+                if timer is not None:
+                    try:
+                        add_win.after_cancel(timer)
+                    except tk.TclError:
+                        pass
+                    _estado_prev_hino["timer"] = None
+                try:
+                    _estado_prev_hino["timer"] = add_win.after(
+                        300, _confirmar_preview_hino)
+                except tk.TclError:
+                    pass
+
+            hino_num_var.trace_add("write", _agendar_preview_hino)
+
             # Preenche o painel ao editar um hino existente
             if item_edit and (item_edit.get("tipo") or "").lower() == "hino":
                 _hid_ed = item_edit.get("referencia_id")
@@ -1188,12 +1457,139 @@ class JanelaOrdemServicoMixin:
                         _hh = _rh_ed[0]
                         letra_snap = _hh.get("letra_completa", "") or ""
                 if letra_snap:
-                    preview_hino.config(state='normal')
-                    preview_hino.delete('1.0', tk.END)
-                    preview_hino.insert(tk.END, letra_snap)
-                    preview_hino.config(state='disabled')
+                    _mostrar_preview_hino(letra_snap)
 
             hino_frame.pack_forget()
+
+            # ── Painel de vídeo/música (tipos "video" e "audio") ──
+            # Espelha o painel do hino: o operador digita o Nº/nome e o
+            # resultado (número + nome da mídia) aparece imediatamente no
+            # preview, sem precisar clicar em botão. Salva referencia_id
+            # (id da tabela midia), como a busca pelo campo "Buscar".
+            midia_num_var = tk.StringVar()
+            midia_frame = tk.Frame(add_main, bg='#0d1117')
+            tk.Label(midia_frame, text="Buscar vídeo/música por número:",
+                     fg='#f0c040', bg='#0d1117',
+                     font=("Arial", 11, "bold")).pack(anchor='w', pady=(6, 0))
+
+            _linha_midia_num = tk.Frame(midia_frame, bg='#0d1117')
+            _linha_midia_num.pack(fill='x', pady=2)
+            tk.Label(_linha_midia_num, text="Nº ou nome:", fg='#c9d1d9',
+                     bg='#0d1117', font=("Arial", 10)).pack(side='left')
+            entry_midia_num = tk.Entry(_linha_midia_num,
+                                       textvariable=midia_num_var,
+                                       width=8, font=("Arial", 11), bg='#21262d',
+                                       fg='#f0c040', insertbackground='#f0c040',
+                                       bd=0, highlightthickness=0)
+            entry_midia_num.pack(side='left', padx=(4, 8), ipady=2)
+            tk.Label(_linha_midia_num, text="(ou trecho do nome)",
+                     fg='#8b949e', bg='#0d1117',
+                     font=("Arial", 9)).pack(side='left')
+
+            preview_midia = tk.Text(midia_frame, height=3, wrap='word',
+                                    font=("Arial", 9), bg='#161b22', fg='#c9d1d9',
+                                    relief='flat', state='disabled',
+                                    exportselection=False)
+            preview_midia.pack(fill='x', pady=4)
+
+            btn_copia_midia = tk.Button(
+                midia_frame, text="📋 Copiar", font=("Arial", 9, "bold"),
+                bg='#21262d', fg='#f0c040', activebackground='#30363d',
+                cursor='hand2', padx=10, pady=1,
+                command=lambda: _copiar_previa(preview_midia))
+            btn_copia_midia.pack(anchor='e', pady=(0, 2))
+
+            def _rotulo_midia(registro: dict) -> str:
+                """Número + nome da mídia, como aparece na busca remota."""
+                nome = (registro.get("nome_exibicao")
+                        or registro.get("nome_original")
+                        or os.path.basename(registro.get("caminho_arquivo") or ""))
+                if _numero_do_titulo(nome) is not None:
+                    return nome
+                numero = registro.get("id")
+                return f"{numero}. {nome}" if numero is not None else nome
+
+            def _mostrar_preview_midia(texto: str) -> None:
+                try:
+                    preview_midia.config(state='normal')
+                    preview_midia.delete('1.0', tk.END)
+                    preview_midia.insert(tk.END, texto)
+                    preview_midia.config(state='disabled')
+                except tk.TclError:
+                    pass
+
+            def _resolver_midia():
+                """Resolve o nº/nome digitado → mídia do acervo.
+
+                Retorna (ok, msg_erro, ref_display, ref_id).
+                """
+                termo = midia_num_var.get().strip()
+                if not termo:
+                    return (False,
+                            "Informe o número ou o nome do vídeo/música.",
+                            "", None)
+                tipo_busca = tipo_var.get()
+                if tipo_busca not in ("video", "audio"):
+                    tipo_busca = "video"
+                rows_match = _buscar_midia_por_termo(termo, tipo=tipo_busca)
+                if not rows_match:
+                    return (False,
+                            f'Nenhum vídeo/música encontrado para: "{termo}".',
+                            "", None)
+                ref_midia = rows_match[0]
+                return (True, "", _rotulo_midia(ref_midia),
+                        ref_midia.get("id"))
+
+            def _atualizar_preview_midia(*_args) -> None:
+                termo = midia_num_var.get().strip()
+                if not termo:
+                    _mostrar_preview_midia("")
+                    return
+                res = _resolver_midia()
+                _mostrar_preview_midia(res[2] if res[0] else res[1])
+
+            _estado_prev_midia = {"timer": None}
+
+            def _confirmar_preview_midia() -> None:
+                _estado_prev_midia["timer"] = None
+                try:
+                    if not add_win.winfo_exists():
+                        return
+                except tk.TclError:
+                    return
+                _atualizar_preview_midia()
+
+            def _agendar_preview_midia(*_args) -> None:
+                timer = _estado_prev_midia.get("timer")
+                if timer is not None:
+                    try:
+                        add_win.after_cancel(timer)
+                    except tk.TclError:
+                        pass
+                    _estado_prev_midia["timer"] = None
+                try:
+                    _estado_prev_midia["timer"] = add_win.after(
+                        300, _confirmar_preview_midia)
+                except tk.TclError:
+                    pass
+
+            midia_num_var.trace_add("write", _agendar_preview_midia)
+
+            # Preenche o preview ao editar um vídeo/áudio existente
+            if item_edit and (item_edit.get("tipo") or "").lower() in (
+                    "video", "audio"):
+                _midia_ed = None
+                if item_edit.get("referencia_id"):
+                    _rm_ed = db_query(
+                        "SELECT * FROM midia WHERE id = ? AND ativo = 1",
+                        (item_edit.get("referencia_id"),))
+                    if _rm_ed:
+                        _midia_ed = _rm_ed[0]
+                _mostrar_preview_midia(
+                    _rotulo_midia(_midia_ed) if _midia_ed
+                    else (item_edit.get("titulo_custom") or ""))
+
+            midia_frame.pack_forget()
 
             # Preenche o painel ao editar um versículo existente
             if item_edit and (item_edit.get("tipo") or "").lower() == "versiculo":
@@ -1602,6 +1998,12 @@ class JanelaOrdemServicoMixin:
 
             def _atualizar_paineis():
                 t = tipo_var.get()
+                # A busca por número/nome precede o seletor de arquivo, como
+                # o painel do hino. Fica visível só para vídeo/áudio.
+                if t in ("video", "audio"):
+                    midia_frame.pack(fill='x', pady=(2, 0))
+                else:
+                    midia_frame.pack_forget()
                 if t in ("video", "audio", "sermao"):
                     arquivo_frame.pack(fill='x')
                 else:
@@ -1628,7 +2030,9 @@ class JanelaOrdemServicoMixin:
                 else:
                     youtube_frame.pack_forget()
                     youtube_var.set(False)
-                _aplicar_geometria("700x600" if t == "versiculo"
+                _aplicar_geometria("700x620" if t == "video"
+                                   else "700x570" if t == "audio"
+                                   else "700x600" if t == "versiculo"
                                    else "700x600" if t == "hino"
                                    else "700x510" if t == "anuncio"
                                    else "700x450")
@@ -1723,6 +2127,9 @@ class JanelaOrdemServicoMixin:
                     tipo == "anuncio" and anuncio_var.get().strip())
                 _usou_painel_hino = bool(
                     tipo == "hino" and hino_num_var.get().strip())
+                _usou_painel_midia = bool(
+                    tipo in ("video", "audio")
+                    and midia_num_var.get().strip())
 
                 # ── Resolução da referência por busca (nº ou nome) ──
                 # Se o campo "Buscar" estiver vazio, o próprio Título digitado
@@ -1763,6 +2170,15 @@ class JanelaOrdemServicoMixin:
                     if not titulo or _usou_titulo_como_busca:
                         titulo = (os.path.splitext(os.path.basename(caminho_arquivo))[0]
                                   or f"Item ({tipo.title()})")
+                elif _usou_painel_midia:
+                    res_m = _resolver_midia()
+                    if not res_m[0]:
+                        tkinter.messagebox.showwarning("Vídeo", res_m[1],
+                                                       parent=add_win)
+                        return
+                    _, _, ref_display, ref_id = res_m
+                    if not titulo or _usou_titulo_como_busca:
+                        titulo = ref_display
                 elif tipo in ("video", "audio"):
                     rows_match = _buscar_midia_por_termo_ou_id(termo, tipo=tipo)
                     if not rows_match:
@@ -1882,8 +2298,7 @@ class JanelaOrdemServicoMixin:
                         "⚠️", "Não foi possível salvar em servicos.json.", parent=add_win)
                     return
                 _carregar_itens()
-                tree.selection_set(str(novo_id))
-                tree.focus(str(novo_id))
+                _selecionar_item(str(novo_id), ver=True)
                 add_win.destroy()
 
             tk.Button(add_main, text="💾 Salvar", font=("Arial", 12, "bold"),
@@ -1891,31 +2306,39 @@ class JanelaOrdemServicoMixin:
                       command=_salvar_item, cursor='hand2', padx=20, pady=5
                       ).pack(pady=10)
 
+        def _item_focado_id() -> str | None:
+            """Item focado na lista (ou o primeiro selecionado)."""
+            foco = _foco["id"]
+            if foco in _selecionados:
+                return foco
+            sel = _ids_selecionados()
+            return sel[0] if sel else None
+
         def _editar_item_selecionado():
             serv = _servico_atual()
-            sel = tree.selection()
-            if not sel:
+            alvo = _item_focado_id()
+            if not alvo:
                 tkinter.messagebox.showwarning("Seleção", "Selecione um item.", parent=janela)
                 return
             if not serv:
                 return
             it = next((x for x in (serv.get("itens") or [])
-                       if x.get("id") == int(sel[0])), None)
+                       if str(x.get("id")) == alvo), None)
             if it is None:
                 return
             _abrir_editor_item(it)
 
         def _mover_item(direcao: int):
             """Move item para cima (-1) ou baixo (+1)."""
-            sel = tree.selection()
-            if not sel:
+            alvo = _item_focado_id()
+            if not alvo:
                 return
             serv = _servico_atual()
             if not serv:
                 return
             itens = list(serv.get("itens") or [])
             idx_atual = next((i for i, it in enumerate(itens)
-                              if it.get("id") == int(sel[0])), None)
+                              if str(it.get("id")) == alvo), None)
             if idx_atual is None:
                 return
             idx_novo = idx_atual + direcao
@@ -1928,8 +2351,7 @@ class JanelaOrdemServicoMixin:
                     "⚠️", "Não foi possível salvar a reordenação.", parent=janela)
                 return
             _carregar_itens()
-            tree.selection_set(str(itens[idx_novo].get("id")))
-            tree.focus(str(itens[idx_novo].get("id")))
+            _selecionar_item(str(itens[idx_novo].get("id")), ver=True)
 
         # Snapshot da janela principal p/ restauração após cada item do
         # serviço vive em self._snapshot_servico (criado no __init__:
@@ -1957,8 +2379,8 @@ class JanelaOrdemServicoMixin:
             _item_escolhido["id"] = None
             res = self.executar_proximo_item_servico(
                 serv, escolhido=escolhido,
-                ao_destacar=lambda it: (tree.selection_set(str(it.get('id'))),
-                                        tree.see(str(it.get('id')))))
+                ao_destacar=lambda it: _selecionar_item(
+                    str(it.get('id')), ver=True))
             if not res.get('ok'):
                 if res.get('codigo') == 'vazio':
                     tkinter.messagebox.showinfo(
@@ -1976,7 +2398,7 @@ class JanelaOrdemServicoMixin:
             bg='#1f6feb', fg='white', activebackground='#388bfd',
             command=_editar_servico, cursor='hand2', padx=12, pady=4)
         btn_excluir = tk.Button(
-            btn_frame, text="🗑️ Excluir Item", font=("Arial", 11, "bold"),
+            btn_frame, text="🗑️ Excluir Itens", font=("Arial", 11, "bold"),
             bg='#da3633', fg='white', activebackground='#f85149',
             command=_apagar_item_contexto, cursor='hand2', padx=12, pady=4)
         btn_transferir = tk.Button(

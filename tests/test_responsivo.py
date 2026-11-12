@@ -265,8 +265,9 @@ check(
     "minsize(800, 540)" in _SRC_OS,
 )
 check(
-    "OS: coluna Título acompanha a largura da janela",
-    'tree.column("Título", width=350, stretch=True)' in _SRC_OS,
+    "OS: cartões acompanham a largura da janela",
+    "lista_canvas.itemconfigure(_canvas_window, width=largura)" in _SRC_OS
+    and 'dados["titulo"].configure(wraplength=wrap)' in _SRC_OS,
 )
 check(
     "OS: mantém viva a StringVar do seletor de serviço",

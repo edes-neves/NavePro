@@ -248,8 +248,9 @@ checar("a lista busca a duração do YouTube sem baixar o vídeo",
        "_obter_info_youtube(caminho)" in _fonte_os)
 checar("na lista, a URL aparece na segunda linha do título",
        r'f"{titulo}\n{url}"' in _fonte_os)
-checar("a lista aumenta a altura das linhas quando há YouTube",
-       "rowheight=48 if tem_youtube else 32" in _fonte_os)
+checar("a lista mostra a URL do YouTube em linha própria no cartão",
+       'titulo, url = texto_titulo.split("\\n", 1)' in _fonte_os
+       and '"url": lbl_url' in _fonte_os)
 _fonte_exec = open(os.path.join(RAIZ, "navepro", "ui", "execucao_servico.py"),
                       encoding="utf-8").read()
 checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
