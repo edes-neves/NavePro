@@ -49,12 +49,30 @@ def init_db() -> None:
 
     # Banco corrompido (ou arquivo que nem é SQLite) não pode derrubar o
     # app: preserva o arquivo renomeado e recomeça, em vez de não abrir.
+    #
+    # O PRAGMA quick_check completo fica caro quando o banco tem FTS5
+    # (precisa varrer o índice de versículos). Ele só é feito quando o
+    # encerramento anterior não foi limpo; em início normal, um SELECT
+    # barato confirma que o arquivo é um SQLite legível.
+    marcador = DB_PATH + ".saudavel"
+    verificar_completo = not os.path.exists(marcador)
     try:
-        estado = cursor.execute("PRAGMA quick_check").fetchone()
-        integro = (estado is not None and estado[0] is not None
-                   and str(estado[0]).lower() == "ok")
-    except sqlite3.DatabaseError:
-        integro = False
+        os.unlink(marcador)
+    except OSError:
+        pass
+    if verificar_completo:
+        try:
+            estado = cursor.execute("PRAGMA quick_check").fetchone()
+            integro = (estado is not None and estado[0] is not None
+                       and str(estado[0]).lower() == "ok")
+        except sqlite3.DatabaseError:
+            integro = False
+    else:
+        try:
+            cursor.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+            integro = True
+        except sqlite3.DatabaseError:
+            integro = False
     if not integro:
         conn.close()
         backup = (DB_PATH + ".corrompido-"
@@ -320,6 +338,20 @@ def inicializar_banco() -> None:
         else:
             log.info(f"📦 Banco não encontrado, criando novo em {DB_PATH}")
     init_db()
+
+
+def marcar_banco_saudavel() -> None:
+    """Marca o banco como encerrado limpo.
+
+    O `init_db` apaga esse marcador ao iniciar e só roda o `quick_check`
+    completo quando ele não existe (encerramento sujo/crash). No fechamento
+    normal, o app recria o marcador para o próximo início ser rápido.
+    """
+    try:
+        with open(DB_PATH + ".saudavel", "w", encoding="utf-8"):
+            pass
+    except OSError as e:
+        log.warning(f"⚠️ Não foi possível marcar o banco como saudável: {e}")
 
 
 def criar_backup_diario() -> None:

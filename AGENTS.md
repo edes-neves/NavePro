@@ -149,6 +149,10 @@ icones/                    # PNGs dos botões (fallback; gerados por gerar_icone
   módulo em `NavePro.py`); **não** use `print` em código de produção. Nível por
   `NAVEPRO_LOG` (padrão `WARNING`), arquivo `~/.navepro/navepro.log`. Trechos
   extraídos via AST nos testes referenciam `log`: injete o stub de `tests/fixture_log.py`.
+- **Início rápido do banco:** `init_db` só roda `PRAGMA quick_check` completo
+  quando `~/.navepro/midia.db.saudavel` não existe (encerramento sujo/crash); o
+  `fechar()` recria o marcador. Com FTS5 o quick_check varre o índice inteiro
+  (centenas de ms a segundos), então não o torne incondicional.
 - **Janelas secundárias maximizáveis:** use
   `_habilitar_maximizar_janela(janela, area=self._area_monitor_operador())` de
   `navepro/core/util_tk.py`. No Linux, `transient()` faz o gerenciador tratar a

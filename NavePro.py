@@ -62,6 +62,7 @@ from navepro.core.inicializacao import (
     garantir_pasta_uploads,
     inicializar_banco,
     inicializar_config,
+    marcar_banco_saudavel,
 )
 from navepro.core.log import configurar_logging, get_logger
 from navepro.core.mediaplayer import MediaPlayer
@@ -2473,6 +2474,9 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                     except Exception:
                         pass
                     self.db._conn = None
+            # 5. Encerramento limpo: o próximo início pode pular o
+            #    quick_check completo do SQLite (que fica caro com FTS5).
+            marcar_banco_saudavel()
         except Exception as e:
             log.exception(f"Erro no shutdown: {e}")
         finally:

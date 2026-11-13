@@ -283,6 +283,43 @@ def _rodar() -> int:
     checar("banco recriado fica íntegro (quick_check ok)",
            _user_version(db) == versao_atual)
 
+    # ── 4e. Marcador de encerramento limpo (início rápido) ──────────
+    raiz, db, uploads = novo_db()
+    _init_db(db, uploads)
+    marcador = db + ".saudavel"
+    checar("init_db apaga o marcador de encerramento limpo",
+           not os.path.exists(marcador))
+
+    ns_m = {"DB_PATH": db, "log": log}
+    exec(compile(_extrair("marcar_banco_saudavel"),
+                 "<marcar_banco_saudavel>", "exec"), ns_m)  # noqa: S102
+    ns_m["marcar_banco_saudavel"]()
+    checar("marcar_banco_saudavel cria o marcador",
+           os.path.exists(marcador))
+
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO anuncios (titulo) VALUES ('Persistente')")
+    conn.commit()
+    conn.close()
+    _init_db(db, uploads)
+    conn = sqlite3.connect(db)
+    linha = conn.execute(
+        "SELECT titulo FROM anuncios WHERE titulo = 'Persistente'"
+    ).fetchone()
+    conn.close()
+    checar("início com marcador preserva os dados", linha == ("Persistente",))
+    checar("init_db consome o marcador para o próximo início",
+           not os.path.exists(marcador))
+
+    # ── 4f. Corrupção com marcador: a checagem barata ainda recupera ─
+    raiz, db, uploads = novo_db()
+    with open(db, "wb") as f:
+        f.write(b"isto nao e sqlite" * 100)
+    open(db + ".saudavel", "w").close()
+    _init_db(db, uploads)
+    checar("banco corrompido com marcador também é recriado",
+           esperadas <= _tabelas(db))
+
     # ── 5. `_sincronizar_uploads_midia` ─────────────────────────────
     raiz, db, uploads = novo_db()
     _init_db(db, uploads)
