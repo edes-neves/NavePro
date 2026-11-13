@@ -64,9 +64,10 @@ class JanelaOrdemServicoMixin:
         """Abre a janela de planejamento de ordem de serviço.
 
         As ordens são salvas em ~/.navepro/servicos.json (nunca importam
-        vídeo/slides). Oferece criar e editar serviços, excluir itens (botão
-        da barra ou botão direito na lista) e arrastar e soltar os itens
-        para reordená-los.
+        vídeo/slides). Oferece criar e editar serviços (o nome pode ser
+        renomeado direto na caixa "Serviço", com salvamento automático),
+        excluir serviços (com confirmação) e itens (botão da barra ou botão
+        direito na lista) e arrastar e soltar os itens para reordená-los.
         """
         _migrar_servicos_do_banco()
         _sincronizar_uploads_midia()
@@ -177,6 +178,9 @@ class JanelaOrdemServicoMixin:
             if idx >= 0 and idx < len(ids):
                 sid = ids[idx]
                 servico_selecionado_id[0] = sid
+                # Trocar o serviço na lista cancela uma edição inline em
+                # andamento (o texto digitado não pertence ao novo serviço).
+                _cancelar_renomear_sem_salvar()
                 # Fixa a escolha no servicos.json para reabrir nesta ordem.
                 if dados.get("_servico_selecionado") != sid:
                     dados["_servico_selecionado"] = sid
@@ -186,6 +190,113 @@ class JanelaOrdemServicoMixin:
                 _carregar_itens()
 
         combo_servico.bind("<<ComboboxSelected>>", _on_servico_select)
+
+        # ── Renomear o serviço direto na caixa "Serviço" ──
+        # Um clique na caixa transforma o seletor (normalmente só leitura) num
+        # campo editável com o nome do serviço. O novo nome é salvo
+        # automaticamente ao clicar em qualquer outro ponto da janela, ao
+        # pressionar Enter ou ao sair do campo (Tab). Esc cancela e restaura.
+        _renomear = {"id": None, "nome_original": ""}
+
+        def _rotulo_atual_servico() -> str:
+            serv = _servico_atual()
+            return _rotulo_servico(serv) if serv else ""
+
+        def _definir_botao_exclusao(ativo: bool) -> None:
+            """Durante a edição, "+ Novo Serviço" vira "Del Serviço" (vermelho)."""
+            try:
+                if ativo:
+                    btn_novo.configure(
+                        text="🗑️ Del Serviço", bg='#da3633',
+                        activebackground='#f85149', activeforeground='white')
+                else:
+                    btn_novo.configure(
+                        text="➕ Novo Serviço", bg='#238636',
+                        activebackground='#2ea043', activeforeground='white')
+            except (tk.TclError, NameError):
+                pass
+
+        def _restaurar_rotulo_servico() -> None:
+            try:
+                combo_servico.configure(state='readonly')
+                combo_servico.set(_rotulo_atual_servico())
+            except tk.TclError:
+                pass
+
+        def _selecionar_nome_servico() -> None:
+            if _renomear["id"] is None:
+                return
+            atual = (servico_var.get() or "").strip()
+            if atual != _renomear["nome_original"]:
+                return
+            try:
+                combo_servico.selection_range(0, 'end')
+                combo_servico.icursor('end')
+            except tk.TclError:
+                pass
+
+        def _iniciar_renomear_servico(event=None) -> None:
+            if _renomear["id"] is not None:
+                return
+            serv = _servico_atual()
+            if not serv:
+                return
+            _renomear["id"] = serv.get("id")
+            _renomear["nome_original"] = (serv.get("nome") or "").strip()
+            try:
+                combo_servico.configure(state='normal')
+                servico_var.set(serv.get("nome") or "")
+                combo_servico.focus_set()
+                combo_servico.icursor('end')
+                combo_servico.after_idle(_selecionar_nome_servico)
+            except tk.TclError:
+                pass
+            _definir_botao_exclusao(True)
+
+        def _finalizar_renomear_servico(event=None, cancelar: bool = False) -> None:
+            """Salva o nome editado (ou restaura o antigo, se cancelar)."""
+            sid = _renomear["id"]
+            if sid is None:
+                return
+            original = _renomear["nome_original"]
+            novo = "" if cancelar else (servico_var.get() or "").strip()
+            _renomear["id"] = None
+            _definir_botao_exclusao(False)
+            serv = next((s for s in dados["servicos"]
+                         if s.get("id") == sid), None)
+            if (cancelar or serv is None or servico_selecionado_id[0] != sid
+                    or not novo or novo == original):
+                _restaurar_rotulo_servico()
+                return
+            serv["nome"] = novo
+            if not _salvar_servicos_json(dados):
+                serv["nome"] = original
+                _restaurar_rotulo_servico()
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar o nome do serviço "
+                    "em servicos.json.", parent=janela)
+                return
+            _carregar_servicos()
+            _on_servico_select()
+            _restaurar_rotulo_servico()
+
+        def _cancelar_renomear_sem_salvar() -> None:
+            """Descarta a edição inline (ex.: o operador trocou de serviço)."""
+            if _renomear["id"] is None:
+                return
+            _renomear["id"] = None
+            _definir_botao_exclusao(False)
+            _restaurar_rotulo_servico()
+
+        def _cancelar_renomear_tecla(event=None):
+            _finalizar_renomear_servico(cancelar=True)
+            return "break"
+
+        combo_servico.bind("<Button-1>", _iniciar_renomear_servico, add="+")
+        combo_servico.bind("<FocusOut>", _finalizar_renomear_servico, add="+")
+        combo_servico.bind("<Return>", _finalizar_renomear_servico, add="+")
+        combo_servico.bind("<KP_Enter>", _finalizar_renomear_servico, add="+")
+        combo_servico.bind("<Escape>", _cancelar_renomear_tecla, add="+")
 
         # ── Itens do serviço (cartões com rolagem) ──
         # Cada item é um Frame com borda (sua própria "caixa"), título em
@@ -589,6 +700,9 @@ class JanelaOrdemServicoMixin:
             return pos, linha_y
 
         def _on_card_button_press(event, iid):
+            # Clique nos cartões não chega ao bind da janela (o handler
+            # devolve "break"), então confirma a edição inline aqui.
+            _finalizar_renomear_servico()
             _fechar_menu_contexto()
             _registrar_escolha(iid)
             _foco["id"] = iid
@@ -705,6 +819,7 @@ class JanelaOrdemServicoMixin:
         janela.bind("<Escape>", _on_card_leave, add="+")
 
         def _on_card_double_click(event, iid):
+            _finalizar_renomear_servico()
             _definir_selecao({iid})
             _ancora["id"] = iid
             _foco["id"] = iid
@@ -718,6 +833,7 @@ class JanelaOrdemServicoMixin:
             return "break"
 
         def _on_card_button_right(event, iid):
+            _finalizar_renomear_servico()
             _fechar_menu_contexto()
             _registrar_escolha(iid)
             if iid not in _selecionados:
@@ -1112,6 +1228,69 @@ class JanelaOrdemServicoMixin:
                 return
             _carregar_servicos()
             _on_servico_select()
+
+        def _excluir_servico():
+            """Exclui o serviço selecionado, sempre com confirmação."""
+            serv = _servico_atual()
+            if not serv:
+                tkinter.messagebox.showwarning(
+                    "Seleção", "Selecione um serviço.", parent=janela)
+                return
+            sid = serv.get("id")
+            nome = (serv.get("nome") or "").strip() or f"Serviço {sid}"
+            total = len(serv.get("itens") or [])
+            if total == 1:
+                detalhe = "\n\nO item dele também será removido."
+            elif total:
+                detalhe = f"\n\nOs {total} itens dele também serão removidos."
+            else:
+                detalhe = ""
+            if not tkinter.messagebox.askyesno(
+                    "Del Serviço",
+                    f'Excluir o serviço "{nome}"?{detalhe}\n\n'
+                    "Esta ação não pode ser desfeita.",
+                    parent=janela, icon='warning', default='no'):
+                return
+            servicos_antes = list(dados["servicos"])
+            selecionado_antes = dados.get("_servico_selecionado")
+            dados["servicos"] = [s for s in dados["servicos"]
+                                 if s.get("id") != sid]
+            restantes = _ordenar_servicos()
+            if restantes:
+                dados["_servico_selecionado"] = restantes[0].get("id")
+            else:
+                dados.pop("_servico_selecionado", None)
+            if not _salvar_servicos_json(dados):
+                dados["servicos"] = servicos_antes
+                if selecionado_antes is None:
+                    dados.pop("_servico_selecionado", None)
+                else:
+                    dados["_servico_selecionado"] = selecionado_antes
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar a remoção em "
+                    "servicos.json.", parent=janela)
+                return
+            # A execução não pode continuar apontando para o serviço removido.
+            _SERVICO_PROXIMO_ITEM.pop(sid, None)
+            _SERVICO_PROXIMO_ITEM.pop(nome, None)
+            _item_escolhido["id"] = None
+            servico_selecionado_id[0] = None
+            _carregar_servicos()
+            if combo_servico['values']:
+                _on_servico_select()
+            else:
+                _restaurar_rotulo_servico()
+                _carregar_itens()
+
+        def _acao_botao_novo():
+            """O botão da barra cria um serviço — ou exclui, se em edição."""
+            if _renomear["id"] is not None:
+                # Salva o nome digitado (clique fora da caixa) e só então
+                # pede a confirmação da exclusão.
+                _finalizar_renomear_servico()
+                _excluir_servico()
+            else:
+                _novo_servico()
 
         def _abrir_editor_item(item_edit: dict | None = None):
             """Abre a janela para adicionar (item_edit=None) ou editar um item."""
@@ -2327,7 +2506,7 @@ class JanelaOrdemServicoMixin:
         btn_novo = tk.Button(
             btn_frame, text="➕ Novo Serviço", font=("Arial", 11, "bold"),
             bg='#238636', fg='white', activebackground='#2ea043',
-            command=_novo_servico, cursor='hand2', padx=12, pady=4)
+            command=_acao_botao_novo, cursor='hand2', padx=12, pady=4)
         btn_editar = tk.Button(
             btn_frame, text="✏️ Editar Serviço", font=("Arial", 11, "bold"),
             bg='#1f6feb', fg='white', activebackground='#388bfd',
@@ -2358,6 +2537,31 @@ class JanelaOrdemServicoMixin:
             btn_frame, text="▶️ Executar Serviço", font=("Arial", 11, "bold"),
             bg='#6e40c9', fg='#f0c040', activebackground='#8b5cf6',
             command=_executar_servico, cursor='hand2', padx=12, pady=4)
+
+        def _clique_pertence(widget, alvo) -> bool:
+            while widget is not None:
+                if widget is alvo:
+                    return True
+                widget = getattr(widget, "master", None)
+            return False
+
+        def _confirmar_renomear_ao_clicar(event=None) -> None:
+            """Salva a edição inline ao clicar fora da caixa "Serviço"."""
+            if _renomear["id"] is None:
+                return
+            widget = getattr(event, "widget", None)
+            if widget is not None and (
+                    _clique_pertence(widget, combo_servico)
+                    or _clique_pertence(widget, btn_novo)):
+                return
+            _finalizar_renomear_servico()
+
+        # O bind da janela cobre os widgets que não devolvem "break"; os
+        # cartões (que devolvem) confirmam a edição nos seus próprios
+        # handlers, e a barra de rolagem ganha um bind direto.
+        janela.bind("<ButtonPress-1>", _confirmar_renomear_ao_clicar, add="+")
+        scroll_y.bind("<ButtonPress-1>",
+                      lambda e: _finalizar_renomear_servico(), add="+")
 
         botoes_esq = [btn_novo, btn_editar, btn_excluir, btn_transferir,
                       btn_add, btn_subir, btn_descer]
