@@ -35,6 +35,15 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.3.8" date="2026-11-13">
+      <description>
+        <ul>
+          <li>Ordem de Serviço: clique na caixa "Serviço" para renomear o serviço direto ali, com salvamento automático ao clicar fora (Esc cancela)</li>
+          <li>Ordem de Serviço: durante a edição, "+ Novo Serviço" vira "Del Serviço" em vermelho e exclui o serviço somente após a confirmação do operador</li>
+          <li>Banco: abertura mais rápida — o quick_check completo só roda quando o banco não foi fechado corretamente</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.7" date="2026-11-12">
       <description>
         <ul>

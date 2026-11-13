@@ -42,8 +42,8 @@ com atualização automática.
 2. Dê permissão de execução e rode:
 
    ```bash
-   chmod +x NavePro-2.3.7.AppImage
-   ./NavePro-2.3.7.AppImage
+   chmod +x NavePro-2.3.8.AppImage
+   ./NavePro-2.3.8.AppImage
    ```
 
 O AppImage é **autocontido** (Python, Tk 8.6 e dependências embutidos), então
@@ -342,7 +342,7 @@ O `.exe` também é gerado automaticamente pelo GitHub Actions a cada tag `v*`.
 ### Gerar o AppImage (Linux)
 
 ```bash
-./build.sh 2.3.7          # gera NavePro-2.3.7.AppImage
+./build.sh 2.3.8          # gera NavePro-2.3.8.AppImage
 ```
 
 O `build.sh` usa o **mesmo `NavePro.spec`** do `.exe`, monta o `AppDir/` e comprime
@@ -369,7 +369,7 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    pelo GitHub Actions a partir da tag):
 
    ```bash
-   ./build.sh 2.3.7
+   ./build.sh 2.3.8
    ```
 
 3. Comite, crie a tag e empurre. O push da tag `v*` dispara os workflows
@@ -378,17 +378,17 @@ ostree) a cada release — é o repositório que os usuários adicionam ao insta
    `gh-pages`:
 
    ```bash
-   git add -A && git commit -m "NavePro 2.3.7: ..."
-   git tag v2.3.7
-   git push origin main v2.3.7
+   git add -A && git commit -m "NavePro 2.3.8: ..."
+   git tag v2.3.8
+   git push origin main v2.3.8
    ```
 
 4. Crie o release com o AppImage (o workflow anexa o `.exe` e os `.flatpak` ao
    mesmo release):
 
    ```bash
-   gh release create v2.3.7 NavePro-2.3.7.AppImage \
-     --title "NavePro 2.3.7" --notes "O que mudou nesta versão..."
+   gh release create v2.3.8 NavePro-2.3.8.AppImage \
+     --title "NavePro 2.3.8" --notes "O que mudou nesta versão..."
    ```
 
 O app usa o `tag_name` do release mais recente como versão a oferecer; o primeiro
@@ -554,6 +554,18 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 ---
 
 ## 📜 Histórico recente
+
+### 2.3.8
+
+- **Ordem de Serviço — renomear**: clique na caixa **Serviço** e o nome fica
+  editável; o novo texto é salvo automaticamente ao clicar em qualquer outro
+  ponto da janela (ou `Enter`/`Tab`). `Esc` cancela e restaura o nome anterior.
+- **Ordem de Serviço — excluir**: enquanto o nome está em edição, o botão
+  **+ Novo Serviço** vira **Del Serviço** (vermelho) e exclui o serviço — e os
+  itens dele — somente depois da confirmação do operador. Fora da edição o botão
+  volta a criar serviços normalmente.
+- **Banco**: abertura mais rápida; o `quick_check` completo só roda quando o
+  banco não foi fechado corretamente na sessão anterior.
 
 ### 2.3.7
 

@@ -88,7 +88,7 @@ release precisa carregar **os dois assets que o app baixa** — sem eles, a
 atualização avisa "o release não contém um arquivo ..." em vez de falhar:
 
 ```bash
-gh release create v2.3.7 NavePro-2.3.7.AppImage --title "NavePro 2.3.7" --notes "O que mudou nesta versão..."
+gh release create v2.3.8 NavePro-2.3.8.AppImage --title "NavePro 2.3.8" --notes "O que mudou nesta versão..."
 ```
 
 O `.exe` e os bundles `.flatpak` não são mais anexados à mão: o push da tag
