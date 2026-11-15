@@ -753,6 +753,96 @@ class JanelaAnunciosMixin:
                     1500, lambda: btn_copiar_texto.config(
                         text="📋 Copiar", bg='#21262d', fg='#f0c040'))
 
+            def _adicionar_menu_texto(widget) -> None:
+                """Menu de contexto (botão direito) para colar/copiar no texto.
+
+                O operador pode copiar um texto de outro programa e colar
+                diretamente na caixa de texto do slide pelo botão direito.
+                Funciona em qualquer tk.Text do editor (slide, prévia e
+                demais tipos), sem alterar os atalhos já existentes.
+                """
+                if getattr(widget, "_navepro_menu_texto", None) is not None:
+                    return
+                menu = tk.Menu(
+                    widget, tearoff=0, bg='#21262d', fg='#c9d1d9',
+                    activebackground='#1f6feb', activeforeground='white',
+                    bd=0)
+
+                def _obter_clipboard() -> str:
+                    try:
+                        return widget.clipboard_get()
+                    except tk.TclError:
+                        return ""
+
+                def _colar():
+                    texto = _obter_clipboard()
+                    if not texto:
+                        return
+                    try:
+                        if widget.tag_ranges("sel"):
+                            widget.delete("sel.first", "sel.last")
+                        widget.insert("insert", texto)
+                        widget.see("insert")
+                    except tk.TclError:
+                        pass
+
+                def _recortar():
+                    try:
+                        if not widget.tag_ranges("sel"):
+                            return
+                        texto = widget.get("sel.first", "sel.last")
+                        widget.delete("sel.first", "sel.last")
+                        widget.clipboard_clear()
+                        widget.clipboard_append(texto)
+                    except tk.TclError:
+                        pass
+
+                def _copiar():
+                    try:
+                        if not widget.tag_ranges("sel"):
+                            return
+                        texto = widget.get("sel.first", "sel.last")
+                        widget.clipboard_clear()
+                        widget.clipboard_append(texto)
+                    except tk.TclError:
+                        pass
+
+                def _selecionar_tudo():
+                    try:
+                        widget.tag_add("sel", "1.0", "end-1c")
+                        widget.mark_set("insert", "1.0")
+                        widget.see("insert")
+                    except tk.TclError:
+                        pass
+
+                menu.add_command(label="📋 Colar", command=_colar)
+                menu.add_command(label="✂️ Recortar", command=_recortar)
+                menu.add_command(label="📄 Copiar", command=_copiar)
+                menu.add_separator()
+                menu.add_command(label="▭ Selecionar tudo",
+                                 command=_selecionar_tudo)
+
+                def _abrir_menu(event):
+                    widget.focus_set()
+                    # Coloca o cursor onde o operador clicou, para o texto
+                    # colado entrar na posição desejada.
+                    x = getattr(event, "x", None)
+                    y = getattr(event, "y", None)
+                    if x is not None and y is not None:
+                        try:
+                            widget.mark_set("insert", widget.index(f"@{x},{y}"))
+                        except tk.TclError:
+                            pass
+                    try:
+                        menu.tk_popup(event.x_root, event.y_root)
+                    finally:
+                        menu.grab_release()
+                    return "break"
+
+                widget.bind("<Button-3>", _abrir_menu)
+                # Evita que o menu seja coletado pelo garbage collector.
+                widget._navepro_menu_texto = menu
+
             def _montar_painel_imagem(container, texto_widget, caminho,
                                       tam_img=None, tam_txt=None,
                                       texto_salvo=None, widget_texto=None) -> None:
@@ -801,6 +891,7 @@ class JanelaAnunciosMixin:
 
                 texto_widget.config(height=5)
                 texto_widget.pack(fill='x', side='top', pady=(0, 6))
+                _adicionar_menu_texto(texto_widget)
                 widget_texto["w"] = texto_widget
 
                 quadro = tk.Frame(painel, bg='#0d1117')
@@ -1193,10 +1284,15 @@ class JanelaAnunciosMixin:
                 if not (0 <= _slides_estado["idx"] < len(_slides_estado["lista"])):
                     _slides_estado["idx"] = 0
 
+                # Estado do arrastar-e-soltar da lista de slides: o operador
+                # pode reordenar os slides segurando e arrastando na lista.
+                _drag_slide = {"ativo": False, "origem": None, "alvo": None}
+
                 info = tk.Label(
                     container,
                     text="Adicione quantos slides quiser (texto e, se quiser, "
-                         "uma imagem por slide — botão 🖼️):",
+                         "uma imagem por slide — botão 🖼️). Arraste na lista "
+                         "para reordenar:",
                     font=("Arial", 10, "bold"), fg='#f0c040',
                     bg='#0d1117', anchor='w')
                 info.pack(fill='x', pady=(0, 4))
@@ -1248,6 +1344,7 @@ class JanelaAnunciosMixin:
                                   wrap='word', height=8,
                                   exportselection=False)
                 _slides_estado["w"] = w_texto
+                _adicionar_menu_texto(w_texto)
                 w_texto.pack(side='bottom', fill='both', expand=True)
 
                 previa = tk.Label(coluna, text="🖼 Sem imagem neste slide",
@@ -1320,6 +1417,10 @@ class JanelaAnunciosMixin:
                     _atualizar_previa()
 
                 def _escolher_slide(event=None):
+                    # Durante o arrastar-e-soltar a seleção muda sozinha; não
+                    # recarrega o campo de texto até soltar o slide.
+                    if _drag_slide["ativo"]:
+                        return
                     _commit_slide()
                     sel = lista_box.curselection()
                     if sel:
@@ -1479,6 +1580,7 @@ class JanelaAnunciosMixin:
                                              insertbackground='#f0c040',
                                              wrap='word', height=8,
                                              exportselection=False)
+                    _adicionar_menu_texto(w_texto_previa)
                     _montar_painel_imagem(prev_win, w_texto_previa,
                                           caminho, tam_img, tam_txt,
                                           txt_salvo, {"w": None})
@@ -1497,8 +1599,85 @@ class JanelaAnunciosMixin:
                         _carregar_slide()
                     _abrir_previa_slide(idx)
 
+                def _drag_inicio(event):
+                    """Inicia o arrastar-e-soltar de um slide na lista."""
+                    if lista_box.size() == 0:
+                        return "break"
+                    _commit_slide()
+                    origem = lista_box.nearest(event.y)
+                    if origem < 0:
+                        return "break"
+                    _drag_slide.update({"ativo": True, "origem": origem,
+                                        "alvo": origem})
+                    lista_box.selection_clear(0, tk.END)
+                    lista_box.selection_set(origem)
+                    lista_box.activate(origem)
+                    lista_box.configure(cursor='fleur')
+                    return "break"
+
+                def _drag_mover(event):
+                    """Destaca o slide sob o cursor enquanto arrasta."""
+                    if not _drag_slide["ativo"]:
+                        return "break"
+                    # Rola a lista ao aproximar das bordas, para alcançar
+                    # slides que estão fora da área visível.
+                    try:
+                        altura_lista = lista_box.winfo_height()
+                    except tk.TclError:
+                        altura_lista = 0
+                    if altura_lista:
+                        if event.y < 12:
+                            lista_box.yview_scroll(-1, "units")
+                        elif event.y > altura_lista - 12:
+                            lista_box.yview_scroll(1, "units")
+                    alvo = lista_box.nearest(event.y)
+                    if alvo < 0:
+                        alvo = 0
+                    alvo = min(alvo, lista_box.size() - 1)
+                    if alvo != _drag_slide["alvo"]:
+                        _drag_slide["alvo"] = alvo
+                        lista_box.selection_clear(0, tk.END)
+                        lista_box.selection_set(alvo)
+                        lista_box.see(alvo)
+                    return "break"
+
+                def _drag_soltar(event):
+                    """Move o slide para a posição onde foi solto."""
+                    if not _drag_slide["ativo"]:
+                        return
+                    lista_box.configure(cursor='hand2')
+                    origem = _drag_slide["origem"]
+                    _drag_slide["origem"] = None
+                    alvo = lista_box.nearest(event.y)
+                    lista = _slides_estado["lista"]
+                    if alvo < 0 or not (0 <= origem < len(lista)):
+                        _drag_slide["ativo"] = False
+                        _carregar_slide()
+                        return "break"
+                    alvo = min(alvo, len(lista) - 1)
+                    if alvo == origem:
+                        # Clique simples (sem arrastar): apenas seleciona o
+                        # slide clicado, como o Listbox fazia antes.
+                        _slides_estado["idx"] = alvo
+                        _drag_slide["ativo"] = False
+                        _carregar_slide()
+                        return "break"
+                    slide = lista.pop(origem)
+                    lista.insert(alvo, slide)
+                    _slides_estado["idx"] = alvo
+                    # Mantém a guarda ativa durante o refresh da lista para
+                    # que o texto do slide atual não seja gravado no destino;
+                    # recarrega o slide já na posição nova antes de liberar.
+                    _atualizar_lista()
+                    _drag_slide["ativo"] = False
+                    _carregar_slide()
+                    return "break"
+
                 w_texto.bind('<KeyRelease>', lambda e: _commit_slide())
                 lista_box.bind('<<ListboxSelect>>', _escolher_slide)
+                lista_box.bind('<ButtonPress-1>', _drag_inicio)
+                lista_box.bind('<B1-Motion>', _drag_mover)
+                lista_box.bind('<ButtonRelease-1>', _drag_soltar)
                 lista_box.bind('<Double-Button-1>', _previa_duplo_clique)
                 lista_box.bind('<Delete>', lambda e: _remover_slide())
                 lista_box.bind('<Up>', _carregar_slide)
@@ -1537,6 +1716,7 @@ class JanelaAnunciosMixin:
                                       insertbackground='#f0c040',
                                       wrap='word', height=8,
                                       exportselection=False)
+                _adicionar_menu_texto(texto_atual)
                 if _texto_salvo["t"]:
                     texto_atual.insert('1.0', _texto_salvo["t"])
 
