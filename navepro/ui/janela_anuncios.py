@@ -778,13 +778,29 @@ class JanelaAnunciosMixin:
                     texto = _obter_clipboard()
                     if not texto:
                         return
+                    # Agrupa apagar a seleção + inserir num único passo de
+                    # undo, para o Ctrl+Z desfazer a colagem inteira.
                     try:
+                        autosep = bool(int(widget.cget("autoseparators")))
+                    except (tk.TclError, ValueError):
+                        autosep = False
+                    try:
+                        if autosep:
+                            widget.configure(autoseparators=False)
+                            widget.edit_separator()
                         if widget.tag_ranges("sel"):
                             widget.delete("sel.first", "sel.last")
                         widget.insert("insert", texto)
                         widget.see("insert")
                     except tk.TclError:
                         pass
+                    finally:
+                        if autosep:
+                            try:
+                                widget.edit_separator()
+                                widget.configure(autoseparators=True)
+                            except tk.TclError:
+                                pass
 
                 def _recortar():
                     try:
@@ -839,7 +855,10 @@ class JanelaAnunciosMixin:
                         menu.grab_release()
                     return "break"
 
-                widget.bind("<Button-3>", _abrir_menu)
+                # O menu é postado ao SOLTAR o botão direito. Se fosse no
+                # clique, o próprio release que abre o menu já acionaria a
+                # primeira opção (Colar) no X11.
+                widget.bind("<ButtonRelease-3>", _abrir_menu)
                 # Evita que o menu seja coletado pelo garbage collector.
                 widget._navepro_menu_texto = menu
 
@@ -1342,7 +1361,7 @@ class JanelaAnunciosMixin:
                                   bg='#21262d', fg='#c9d1d9',
                                   insertbackground='#f0c040',
                                   wrap='word', height=8,
-                                  exportselection=False)
+                                  exportselection=False, undo=True)
                 _slides_estado["w"] = w_texto
                 _adicionar_menu_texto(w_texto)
                 w_texto.pack(side='bottom', fill='both', expand=True)
@@ -1409,6 +1428,9 @@ class JanelaAnunciosMixin:
                     w_texto.delete('1.0', tk.END)
                     if 0 <= idx < len(lista):
                         w_texto.insert('1.0', lista[idx]["texto"])
+                    # Cada slide começa com histórico de undo próprio: o
+                    # Ctrl+Z não volta para o texto de outro slide.
+                    w_texto.edit_reset()
                     if idx < lista_box.size():
                         lista_box.selection_clear(0, tk.END)
                         lista_box.selection_set(idx)
@@ -1579,13 +1601,14 @@ class JanelaAnunciosMixin:
                                              bg='#21262d', fg='#c9d1d9',
                                              insertbackground='#f0c040',
                                              wrap='word', height=8,
-                                             exportselection=False)
+                                             exportselection=False, undo=True)
                     _adicionar_menu_texto(w_texto_previa)
                     _montar_painel_imagem(prev_win, w_texto_previa,
                                           caminho, tam_img, tam_txt,
                                           txt_salvo, {"w": None})
                     w_texto_previa.delete('1.0', tk.END)
                     w_texto_previa.insert('1.0', txt_salvo["t"])
+                    w_texto_previa.edit_reset()
                     prev_win.after(60, prev_win.grab_set)
                     prev_win.bind('<Escape>', _fechar_previa)
 
@@ -1715,10 +1738,12 @@ class JanelaAnunciosMixin:
                                       bg='#21262d', fg='#c9d1d9',
                                       insertbackground='#f0c040',
                                       wrap='word', height=8,
-                                      exportselection=False)
+                                      exportselection=False, undo=True)
                 _adicionar_menu_texto(texto_atual)
                 if _texto_salvo["t"]:
                     texto_atual.insert('1.0', _texto_salvo["t"])
+                    # O texto carregado não deve ficar no histórico do Ctrl+Z.
+                    texto_atual.edit_reset()
 
                 if tipo == "imagem":
                     if eh_imagem:

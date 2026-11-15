@@ -63,12 +63,30 @@ class _FakeWidget:
         self.inserido = None
         self.see_usado = False
         self.insert_marcado = None
+        self.autosep = 1
+        self.separadores = 0
+        self.resetado = False
 
     def bind(self, sequencia, func):
         self.binds[sequencia] = func
 
     def focus_set(self):
         self.focado = True
+
+    def cget(self, opcao):
+        if opcao == "autoseparators":
+            return self.autosep
+        raise _TclError(opcao)
+
+    def configure(self, **kwargs):
+        if "autoseparators" in kwargs:
+            self.autosep = 1 if kwargs["autoseparators"] else 0
+
+    def edit_separator(self):
+        self.separadores += 1
+
+    def edit_reset(self):
+        self.resetado = True
 
     def index(self, indice):
         return indice
@@ -109,7 +127,10 @@ _menu_texto = _ns_menu["_adicionar_menu_texto"]
 
 widget = _FakeWidget(clip="texto copiado")
 _menu_texto(widget)
-check("menu: liga o clique direito (<Button-3>)", "<Button-3>" in widget.binds)
+check("menu: abre ao soltar o botão direito",
+      "<ButtonRelease-3>" in widget.binds)
+check("menu: não abre no clique (evita colar ao soltar)",
+      "<Button-3>" not in widget.binds)
 check("menu: guarda referência viva no widget",
       isinstance(getattr(widget, "_navepro_menu_texto", None), _FakeMenu))
 menu = widget._navepro_menu_texto
@@ -120,6 +141,10 @@ menu.comandos[0][1]()
 check("colar: insere no cursor", widget.inserido == ("insert", "texto copiado"),
       str(widget.inserido))
 check("colar: rola até o texto", widget.see_usado is True)
+check("colar: cria um passo único de undo", widget.separadores == 2,
+      str(widget.separadores))
+check("colar: restaura os autoseparators", widget.autosep == 1,
+      str(widget.autosep))
 
 widget_sel = _FakeWidget(clip="novo", sel=("1.0", "1.4"))
 _menu_texto(widget_sel)
@@ -141,7 +166,7 @@ menu_abrir = widget_abrir._navepro_menu_texto
 _menu_texto(widget_abrir)
 check("menu: não é criado duas vezes para o mesmo widget",
       widget_abrir._navepro_menu_texto is menu_abrir)
-widget_abrir.binds["<Button-3>"](
+widget_abrir.binds["<ButtonRelease-3>"](
     types.SimpleNamespace(x_root=10, y_root=20, x=30, y=40))
 check("menu: abre no ponteiro", widget_abrir._navepro_menu_texto.popup ==
       (10, 20, None), str(widget_abrir._navepro_menu_texto.popup))
@@ -267,6 +292,11 @@ ns["_drag_inicio"](_ev(5))
 ns["_drag_soltar"](_ev(5))
 check("drag: lista de um slide continua estável",
       [s["texto"] for s in estado["lista"]] == ["A"])
+
+check("editor: as caixas de texto habilitam undo (Ctrl+Z)",
+      _SRC.count("undo=True") >= 3, str(_SRC.count("undo=True")))
+check("editor: carregar conteúdo limpa o histórico de undo",
+      _SRC.count("edit_reset()") >= 3, str(_SRC.count("edit_reset()")))
 
 
 print("\n" + ("TODOS OS CASOS PASSARAM" if not falhas
