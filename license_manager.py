@@ -53,9 +53,11 @@ NOME_ARQUIVO_LICENCA = "licenca.key"
 # URL real configurada, a consulta falha de forma silenciosa e o app segue
 # funcionando no modo offline/licenciado.
 URL_LISTA_NEGRA = (
-    "https://gist.githubusercontent.com/edes-neves/"
-    "fbe6e2bc21eb0849f1439a2ebcd9044b/raw/"
-    "c616c693852121382dace3c4b6a6fa0d18e70303/bloqueados.txt"
+    "https://gist.githubusercontent.com/"
+    "edes-neves/"
+    "fbe6e2bc21eb0849f1439a2ebcd9044b/"
+    "raw/"
+    "bloqueados.txt"
 )
 
 # Contato comercial exibido no modo demonstração (decisão do operador).
