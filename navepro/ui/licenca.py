@@ -11,9 +11,10 @@ from __future__ import annotations
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
-import webbrowser
+import urllib.parse
 
 from license_manager import (
+    DIAS_TESTE,
     EMAIL_CONTATO,
     LIMITE_DEMO_ITENS_PROJECAO,
     LIMITE_DEMO_SLIDES_ANUNCIO,
@@ -22,6 +23,7 @@ from license_manager import (
     importar_arquivo_licenca,
     status_licenca,
 )
+from navepro.core.links import abrir_url_externa
 from navepro.core.log import get_logger
 from navepro.core.util_tk import _centralizar_sobre
 
@@ -87,9 +89,18 @@ class LicencaMixin:
         def _atualizar_textos() -> None:
             st = status_licenca()
             licenciado = bool(st.get("licenciado"))
+            teste = bool(st.get("licenciado") and st.get("teste"))
             motivo = st.get("motivo") or "Modo Demonstração"
             id_var.set(st.get("machine_id") or id_var.get())
-            if licenciado:
+            if licenciado and teste:
+                restantes = int(st.get("dias_restantes") or 0)
+                status_lbl.configure(text=f"🧪 {motivo}", fg='#f0c040')
+                detalhe_lbl.configure(
+                    text=(f"Período de teste: todos os recursos liberados "
+                          f"por {DIAS_TESTE} dias, sem marca d'água. "
+                          f"Restam {restantes} dia(s); depois o app entra no "
+                          "modo demonstração."))
+            elif licenciado:
                 status_lbl.configure(text=f"✅ {motivo}", fg='#3fb950')
                 detalhe_lbl.configure(
                     text="Licença válida para esta máquina.")
@@ -158,14 +169,13 @@ class LicencaMixin:
         _atualizar_textos()
 
     def _abrir_contato_licenca(self, canal: str) -> None:
-        """Abre e-mail/WhatsApp no navegador; mostra o contato se falhar."""
-        try:
-            if canal == "whatsapp":
-                webbrowser.open("https://wa.me/554431700809")
-            else:
-                webbrowser.open(
-                    f"mailto:{EMAIL_CONTATO}?subject=Licença%20NavePro")
-        except Exception:
+        """Abre e-mail/WhatsApp no aplicativo padrão; mostra o contato se falhar."""
+        if canal == "whatsapp":
+            url = "https://wa.me/554431700809"
+        else:
+            assunto = urllib.parse.quote("Licença NavePro")
+            url = f"mailto:{EMAIL_CONTATO}?subject={assunto}"
+        if not abrir_url_externa(url):
             tkinter.messagebox.showinfo(
                 "Contato",
                 f"E-mail: {EMAIL_CONTATO}\nWhatsApp: {WHATSAPP_CONTATO}",
@@ -222,7 +232,8 @@ class LicencaMixin:
                         text=("⚠️ MODO DEMONSTRAÇÃO — licença não ativada. "
                               "Limites ativos. Clique para ativar ou fale: "
                               f"{EMAIL_CONTATO} | WhatsApp {WHATSAPP_CONTATO}"))
-                    banner.pack(pady=(4, 2))
+                    if not banner.winfo_manager():
+                        banner.pack(pady=(4, 2))
                 else:
                     banner.pack_forget()
             except tk.TclError:
@@ -246,5 +257,32 @@ class LicencaMixin:
         elif getattr(self, "_inicializacao_concluida", False):
             self._iniciar_servidor_api()
 
+        if getattr(self, "_inicializacao_concluida", False):
+            self._agendar_rechecagem_licenca()
+
         log.info(("🔑 Licença: %s" if licenciado else "⚠️ Licença: %s"),
                  motivo)
+
+    def _agendar_rechecagem_licenca(self) -> None:
+        """Reavalia o teste/licença local de hora em hora, sem depender da rede."""
+        if getattr(self, "_licenca_timer_id", None):
+            return
+        try:
+            self._licenca_timer_id = self.root.after(
+                60 * 60 * 1000, self._rechecar_licenca_local)
+        except Exception:
+            self._licenca_timer_id = None
+
+    def _rechecar_licenca_local(self) -> None:
+        self._licenca_timer_id = None
+        try:
+            from license_manager import verificar_licenca
+            ok, motivo, machine_id = verificar_licenca(
+                consultar_lista_negra=False)
+        except Exception as exc:
+            log.exception("Falha ao reavaliar a licença: %s", exc)
+            st = status_licenca()
+            ok = bool(st.get("licenciado"))
+            motivo = st.get("motivo") or "Modo Demonstração"
+            machine_id = st.get("machine_id") or ""
+        self._aplicar_estado_licenca(ok, motivo, machine_id)

@@ -1,4 +1,9 @@
-"""Licenciamento híbrido do NavePro (offline + lista negra online).
+"""Licenciamento híbrido do NavePro (teste de 10 dias + lista negra online).
+
+O primeiro uso em cada computador libera **todos os recursos por 10 dias**
+(sem marca d'água e sem os limites do modo demonstração). O início do teste
+fica em ``~/.navepro/trial.json``; depois do prazo, o app entra no modo
+demonstração até receber uma licença válida.
 
 O licenciamento offline usa **criptografia assimétrica**: o administrador
 assina o conteúdo da licença com a chave privada RSA e o aplicativo verifica
@@ -48,10 +53,13 @@ from navepro.core.paths import DATA_USER_DIR, DIR_BASE
 log = get_logger("licenca")
 
 NOME_ARQUIVO_LICENCA = "licenca.key"
+NOME_ARQUIVO_TESTE = "trial.json"
 
-# Lista negra pública (uma ID de máquina por linha). Enquanto não houver uma
-# URL real configurada, a consulta falha de forma silenciosa e o app segue
-# funcionando no modo offline/licenciado.
+# Tempo de teste completo (sem limites) a partir do primeiro uso no computador.
+DIAS_TESTE = 10
+
+# Lista negra pública (uma ID de máquina por linha). Falhas de rede são
+# silenciosas: sem internet o app continua funcionando no modo offline.
 URL_LISTA_NEGRA = (
     "https://gist.githubusercontent.com/"
     "edes-neves/"
@@ -87,6 +95,8 @@ _ESTADO: dict = {
     "motivo": "",
     "cliente": "",
     "machine_id": "",
+    "teste": False,
+    "dias_restantes": 0,
 }
 
 
@@ -126,19 +136,124 @@ def _caminhos_licenca() -> list[str]:
             for d in _diretorios_licenca()]
 
 
+def _caminho_registro_teste() -> str:
+    return os.path.join(DATA_USER_DIR, NOME_ARQUIVO_TESTE)
+
+
+def _data_registro(valor: object) -> _dt.date | None:
+    try:
+        return _dt.date.fromisoformat(str(valor)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _ler_registro_teste() -> dict:
+    try:
+        with open(_caminho_registro_teste(), encoding="utf-8") as fh:
+            dados = json.load(fh)
+        return dados if isinstance(dados, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _salvar_registro_teste(dados: dict) -> None:
+    caminho = _caminho_registro_teste()
+    try:
+        diretorio = os.path.dirname(caminho)
+        if diretorio:
+            os.makedirs(diretorio, exist_ok=True)
+        temporario = caminho + ".tmp"
+        with open(temporario, "w", encoding="utf-8") as fh:
+            json.dump(dados, fh, ensure_ascii=False, sort_keys=True)
+        os.chmod(temporario, 0o600)
+        os.replace(temporario, caminho)
+    except OSError as exc:
+        log.warning("Não foi possível gravar o registro de teste: %s", exc)
+
+
+def _registro_teste_atual(machine_id: str) -> tuple[dict, _dt.date]:
+    """Lê/cria o início do teste e devolve o registro + data efetiva.
+
+    O relógio não pode voltar e aumentar o teste: se a data do sistema for
+    anterior à última verificação, usamos a última data vista.
+    """
+    dados = _ler_registro_teste()
+    hoje = _dt.date.today()
+    inicio = _data_registro(dados.get("inicio"))
+    if (not dados or dados.get("machine_id") != machine_id
+            or inicio is None):
+        dados = {
+            "machine_id": machine_id,
+            "inicio": hoje.isoformat(),
+            "ultima_verificacao": hoje.isoformat(),
+            "bloqueado": False,
+        }
+    else:
+        ultima = _data_registro(dados.get("ultima_verificacao")) or inicio
+        if hoje < ultima:
+            hoje = ultima
+        dados.update({
+            "machine_id": machine_id,
+            "inicio": inicio.isoformat(),
+            "ultima_verificacao": hoje.isoformat(),
+            "bloqueado": bool(dados.get("bloqueado")),
+        })
+    _salvar_registro_teste(dados)
+    return dados, hoje
+
+
+def _dias_restantes_teste(dados: dict, hoje: _dt.date) -> int:
+    inicio = _data_registro(dados.get("inicio"))
+    if inicio is None:
+        return 0
+    return max(0, DIAS_TESTE - (hoje - inicio).days)
+
+
+def _avaliar_teste(dados: dict, hoje: _dt.date, machine_id: str,
+                   consultar_lista_negra: bool) -> tuple[bool, str, str]:
+    """Aplica o teste de 10 dias ou o modo demonstração."""
+    if dados.get("bloqueado"):
+        _definir_estado(False, "Licença revogada", machine_id=machine_id)
+        return False, "Licença revogada", machine_id
+    if consultar_lista_negra and esta_na_lista_negra(machine_id):
+        dados["bloqueado"] = True
+        _salvar_registro_teste(dados)
+        _definir_estado(False, "Licença revogada", machine_id=machine_id)
+        return False, "Licença revogada", machine_id
+
+    restantes = _dias_restantes_teste(dados, hoje)
+    if restantes > 0:
+        motivo = f"Período de teste — {restantes} dia(s) restante(s)"
+        _definir_estado(True, motivo, machine_id=machine_id, teste=True,
+                        dias_restantes=restantes)
+        return True, motivo, machine_id
+
+    _definir_estado(False, "Período de teste encerrado",
+                    machine_id=machine_id, dias_restantes=0)
+    return False, "Período de teste encerrado", machine_id
+
+
 def _definir_estado(licenciado: bool, motivo: str,
-                    cliente: str = "", machine_id: str = "") -> None:
+                    cliente: str = "", machine_id: str = "",
+                    teste: bool = False, dias_restantes: int = 0) -> None:
     _ESTADO.update({
         "licenciado": bool(licenciado),
         "motivo": motivo,
         "cliente": cliente,
         "machine_id": machine_id,
+        "teste": bool(teste),
+        "dias_restantes": int(dias_restantes),
     })
 
 
 def modo_demonstracao() -> bool:
-    """True quando a última verificação não concedeu uma licença válida."""
+    """True quando a última verificação não concedeu licença nem teste."""
     return not bool(_ESTADO.get("licenciado"))
+
+
+def em_periodo_teste() -> bool:
+    """True quando os recursos estão liberados pelo teste de 10 dias."""
+    return bool(_ESTADO.get("licenciado") and _ESTADO.get("teste"))
 
 
 def status_licenca() -> dict:
@@ -259,17 +374,19 @@ def importar_arquivo_licenca(origem: str) -> tuple[bool, str]:
 
 def verificar_licenca(*, consultar_lista_negra: bool = True
                       ) -> tuple[bool, str, str]:
-    """Valida a licença local e (opcionalmente) a revogação online.
+    """Valida a licença local, o teste de 10 dias ou a revogação online.
 
-    Retorna ``(licenciado, motivo, machine_id)``. Nunca lança exceção por
+    Retorna ``(liberado, motivo, machine_id)``. ``liberado`` é True tanto para
+    licença válida quanto para o período de teste. Nunca lança exceção por
     causa de arquivo ausente, licença inválida ou falta de internet.
     """
     machine_id = obter_id_maquina()
+    registro_teste, hoje = _registro_teste_atual(machine_id)
 
     caminho = next((c for c in _caminhos_licenca() if os.path.isfile(c)), None)
     if caminho is None:
-        _definir_estado(False, "Modo Demonstração", machine_id=machine_id)
-        return False, "Modo Demonstração", machine_id
+        return _avaliar_teste(registro_teste, hoje, machine_id,
+                              consultar_lista_negra)
 
     payload, assinatura = _ler_licenca(caminho)
     if payload is None or assinatura is None:
@@ -297,6 +414,8 @@ def verificar_licenca(*, consultar_lista_negra: bool = True
 
     if consultar_lista_negra and esta_na_lista_negra(machine_id):
         _remover_licenca()
+        registro_teste["bloqueado"] = True
+        _salvar_registro_teste(registro_teste)
         _definir_estado(False, "Licença revogada", cliente, machine_id)
         return False, "Licença revogada", machine_id
 

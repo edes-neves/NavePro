@@ -2437,6 +2437,12 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         threading.Thread(target=_checar_licenca_online, daemon=True,
                          name="navepro-licenca").start()
 
+        # Reavalia o prazo do teste/licença local de hora em hora, para o
+        # modo demonstração entrar mesmo se o app ficar aberto por dias.
+        agendar = getattr(self, "_agendar_rechecagem_licenca", None)
+        if callable(agendar):
+            agendar()
+
         # Registra no banco os arquivos de mídia da pasta uploads sem travar
         # a interface: com muitos arquivos, a varredura + INSERTs + stat do
         # reload_cache seguravam o Tk logo depois da janela aparecer.

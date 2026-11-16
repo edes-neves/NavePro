@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Testes headless do licenciamento (assinatura, limites e revogação)."""
+"""Testes headless do licenciamento (teste de 10 dias, assinatura e revogação)."""
 
 import base64
 import datetime as dt
@@ -62,6 +62,21 @@ def _payload(mid, dias=30):
     }
 
 
+def _gravar_teste(caminho, mid, inicio_dias=0, ultima_dias=None,
+                  bloqueado=False):
+    hoje = dt.date.today()
+    ultima = hoje + dt.timedelta(
+        days=0 if ultima_dias is None else ultima_dias)
+    dados = {
+        "machine_id": mid,
+        "inicio": (hoje - dt.timedelta(days=inicio_dias)).isoformat(),
+        "ultima_verificacao": ultima.isoformat(),
+        "bloqueado": bloqueado,
+    }
+    with open(caminho, "w", encoding="utf-8") as fh:
+        json.dump(dados, fh)
+
+
 def _rodar() -> int:
     mid = lm.obter_id_maquina()
     checar("machine_id tem 16 hexadecimais",
@@ -71,6 +86,7 @@ def _rodar() -> int:
     chave, publico = _chave_teste()
     publico_original = lm.CHAVE_PUBLICA_PEM
     dirs_original = lm._diretorios_licenca
+    trial_original = lm._caminho_registro_teste
     estado_original = dict(lm._ESTADO)
     blacklist_original = lm.esta_na_lista_negra
     lm.CHAVE_PUBLICA_PEM = publico
@@ -78,11 +94,48 @@ def _rodar() -> int:
     try:
         with tempfile.TemporaryDirectory() as tmp:
             lm._diretorios_licenca = lambda: [tmp]
+            trial = os.path.join(tmp, lm.NOME_ARQUIVO_TESTE)
+            lm._caminho_registro_teste = lambda: trial
             caminho = os.path.join(tmp, lm.NOME_ARQUIVO_LICENCA)
 
             ok, motivo, _ = lm.verificar_licenca(consultar_lista_negra=False)
-            checar("sem arquivo → modo demonstração",
-                   not ok and motivo == "Modo Demonstração")
+            checar("primeiro uso → teste de 10 dias com tudo liberado",
+                   ok and motivo.startswith("Período de teste")
+                   and lm.em_periodo_teste()
+                   and lm.status_licenca()["dias_restantes"] == lm.DIAS_TESTE
+                   and not lm.modo_demonstracao(), motivo)
+
+            _gravar_teste(trial, mid, inicio_dias=lm.DIAS_TESTE)
+            ok, motivo, _ = lm.verificar_licenca(consultar_lista_negra=False)
+            checar("após 10 dias → modo demonstração",
+                   not ok and motivo == "Período de teste encerrado"
+                   and lm.modo_demonstracao(), motivo)
+
+            _gravar_teste(trial, mid, inicio_dias=lm.DIAS_TESTE - 1)
+            ok, motivo, _ = lm.verificar_licenca(consultar_lista_negra=False)
+            checar("último dia ainda libera tudo",
+                   ok and lm.status_licenca()["dias_restantes"] == 1
+                   and not lm.modo_demonstracao(), motivo)
+
+            _gravar_teste(trial, mid, inicio_dias=lm.DIAS_TESTE - 1,
+                          ultima_dias=20)
+            ok, _, _ = lm.verificar_licenca(consultar_lista_negra=False)
+            checar("relógio atrasado não aumenta o teste",
+                   not ok and lm.modo_demonstracao())
+
+            _gravar_teste(trial, mid, inicio_dias=1)
+            lm.esta_na_lista_negra = lambda machine_id: True
+            ok, motivo, _ = lm.verificar_licenca(consultar_lista_negra=True)
+            checar("lista negra bloqueia também o teste",
+                   not ok and motivo == "Licença revogada", motivo)
+
+            _gravar_teste(trial, mid, inicio_dias=1)
+            lm.esta_na_lista_negra = lambda machine_id: False
+            ok, _, _ = lm.verificar_licenca(consultar_lista_negra=False)
+            checar("teste libera todos os slides de anúncio",
+                   ok and lm.em_periodo_teste()
+                   and len(lm.limitar_slides_anuncio(
+                       ["a", "b", "c", "d", "e"])) == 5)
 
             _gravar_licenca(caminho, chave, _payload(mid, dias=5))
             ok, motivo, _ = lm.verificar_licenca(consultar_lista_negra=False)
@@ -126,6 +179,7 @@ def _rodar() -> int:
     finally:
         lm.CHAVE_PUBLICA_PEM = publico_original
         lm._diretorios_licenca = dirs_original
+        lm._caminho_registro_teste = trial_original
         lm.esta_na_lista_negra = blacklist_original
         lm._ESTADO.clear()
         lm._ESTADO.update(estado_original)
