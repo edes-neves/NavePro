@@ -61,11 +61,11 @@ class ExecucaoServicoMixin:
         """
         if not servico:
             return {'ok': False, 'codigo': 'sem_servico',
-                    'erro': 'Nenhum serviço selecionado.'}
+                    'erro': 'Nenhuma projeção selecionada.'}
         itens = list(servico.get("itens") or [])
         if not itens:
             return {'ok': False, 'codigo': 'vazio',
-                    'erro': 'Serviço sem itens.'}
+                    'erro': 'Projeção sem itens.'}
         chave = servico.get("id") or servico.get("nome") or "?"
         prox = _SERVICO_PROXIMO_ITEM.get(chave)
         if escolhido is not None:
@@ -81,6 +81,23 @@ class ExecucaoServicoMixin:
             prox = idx_escolhido
         if prox is None or prox < 0 or prox >= len(itens):
             prox = 0
+        try:
+            from license_manager import (
+                LIMITE_DEMO_ITENS_PROJECAO,
+                modo_demonstracao,
+            )
+        except Exception:
+            def modo_demonstracao():
+                return False
+            LIMITE_DEMO_ITENS_PROJECAO = 3
+        if modo_demonstracao() and prox >= LIMITE_DEMO_ITENS_PROJECAO:
+            return {
+                'ok': False, 'codigo': 'demo',
+                'erro': ('Modo Demonstração: apenas os '
+                         f'{LIMITE_DEMO_ITENS_PROJECAO} primeiros itens da '
+                         'projeção podem ser executados. Ative a licença '
+                         'para liberar todos.'),
+            }
         item = itens[prox]
         tipo = (item.get('tipo') or '').strip().lower()
         titulo_item = (item.get('titulo_custom') or '').strip()

@@ -17,6 +17,10 @@ import tkinter.simpledialog
 from collections.abc import Callable
 from typing import Any
 
+from license_manager import (
+    LIMITE_DEMO_ITENS_PROJECAO,
+    modo_demonstracao,
+)
 from navepro.config import APP_VERSION, BACKEND_PORT
 from navepro.core.anuncios import (
     _buscar_anuncio_por_ref,
@@ -98,6 +102,9 @@ class ControleRemotoMixin:
         return {'ativo': ativo, 'token': token, 'ip': ip, 'url': url}
     def alternar_controle_remoto(self, ativo: bool) -> dict:
         """Liga/desliga o controle remoto, gerando o token se preciso."""
+        if ativo and modo_demonstracao():
+            log.warning("Controle remoto indisponível no modo demonstração.")
+            return self.info_controle_remoto()
         remoto = self.config_data.setdefault('remoto', {})
         remoto['ativo'] = bool(ativo)
         if ativo and not remoto.get('token'):
@@ -140,7 +147,7 @@ class ControleRemotoMixin:
             parent, justify='left', bg='#0d1117', fg='#c9d1d9',
             font=("Arial", 10),
             text=("Operar o NavePro pelo celular na mesma rede Wi-Fi:\n"
-                  "hinos, slides, Bíblia, anúncios, ordem de serviço e\n"
+                  "hinos, slides, Bíblia, anúncios, ordem de projeção e\n"
                   "medidor, sem tocar no computador.")
         ).pack(pady=(12, 10), padx=20)
 
@@ -188,8 +195,16 @@ class ControleRemotoMixin:
             parent, text="Ativar controle remoto", variable=estado['ativo'],
             command=_alternar, bg='#0d1117', fg='#f0c040', selectcolor='#161b22',
             activebackground='#0d1117', activeforeground='#f0c040',
-            font=("Arial", 11, "bold"), anchor='w'
+            font=("Arial", 11, "bold"), anchor='w',
+            state=('disabled' if modo_demonstracao() else 'normal')
         ).pack(fill='x', padx=22, pady=(8, 2))
+        if modo_demonstracao():
+            tk.Label(
+                parent, justify='left', bg='#0d1117', fg='#f85149',
+                font=("Arial", 9, "bold"),
+                text=("Controle remoto/API disponível somente com licença "
+                      "ativada (menu Configurações → Ativar Licença).")
+            ).pack(fill='x', padx=22, pady=(2, 0))
 
         frame_botoes = tk.Frame(parent, bg='#0d1117')
         frame_botoes.pack(fill='x', padx=20, pady=4)
@@ -957,7 +972,7 @@ class ControleRemotoMixin:
                      if str(s.get('id') or '') == alvo
                      or str(s.get('nome') or '') == alvo), None)
         if serv is None:
-            return {'ok': False, 'erro': 'Serviço não encontrado.'}
+            return {'ok': False, 'erro': 'Projeção não encontrada.'}
         item = dados.get('item')
         # Não converter para int: o id do item pode ser texto (dados antigos/
         # importados ou editados à mão) e int() derrubava o botão do item.
@@ -968,7 +983,7 @@ class ControleRemotoMixin:
         """Lista os itens de UM serviço para a aba Serviço do celular."""
         serv = self._localizar_servico(str(dados.get('servico') or ''))
         if serv is None:
-            return {'ok': False, 'erro': 'Serviço não encontrado.'}
+            return {'ok': False, 'erro': 'Projeção não encontrada.'}
         itens = serv.get('itens') or []
         return {'ok': True,
                 'servico': {'id': serv.get('id'),
@@ -1208,7 +1223,7 @@ class ControleRemotoMixin:
                      if str(s.get('id') or '') == alvo
                      or str(s.get('nome') or '') == alvo), None)
         if serv is None:
-            return {'ok': False, 'erro': 'Serviço não encontrado.'}
+            return {'ok': False, 'erro': 'Projeção não encontrada.'}
         itens = serv.setdefault('itens', [])
         item_id = dados.get('id')
 
@@ -1225,6 +1240,14 @@ class ControleRemotoMixin:
                 itens[idx].update(campos)
                 novo_id = itens[idx].get('id')
             else:
+                if (modo_demonstracao()
+                        and len(itens) >= LIMITE_DEMO_ITENS_PROJECAO):
+                    return {
+                        'ok': False,
+                        'erro': ('Modo Demonstração: limite de '
+                                 f'{LIMITE_DEMO_ITENS_PROJECAO} itens por '
+                                 'projeção. Ative a licença para liberar.'),
+                    }
                 novo_id = int(todos.get('_proximo_id_item') or 1)
                 todos['_proximo_id_item'] = novo_id + 1
                 itens.append(dict(campos, id=novo_id))

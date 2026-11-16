@@ -1266,7 +1266,7 @@ function carregarServicos() {
     var ul = document.getElementById('lista_servicos');
     ul.innerHTML = '';
     if (!j.servicos || !j.servicos.length) {
-      ul.innerHTML = '<li class="vazio">Nenhum servi\u00e7o cadastrado.</li>';
+      ul.innerHTML = '<li class="vazio">Nenhuma proje\u00e7\u00e3o cadastrada.</li>';
       return;
     }
     j.servicos.forEach(function(s) {
@@ -1305,7 +1305,7 @@ function fecharServico() {
   ITENS_SERVICO = [];
   fecharFormItem();
   document.getElementById('serv_cabecalho').textContent =
-    'Toque em "Itens" num servi\u00e7o acima.';
+    'Toque em "Itens" numa proje\u00e7\u00e3o acima.';
   document.getElementById('lista_itens_servico').innerHTML = '';
   document.getElementById('btn_add_item').style.display = 'none';
 }
@@ -1873,7 +1873,7 @@ PAGINA = """<!DOCTYPE html>
   <button data-aba="hino">&#127925; Hino</button>
   <button data-aba="biblia">&#128214; B&iacute;blia</button>
   <button data-aba="anuncio">&#128227; An&uacute;ncio</button>
-  <button data-aba="servico">&#128203; Servi&ccedil;o</button>
+  <button data-aba="servico">&#128203; Proje&ccedil;&atilde;o</button>
   <button data-aba="relogio">&#128336; Rel&oacute;gio</button>
   <button data-aba="medidor">&#9201; Medidor</button>
   <button data-aba="sorteio">&#127922; Sorteio</button>
@@ -2059,7 +2059,7 @@ PAGINA = """<!DOCTYPE html>
 
 <section id="aba-servico">
   <div class="card">
-    <h3>Ordem de servi&ccedil;o</h3>
+    <h3>Ordem de Proje&ccedil;&atilde;o</h3>
     <ul id="lista_servicos"><li class="vazio">Carregando...</li></ul>
     <div class="linha" style="margin-top:10px">
       <span class="pill" id="serv_status">pr&oacute;ximo item segue a ordem da lista</span>
@@ -2077,11 +2077,11 @@ PAGINA = """<!DOCTYPE html>
   </div>
   <div class="card">
     <div class="serv-cabecalho-linha">
-      <h3>Itens do servi&ccedil;o</h3>
+      <h3>Itens da proje&ccedil;&atilde;o</h3>
       <button class="btn mini on" id="btn_cartoes"
               onclick="alternarCartoes()">&#128450; Cart&otilde;es</button>
     </div>
-    <div id="serv_cabecalho" class="vazio">Toque em "Itens" num servi&ccedil;o acima.</div>
+    <div id="serv_cabecalho" class="vazio">Toque em "Itens" numa proje&ccedil;&atilde;o acima.</div>
     <ul id="lista_itens_servico" class="cartoes"></ul>
     <button class="btn verde" id="btn_add_item" style="margin-top:10px;display:none"
             onclick="abrirFormItem(null)">&#10133; Adicionar item</button>

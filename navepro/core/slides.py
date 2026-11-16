@@ -6,6 +6,7 @@ Extraído de NavePro.py sem alterar o comportamento (ver AGENTS.md).
 import re
 import unicodedata
 
+from license_manager import limitar_slides_anuncio
 from navepro.core.banco import db_query
 from navepro.core.fontes_pil import _texto_simples
 from navepro.core.textos import _termo_like
@@ -55,7 +56,7 @@ def _montar_slides_anuncio(anuncio: dict) -> list:
         slides.append(paragrafo)
     if not slides:
         slides = [titulo or "ANÚNCIO"]
-    return slides
+    return limitar_slides_anuncio(slides)
 
 
 def _buscar_hino_por_termo(termo: str) -> list[dict]:

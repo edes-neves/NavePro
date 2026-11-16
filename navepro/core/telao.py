@@ -119,6 +119,8 @@ class TelaoWindow:
         self.main_frame.pack(fill='both', expand=True)
         self.canvas = tk.Canvas(self.main_frame, bg='black', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True)
+        # Marca d'água do modo demonstração (criada sob demanda).
+        self._marca_dagua_demo = None
         # Calcula fontes e posições sem sobreposição (720p–1080p),
         # medindo a altura real (linha) das fontes na tela atual.
         self._font_hora: tuple | None = None
@@ -213,6 +215,26 @@ class TelaoWindow:
         self._current_alpha = self._alpha_relogio()
         # Exibe hora inicial
         self._exibir_hora_inicial()
+    def definir_marca_dagua_demo(self, ativo: bool) -> None:
+        """Liga/desliga a marca d'água discreta do modo demonstração."""
+        try:
+            if not ativo:
+                if self._marca_dagua_demo is not None:
+                    self._marca_dagua_demo.destroy()
+                    self._marca_dagua_demo = None
+                return
+            if self._marca_dagua_demo is not None:
+                self._marca_dagua_demo.lift()
+                return
+            self._marca_dagua_demo = tk.Label(
+                self.main_frame, text="MODO DEMONSTRAÇÃO",
+                bg='#000000', fg='#8b949e', bd=0, padx=10, pady=4,
+                font=("Arial", 12, "bold"))
+            self._marca_dagua_demo.place(relx=0.99, rely=0.98, anchor='se')
+            self._marca_dagua_demo.lift()
+        except tk.TclError:
+            pass
+
     def _alpha_relogio(self) -> float:
         """Retorna o alpha do telão no modo relógio (opaco se configurado)."""
         if getattr(self, "_relogio_cfg", {}).get("fundo_opaco"):

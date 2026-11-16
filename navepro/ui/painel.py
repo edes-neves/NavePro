@@ -11,6 +11,7 @@ import tkinter as tk
 import tkinter.messagebox
 import tkinter.simpledialog
 
+from license_manager import EMAIL_CONTATO, WHATSAPP_CONTATO
 from navepro.config import APP_VERSION
 from navepro.core.icones import _carregar_emoji, _carregar_icone
 from navepro.core.log import get_logger
@@ -86,6 +87,19 @@ class PainelMixin:
             fg='#f0c040', bg='#0d1117'
         )
         self.status_label.pack(pady=5)
+
+        # Aviso discreto do modo demonstração (some ao ativar a licença).
+        self.demo_banner = tk.Label(
+            main_frame,
+            text=("⚠️ MODO DEMONSTRAÇÃO — licença não ativada. Limites "
+                  "ativos. Clique para ativar ou fale: "
+                  f"{EMAIL_CONTATO} | WhatsApp {WHATSAPP_CONTATO}"),
+            font=("Arial", 10, "bold"), fg='#f85149', bg='#2d1114',
+            wraplength=760, justify='center', cursor='hand2',
+            padx=12, pady=6)
+        self.demo_banner.bind("<Button-1>", lambda e: self.abrir_licenca())
+        if getattr(self, "_modo_demonstracao", False):
+            self.demo_banner.pack(pady=(4, 2))
 
         # ── Cidade / Clima ──
         # Card de clima com visual destacado
@@ -352,7 +366,7 @@ class PainelMixin:
                           icone_png="hinos", tamanho=30, pack_padx=8)
         _criar_botao_pill(modulos_frame, "✝️", "Bíblia", self.janela_biblia,
                           icone_png="biblia", tamanho=30, pack_padx=8)
-        _criar_botao_pill(modulos_frame, "📋", "Ordem de Serviço", self.janela_ordem_servico,
+        _criar_botao_pill(modulos_frame, "📋", "Ordem de Projeção", self.janela_ordem_servico,
                           icone_png="ordem", tamanho=30, pack_padx=8)
         _criar_botao_pill(modulos_frame, "📢", "Anúncios", self.janela_anuncios,
                           icone_png="anuncios", tamanho=30, pack_padx=8)
@@ -392,6 +406,8 @@ class PainelMixin:
                                 command=self.abrir_config_projecao_dialogo)
         menu_config.add_command(label="🌐 Controle Remoto",
                                 command=self.abrir_controle_remoto)
+        menu_config.add_command(label="🔑 Ativar Licença / Ver ID",
+                                command=self.abrir_licenca)
         menu_config.add_separator()
         menu_config.add_command(label="Gerenciar Banco",
                                 command=self.abrir_gerenciador)
@@ -408,7 +424,7 @@ class PainelMixin:
                                 command=self.janela_hinos)
         menu_editar.add_command(label="Bíblia",
                                 command=self.janela_biblia)
-        menu_editar.add_command(label="Ordem de Serviço",
+        menu_editar.add_command(label="Ordem de Projeção",
                                 command=self.janela_ordem_servico)
         menubar.add_cascade(label="Editar", menu=menu_editar)
 
@@ -420,7 +436,7 @@ class PainelMixin:
                                 command=self.janela_hinos)
         menu_exibir.add_command(label="Bíblia",
                                 command=self.janela_biblia)
-        menu_exibir.add_command(label="Ordem de Serviço",
+        menu_exibir.add_command(label="Ordem de Projeção",
                                 command=self.janela_ordem_servico)
         menu_exibir.add_command(label="Anúncios",
                                 command=self.janela_anuncios)

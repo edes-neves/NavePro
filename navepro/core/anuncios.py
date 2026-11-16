@@ -170,7 +170,11 @@ def _montar_slides_anuncio_servico(anuncio: dict) -> list:
         slides.append(paragrafo)
     if not slides:
         slides = [titulo or "ANÚNCIO"]
-    return slides
+    try:
+        from license_manager import limitar_slides_anuncio
+        return limitar_slides_anuncio(slides)
+    except Exception:
+        return slides
 
 
 def _projetar_anuncio_ordserv(telao: object, anuncio: dict) -> bool:
@@ -182,6 +186,11 @@ def _projetar_anuncio_ordserv(telao: object, anuncio: dict) -> bool:
     """
     if not anuncio:
         return False
+    try:
+        from license_manager import limitar_slides_anuncio
+    except Exception:
+        def limitar_slides_anuncio(slides):
+            return slides
     tipo_an = (anuncio.get('tipo_midia') or 'slide').strip().lower()
     arquivo = (anuncio.get('arquivo_midia') or '')
     cfg_a: dict = {}
@@ -205,7 +214,7 @@ def _projetar_anuncio_ordserv(telao: object, anuncio: dict) -> bool:
                            "config": s.get("config") or ''})
         if not slides:
             slides = [{"texto": "ANÚNCIO", "imagem": '', "config": ''}]
-        telao.projetar_slides(slides)
+        telao.projetar_slides(limitar_slides_anuncio(slides))
         return True
     if tipo_an == 'imagem' and arquivo and os.path.exists(arquivo):
         if telao.projetar_imagem_com_texto(

@@ -28,6 +28,10 @@ from datetime import datetime
 from tkinter import ttk
 from typing import Any
 
+from license_manager import (
+    limitar_slides_anuncio,
+    verificar_licenca,
+)
 from navepro.config import (
     APP_VERSION,
     BACKEND_URL,
@@ -76,11 +80,11 @@ from navepro.core.paths import (
     UPLOAD_FOLDER,
     _aplicar_icone_janela,
 )
+from navepro.core.servidor_http import ServidorAsyncHTTP
 
 # ────────────────────────────────────────────────────────────────────
 # IMPORTS INTERNOS (infraestrutura modularizada)
 # ────────────────────────────────────────────────────────────────────
-from navepro.core.servidor_http import ServidorAsyncHTTP
 from navepro.core.slides import (
     _montar_slides_anuncio,
 )
@@ -107,6 +111,7 @@ from navepro.ui.janela_biblia import JanelaBibliaMixin
 from navepro.ui.janela_hinos import JanelaHinosMixin
 from navepro.ui.janela_ordem_servico import JanelaOrdemServicoMixin
 from navepro.ui.janela_transferencia import JanelaTransferenciaMixin
+from navepro.ui.licenca import LicencaMixin
 from navepro.ui.navegacao import NavegacaoSlidesMixin
 from navepro.ui.painel import PainelMixin
 from navepro.ui.remoto import ControleRemotoMixin
@@ -252,10 +257,16 @@ log = get_logger("app")
 # ────────────────────────────────────────────────────────────────────
 
 
-class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, ExecucaoServicoMixin, AtualizacaoMixin, JanelaHinosMixin, JanelaBibliaGradeMixin, JanelaBibliaMixin, JanelaAnunciosMixin, JanelaOrdemServicoMixin, JanelaTransferenciaMixin, GerenciadorMidiasMixin, ConfigRelogioMixin, PainelMixin):
+class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, ExecucaoServicoMixin, AtualizacaoMixin, JanelaHinosMixin, JanelaBibliaGradeMixin, JanelaBibliaMixin, JanelaAnunciosMixin, JanelaOrdemServicoMixin, JanelaTransferenciaMixin, GerenciadorMidiasMixin, ConfigRelogioMixin, PainelMixin, LicencaMixin):
     """Interface gráfica principal do sistema de projeção."""
 
     def __init__(self) -> None:
+        # Licença local (sem rede) ANTES de criar a interface: define se o
+        # app abre em modo demonstração. A lista negra é checada depois, em
+        # segundo plano, para não atrasar a abertura offline.
+        self._licenca_licenciada, self._licenca_motivo, self._licenca_machine_id = verificar_licenca(consultar_lista_negra=False)
+        self._modo_demonstracao = not self._licenca_licenciada
+        self._inicializacao_concluida = False
         # Força GDK backend X11 para evitar conflito GTK Wayland no Ubuntu 22.04
         if 'GDK_BACKEND' not in os.environ:
             os.environ['GDK_BACKEND'] = 'x11'
@@ -442,6 +453,8 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                 novo_telao.definir_relogio_oculto(self._relogio_oculto_telao)
                 novo_telao.definir_temperatura_oculta(
                     self._temperatura_oculta_telao)
+                novo_telao.definir_marca_dagua_demo(
+                    self._modo_demonstracao)
                 novo_telao._exibir_hora_inicial()
                 self._registrar_foco_apresentacao_telao(novo_telao)
             except Exception as _e_reap:
@@ -468,6 +481,11 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         # Aplica o tema (claro/escuro) lido do config logo após criar a UI,
         # sem alterar nenhuma cor hardcoded da construção padrão (escuro).
         self._aplicar_tema()
+
+        # Aplica o estado da licença (título, aviso e marca d'água).
+        self._aplicar_estado_licenca(
+            self._licenca_licenciada, self._licenca_motivo,
+            self._licenca_machine_id)
 
         # Mostra hora inicial no telão (sem temperatura ainda)
         t = getattr(self.player, "telao", None)
@@ -804,7 +822,7 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             self._anuncio_proj.update({
                 "id": None, "dados": {}, "config": {},
                 "mslides": None, "idx_map": []})
-        self.player.telao.projetar_slides(slides)
+        self.player.telao.projetar_slides(limitar_slides_anuncio(slides))
         if ao_atualizar:
             ao_atualizar()
         return {'ok': True, 'titulo': anuncio.get('titulo') or '',
@@ -2384,13 +2402,40 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
 
     def _inicializar_em_segundo_plano(self) -> None:
         """Tarefas de inicialização que rodam após a interface aparecer."""
-        # Inicia servidor HTTP (API de mídia local + controle remoto)
-        self._servidor_thread = ServidorAsyncHTTP()
-        self._servidor_thread.ui = self._na_thread_ui
-        self._servidor_thread.remoto = self._remoto_despacho
-        self._aplicar_acesso_remoto()
-        self._servidor_thread.iniciar()
-        log.info(f"✅ Servidor async rodando em {BACKEND_URL}")
+        # API + controle remoto só existem no modo licenciado. No modo
+        # demonstração o servidor nem é iniciado.
+        self._inicializacao_concluida = True
+        if getattr(self, "_modo_demonstracao", False):
+            self._servidor_thread = None
+            log.info("⚠️ Modo demonstração: API e controle remoto desativados.")
+        elif hasattr(self, "_iniciar_servidor_api"):
+            self._iniciar_servidor_api()
+        else:
+            # Compatibilidade com o teste headless que extrai este método.
+            self._servidor_thread = ServidorAsyncHTTP()
+            self._servidor_thread.ui = self._na_thread_ui
+            self._servidor_thread.remoto = self._remoto_despacho
+            self._aplicar_acesso_remoto()
+            self._servidor_thread.iniciar()
+            log.info(f"✅ Servidor async rodando em {BACKEND_URL}")
+
+        # Revalida a licença incluindo a lista negra online, em thread para
+        # não segurar a abertura quando não há internet.
+        def _checar_licenca_online():
+            try:
+                from license_manager import verificar_licenca as _verificar
+                ok, motivo, mid = _verificar()
+            except Exception as exc:  # noqa: BLE001 — nunca derruba o app
+                log.exception("Falha ao checar licença online: %s", exc)
+                return
+            try:
+                self.root.after(
+                    0, lambda: self._aplicar_estado_licenca(ok, motivo, mid))
+            except Exception:  # noqa: BLE001 — janela já pode ter fechado
+                pass
+
+        threading.Thread(target=_checar_licenca_online, daemon=True,
+                         name="navepro-licenca").start()
 
         # Registra no banco os arquivos de mídia da pasta uploads sem travar
         # a interface: com muitos arquivos, a varredura + INSERTs + stat do

@@ -42,3 +42,12 @@
 
 # Banco de dados local (não versionar)
 *.db
+
+# Licenciamento: chaves privadas, licenças e ferramentas administrativas locais.
+# NUNCA versionar estes arquivos (a chave privada permite emitir licenças).
+/chave_privada.pem
+/chave_publica.pem
+/gerador_licenca.py
+/criar_chaves.py
+*.key
+/licenca.key

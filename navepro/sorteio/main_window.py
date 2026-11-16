@@ -2,6 +2,8 @@ import tkinter as tk
 import webbrowser
 from collections.abc import Callable
 
+from license_manager import LIMITE_DEMO_SORTEIO, modo_demonstracao
+
 from . import APP_DEVELOPER, APP_LICENSE, APP_VERSION, APP_YEAR, ctk
 from .font_manager import ui_font
 from .history_manager import HistoryManager
@@ -427,6 +429,11 @@ class MainWindow:
         na próxima vez, devolvendo o telão ao estado de espera — sem recriar a
         janela pública (o que faria o telão piscar durante o culto).
         """
+        if (modo_demonstracao()
+                and int(fim) - int(inicio) + 1 > LIMITE_DEMO_SORTEIO):
+            raise ValueError(
+                f"Modo Demonstração: no máximo {LIMITE_DEMO_SORTEIO} "
+                "números por sorteio.")
         self._reiniciar_para_config()
         self._on_mode_change("Números")
         self._entry_start.delete(0, "end")
@@ -442,6 +449,10 @@ class MainWindow:
     def configurar_nomes(self, nomes: list, por_vez: int = 1) -> None:
         """Configura o sorteio por lista de nomes (um por linha)."""
         nomes = [str(n) for n in nomes]
+        if modo_demonstracao() and len(nomes) > LIMITE_DEMO_SORTEIO:
+            raise ValueError(
+                f"Modo Demonstração: no máximo {LIMITE_DEMO_SORTEIO} "
+                "nomes por sorteio.")
         self._reiniciar_para_config()
         self._on_mode_change("Nomes")
         self._names_text.delete("1.0", "end")
@@ -987,6 +998,13 @@ class MainWindow:
             self._error_label.configure(text="Adicione pelo menos um nome para o sorteio.")
             self._sound.play("error")
             return
+        if modo_demonstracao() and len(names) > LIMITE_DEMO_SORTEIO:
+            self._error_label.configure(
+                text=(f"Modo Demonstração: no máximo {LIMITE_DEMO_SORTEIO} "
+                      "nomes por sorteio. Ative a licença para liberar.")
+            )
+            self._sound.play("error")
+            return
 
         self._stored_names = list(names)
         self._engine.configure_names(names)
@@ -1067,6 +1085,15 @@ class MainWindow:
             start, end = self._validator.validate_range(start_val, end_val)
         except ValidationError as e:
             self._error_label.configure(text=str(e))
+            self._sound.play("error")
+            return
+
+        if (modo_demonstracao()
+                and end - start + 1 > LIMITE_DEMO_SORTEIO):
+            self._error_label.configure(
+                text=(f"Modo Demonstração: no máximo {LIMITE_DEMO_SORTEIO} "
+                      "números por sorteio. Ative a licença para liberar.")
+            )
             self._sound.play("error")
             return
 

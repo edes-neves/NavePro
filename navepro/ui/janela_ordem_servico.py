@@ -14,6 +14,10 @@ import tkinter.simpledialog
 from datetime import datetime
 from tkinter import ttk
 
+from license_manager import (
+    LIMITE_DEMO_ITENS_PROJECAO,
+    modo_demonstracao,
+)
 from navepro.config import EXTENSOES_AUDIO, EXTENSOES_VIDEO
 from navepro.core.anuncios import (
     _buscar_anuncio_por_ref,
@@ -79,7 +83,7 @@ class JanelaOrdemServicoMixin:
         # (o dict é recriado vazio ao reiniciar o processo).
         dados = _carregar_servicos_json()
         janela = tk.Toplevel(self.root)
-        janela.title("📋 Ordem de Serviço")
+        janela.title("📋 Ordem de Projeção")
         _limitar_ao_monitor(janela, 1100, 750,
                             area=self._area_monitor_operador())
         janela.configure(bg='#0d1117')
@@ -114,7 +118,7 @@ class JanelaOrdemServicoMixin:
         main.columnconfigure(0, weight=1)
         main.rowconfigure(2, weight=1)
 
-        tk.Label(main, text="📋 Ordem de Serviço",
+        tk.Label(main, text="📋 Ordem de Projeção",
                  font=("Arial", 16, "bold"), fg='#f0c040', bg='#0d1117'
                  ).grid(row=0, column=0, sticky='ew', pady=(0, 10))
 
@@ -122,7 +126,7 @@ class JanelaOrdemServicoMixin:
         serv_frame = tk.Frame(main, bg='#161b22')
         serv_frame.grid(row=1, column=0, sticky='ew', pady=5, ipady=5)
 
-        tk.Label(serv_frame, text="Serviço:", fg='#f0c040', bg='#161b22',
+        tk.Label(serv_frame, text="Projeção:", fg='#f0c040', bg='#161b22',
                  font=("Arial", 11, "bold")).pack(side='left', padx=8)
 
         servico_var = tk.StringVar()
@@ -1093,6 +1097,15 @@ class JanelaOrdemServicoMixin:
             duracao = getattr(player, "duracao_total", None)
             if not duracao:
                 duracao = _duracao_cache.get(caminho)
+            if not duracao:
+                # URL (ex.: YouTube): o player não mede o arquivo remoto
+                # (ffprobe só lê caminho local), então usa a duração já
+                # capturada/estimada do item para a contagem regressiva.
+                try:
+                    duracao = float(
+                        (_item or {}).get("duracao_estimada_segundos") or 0)
+                except (TypeError, ValueError):
+                    duracao = 0.0
             tocando = bool(getattr(player, "is_playing", False))
             pausado = bool(getattr(player, "is_paused", False))
             if not duracao or not tocando:
@@ -2386,6 +2399,16 @@ class JanelaOrdemServicoMixin:
                         itens[idx]["versiculos"] = vers_salvos
                     novo_id = item_id
                 else:
+                    if (modo_demonstracao()
+                            and len(itens) >= LIMITE_DEMO_ITENS_PROJECAO):
+                        tkinter.messagebox.showwarning(
+                            "Modo Demonstração",
+                            ("Esta projeção já tem o limite de "
+                             f"{LIMITE_DEMO_ITENS_PROJECAO} itens do modo "
+                             "demonstração.\nAtive a licença para adicionar "
+                             "mais itens."),
+                            parent=add_win)
+                        return
                     novo_id = dados["_proximo_id_item"]
                     dados["_proximo_id_item"] = novo_id + 1
                     original = None
