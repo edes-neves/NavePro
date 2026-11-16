@@ -28,6 +28,7 @@ from navepro.config import (  # noqa: E402
     EXTENSOES_VIDEO,
     SUFIXOS_IMAGEM,
 )
+from navepro.core.fontes_pil import _texto_simples  # noqa: E402
 from navepro.core.textos import _numero_do_titulo, _termo_like, remover_acentos  # noqa: E402
 
 _MOD = os.path.join(RAIZ, "navepro", "core", "anuncios.py")
@@ -61,6 +62,7 @@ def _montar_ns(conn, anuncios_file, uploads):
         "_numero_do_titulo": _numero_do_titulo,
         "remover_acentos": remover_acentos,
         "_termo_like": _termo_like,
+        "_texto_simples": _texto_simples,
     }
     for no in _TREE.body:
         if isinstance(no, ast.FunctionDef):

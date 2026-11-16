@@ -6,6 +6,7 @@ O arquivo gerado (.navepro) é um ZIP com esta estrutura:
     anuncios.json     anúncios com a mídia apontando para midia/<arquivo>
     servicos.json     cópia das ordens de serviço (servicos.json)
     midia/<arquivo>   imagens, PDFs, áudio e vídeo usados nos anúncios
+    apresentacoes/<arquivo>  PowerPoint/Impress usados nas ordens (sempre)
 
 Regras de segurança (a importação nunca destrói dados sem rede):
   * antes de gravar qualquer coisa, cria um .navepro de segurança em
@@ -17,11 +18,14 @@ Regras de segurança (a importação nunca destrói dados sem rede):
     dentro do arquivo exportado;
   * as mídias escolhidas direto no editor de item (caminho_arquivo) NÃO
     são transferidas: o caminho é do computador de origem e o app já cai
-    no acervo local quando ele não existe. Para que essas ordens continuem
-    apontando para as mesmas pastas em outra máquina, a parte do caminho
-    relativa à pasta do usuário vira o token {{HOME}} na exportação e é
-    reexpandida para a pasta do usuário atual na importação (caminhos fora
-    da pasta do usuário — e pacotes antigos — ficam intactos);
+    no acervo local quando ele não existe. A exceção são as APRESENTAÇÕES
+    (PowerPoint/Impress), que sempre entram em apresentacoes/ e são
+    copiadas para uploads na importação — sem isso a ordem chegava ao outro
+    computador apontando para um arquivo que só existia no primeiro. Para
+    os demais arquivos, a parte do caminho relativa à pasta do usuário vira
+    o token {{HOME}} na exportação e é reexpandida para a pasta do usuário
+    atual na importação (caminhos fora da pasta do usuário — e pacotes
+    antigos — ficam intactos);
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ import zipfile
 from collections.abc import Callable
 from datetime import datetime
 
+from navepro.config import EXTENSOES_APRESENTACAO
 from navepro.core.ambiente import _eh_windows
 from navepro.core.log import get_logger
 from navepro.core.paths import DATA_USER_DIR
@@ -41,9 +46,10 @@ from navepro.core.textos import normalizar_texto
 
 log = get_logger("transferencia")
 
-FORMATO_TRANSFERENCIA = 1
+FORMATO_TRANSFERENCIA = 2
 EXTENSAO_TRANSFERENCIA = ".navepro"
 PASTA_MIDIA = "midia"
+PASTA_APRESENTACOES = "apresentacoes"
 ARQ_MANIFESTO = "manifest.json"
 ARQ_ANUNCIOS = "anuncios.json"
 ARQ_SERVICOS = "servicos.json"
@@ -97,11 +103,14 @@ def _caminho_de_portatil(caminho: str, home: str | None = None) -> str:
     return os.path.join(home, *partes)
 
 
-def _servicos_portateis(servicos: dict, home: str | None = None) -> dict:
-    """Cópia de `servicos` com os caminho_arquivo dos itens tokenizados.
+def _servicos_portateis(servicos: dict, home: str | None = None,
+                        mapa_apresentacoes: dict[str, str] | None = None) -> dict:
+    """Cópia de `servicos` com os caminho_arquivo dos itens portáteis.
 
-    A exportação grava essa cópia, sem alterar o objeto em memória do app
-    (a janela da Ordem de Serviço continua mostrando os caminhos reais).
+    Apresentações incluídas no pacote apontam para o membro do ZIP; os
+    demais arquivos viram o token {{HOME}}. A exportação grava essa cópia,
+    sem alterar o objeto em memória do app (a janela da Ordem de Serviço
+    continua mostrando os caminhos reais).
     """
     if not isinstance(servicos, dict):
         return servicos
@@ -119,8 +128,12 @@ def _servicos_portateis(servicos: dict, home: str | None = None) -> dict:
                 continue
             item_copia = dict(item)
             if "caminho_arquivo" in item_copia:
-                item_copia["caminho_arquivo"] = _caminho_para_portatil(
-                    item_copia.get("caminho_arquivo") or "", home)
+                caminho = item_copia.get("caminho_arquivo") or ""
+                if mapa_apresentacoes and caminho in mapa_apresentacoes:
+                    item_copia["caminho_arquivo"] = mapa_apresentacoes[caminho]
+                else:
+                    item_copia["caminho_arquivo"] = _caminho_para_portatil(
+                        caminho, home)
             itens.append(item_copia)
         copia["itens"] = itens
         lista.append(copia)
@@ -228,20 +241,62 @@ def _mapa_de_midia(anuncios: list[dict]) -> dict[str, str]:
     return mapa
 
 
+def _apresentacoes_dos_servicos(servicos: dict) -> list[str]:
+    """Caminhos de apresentações existentes usados pelas ordens de serviço."""
+    caminhos: list[str] = []
+    for serv in (servicos or {}).get("servicos") or []:
+        if not isinstance(serv, dict):
+            continue
+        for item in serv.get("itens") or []:
+            if not isinstance(item, dict):
+                continue
+            caminho = (item.get("caminho_arquivo") or "").strip()
+            if not caminho or not os.path.isfile(caminho):
+                continue
+            if os.path.splitext(caminho)[1].lower() not in EXTENSOES_APRESENTACAO:
+                continue
+            if caminho not in caminhos:
+                caminhos.append(caminho)
+    return caminhos
+
+
+def _mapa_de_apresentacoes(servicos: dict) -> dict[str, str]:
+    """Membro do ZIP para cada apresentação usada pelas ordens."""
+    mapa: dict[str, str] = {}
+    usados: dict[str, int] = {}
+    for caminho in _apresentacoes_dos_servicos(servicos):
+        base, ext = os.path.splitext(os.path.basename(caminho))
+        nome = f"{base}{ext}"
+        cont = usados.get(nome.lower(), 0)
+        usados[nome.lower()] = cont + 1
+        if cont:
+            nome = f"{base}_{cont}{ext}"
+        mapa[caminho] = f"{PASTA_APRESENTACOES}/{nome}"
+    return mapa
+
+
 def exportar_transferencia(
         destino: str,
         anuncios: list[dict],
         servicos: dict,
         incluir_midia: bool = True,
+        incluir_apresentacoes: bool = True,
         progresso: Callable[[str], None] | None = None,
 ) -> dict:
-    """Escreve o arquivo .navepro com anúncios, ordens e (opcional) mídia.
+    """Escreve o arquivo .navepro com anúncios, ordens, mídia e apresentações.
 
-    Returns um resumo {anuncios, servicos, midia, destino}.
+    As apresentações usadas nas ordens entram sempre junto (a não ser que
+    `incluir_apresentacoes=False`, usado no backup para não duplicar
+    arquivos grandes). Returns um resumo {anuncios, servicos, midia,
+    apresentacoes, destino}.
     """
     mapa = _mapa_de_midia(anuncios) if incluir_midia else {}
-    servicos_portateis = _servicos_portateis(servicos)
+    mapa_apres = _mapa_de_apresentacoes(servicos) \
+        if incluir_apresentacoes else {}
+    servicos_portateis = _servicos_portateis(
+        servicos, mapa_apresentacoes=mapa_apres)
     arquivos = sorted(mapa.items(), key=lambda par: par[1])
+    arquivos_apres = sorted(mapa_apres.items(), key=lambda par: par[1])
     destino = os.path.abspath(os.path.expanduser(destino))
     if not destino.lower().endswith(EXTENSAO_TRANSFERENCIA):
         destino += EXTENSAO_TRANSFERENCIA
@@ -273,6 +328,7 @@ def exportar_transferencia(
                     "anuncios": len(lista_para_zip),
                     "servicos": len((servicos or {}).get("servicos") or []),
                     "midia": len(arquivos),
+                    "apresentacoes": len(arquivos_apres),
                 }, ensure_ascii=False, indent=2))
             zf.writestr(
                 ARQ_ANUNCIOS,
@@ -286,6 +342,10 @@ def exportar_transferencia(
             # tamanho.
             for i, (caminho, membro) in enumerate(arquivos, 1):
                 _aviso(f"Copiando mídia {i}/{len(arquivos)}: "
+                       f"{os.path.basename(caminho)}")
+                zf.write(caminho, membro, compress_type=zipfile.ZIP_STORED)
+            for i, (caminho, membro) in enumerate(arquivos_apres, 1):
+                _aviso(f"Copiando apresentação {i}/{len(arquivos_apres)}: "
                        f"{os.path.basename(caminho)}")
                 zf.write(caminho, membro, compress_type=zipfile.ZIP_STORED)
         os.makedirs(os.path.dirname(destino) or ".", exist_ok=True)
@@ -302,10 +362,12 @@ def exportar_transferencia(
         "anuncios": len(anuncios),
         "servicos": len((servicos or {}).get("servicos") or []),
         "midia": len(arquivos),
+        "apresentacoes": len(arquivos_apres),
     }
     log.info(f"✅ Transferência exportada: {destino} "
           f"({resumo['anuncios']} anúncio(s), {resumo['servicos']} ordem(ns), "
-          f"{resumo['midia']} mídia(s))")
+          f"{resumo['midia']} mídia(s), "
+          f"{resumo['apresentacoes']} apresentação(ões))")
     return resumo
 
 
@@ -313,8 +375,32 @@ def exportar_transferencia(
 # IMPORTAÇÃO
 # ────────────────────────────────────────────────────────────────────
 
+def _membro_local_seguro(temp_dir: str, membro: str) -> str | None:
+    """Caminho local de um membro do ZIP, ou None se escapar do temp_dir.
+
+    Além do filtro de ".." na extração, isto impede que um servicos.json
+    malicioso aponte para "midia/../../etc/passwd" e faça a importação
+    copiar um arquivo do sistema para os uploads.
+    """
+    valor = membro or ""
+    # No Windows "\" também separa caminho; no Linux é um caractere comum
+    # (o comportamento histórico de nomes com "\" não muda).
+    normal = valor.replace("\\", "/") if _eh_windows() else valor
+    partes = normal.split("/")
+    if not partes or os.path.isabs(normal) or ".." in partes:
+        return None
+    base = os.path.abspath(temp_dir)
+    destino = os.path.abspath(os.path.join(base, *partes))
+    try:
+        if os.path.commonpath([base, destino]) != base:
+            return None
+    except ValueError:
+        return None
+    return destino
+
+
 def _abrir_pacote(arquivo: str) -> dict:
-    """Lê o .navepro e extrai a mídia em uma pasta temporária.
+    """Lê o .navepro e extrai mídia/apresentações em uma pasta temporária.
 
     Returns {manifest, anuncios, servicos, temp_dir}.
     """
@@ -348,12 +434,17 @@ def _abrir_pacote(arquivo: str) -> dict:
                 raise ValueError("Lista de anúncios inválida na transferência.")
             if not isinstance(servicos, dict):
                 servicos = {"servicos": []}
+            pastas = (PASTA_MIDIA, PASTA_APRESENTACOES)
             for membro in zf.namelist():
-                if not membro.startswith(f"{PASTA_MIDIA}/") or membro.endswith("/"):
+                if membro.endswith("/"):
                     continue
-                # Só extrai o que está dentro de midia/ (sem ".." nem
-                # caminho absoluto) para nunca escrever fora da pasta.
-                relativo = membro[len(PASTA_MIDIA) + 1:]
+                prefixo = next(
+                    (p for p in pastas if membro.startswith(f"{p}/")), None)
+                if prefixo is None:
+                    continue
+                # Só extrai o que está dentro das pastas do pacote (sem ".."
+                # nem caminho absoluto) para nunca escrever fora do temp_dir.
+                relativo = membro[len(prefixo) + 1:]
                 # Zip-slip: no Windows "\" também é separador de caminho —
                 # "midia/..\..\evil" escaparia da pasta temporária. Só
                 # normaliza lá para não mudar nomes com "\" no Linux.
@@ -362,7 +453,9 @@ def _abrir_pacote(arquivo: str) -> dict:
                 if not relativo or os.path.isabs(relativo) \
                         or ".." in relativo.split("/"):
                     continue
-                destino = os.path.join(temp_dir, *membro.split("/"))
+                destino = _membro_local_seguro(temp_dir, membro)
+                if destino is None:
+                    continue
                 os.makedirs(os.path.dirname(destino), exist_ok=True)
                 with zf.open(membro) as origem, open(destino, "wb") as alvo:
                     shutil.copyfileobj(origem, alvo)
@@ -393,6 +486,22 @@ def _membros_usados(anuncios: list[dict]) -> list[str]:
     return usados
 
 
+def _membros_apresentacao_usados(servicos: dict) -> list[str]:
+    """Membros de apresentacoes/ realmente citados pelas ordens."""
+    usados: list[str] = []
+    for serv in (servicos or {}).get("servicos") or []:
+        if not isinstance(serv, dict):
+            continue
+        for item in serv.get("itens") or []:
+            if not isinstance(item, dict):
+                continue
+            caminho = (item.get("caminho_arquivo") or "").strip()
+            if caminho.startswith(f"{PASTA_APRESENTACOES}/") \
+                    and caminho not in usados:
+                usados.append(caminho)
+    return usados
+
+
 def _copiar_midia_do_pacote(
         temp_dir: str, membros: list[str],
         copiar_midia: Callable[[str], str | None],
@@ -401,7 +510,11 @@ def _copiar_midia_do_pacote(
     """Copia a mídia extraída para uploads e devolve membro -> caminho local."""
     destino: dict[str, str] = {}
     for membro in membros:
-        origem = os.path.join(temp_dir, *membro.split("/"))
+        origem = _membro_local_seguro(temp_dir, membro)
+        if origem is None:
+            avisos.append(f"caminho inválido no arquivo (ignorado): "
+                          f"{os.path.basename(membro)}")
+            continue
         if not os.path.isfile(origem):
             avisos.append(f"mídia não encontrada no arquivo: "
                           f"{os.path.basename(membro)}")
@@ -442,7 +555,8 @@ def criar_backup(
         n += 1
     try:
         resumo = exportar_transferencia(destino, anuncios, servicos,
-                                        incluir_midia=True)
+                                        incluir_midia=True,
+                                        incluir_apresentacoes=False)
     except (OSError, ValueError) as e:
         log.exception(f"⚠️ Erro ao criar backup: {e}")
         return None
@@ -467,20 +581,31 @@ def _converter_itens(
         nome_servico: str,
         avisos: list[str],
         prox_item: int,
+        apresentacoes_local: dict[str, str] | None = None,
 ) -> tuple[list[dict], int]:
     """Copia itens importados com id livre e referência de anúncio remapeada.
 
     Itens de hino/versículo/texto continuam funcionando pelo letra_snapshot e
-    pelo título — não dependem da biblioteca do outro computador.
+    pelo título — não dependem da biblioteca do outro computador. As
+    apresentações incluídas no pacote passam a apontar para a cópia local.
     """
+    apresentacoes_local = apresentacoes_local or {}
     novos: list[dict] = []
     for item in itens or []:
         if not isinstance(item, dict):
             continue
         novo = dict(item)
         if "caminho_arquivo" in novo:
-            novo["caminho_arquivo"] = _caminho_de_portatil(
-                novo.get("caminho_arquivo") or "")
+            caminho = novo.get("caminho_arquivo") or ""
+            if caminho.startswith(f"{PASTA_APRESENTACOES}/"):
+                novo["caminho_arquivo"] = apresentacoes_local.get(caminho, "")
+                if not novo["caminho_arquivo"]:
+                    avisos.append(
+                        f"ordem “{nome_servico or 'sem nome'}”: apresentação "
+                        f"não encontrada no arquivo "
+                        f"({os.path.basename(caminho)})")
+            else:
+                novo["caminho_arquivo"] = _caminho_de_portatil(caminho)
         if (novo.get("tipo") or "").lower() == "anuncio" \
                 and novo.get("referencia_id") not in (None, ""):
             try:
@@ -535,7 +660,8 @@ def importar_transferencia(
     resumo: dict = {
         "anuncios_novos": 0, "anuncios_atualizados": 0, "anuncios_ignorados": 0,
         "servicos_novos": 0, "servicos_atualizados": 0, "servicos_ignorados": 0,
-        "midia_copiada": 0, "avisos": avisos, "backup": None,
+        "midia_copiada": 0, "apresentacoes_copiadas": 0,
+        "avisos": avisos, "backup": None,
     }
     try:
         backup = criar_backup(listar_anuncios, servicos)
@@ -550,6 +676,11 @@ def importar_transferencia(
         midia_local = _copiar_midia_do_pacote(
             temp_dir, _membros_usados(anuncios), copiar_midia, avisos)
         resumo["midia_copiada"] = len(midia_local)
+
+        apresentacoes_local = _copiar_midia_do_pacote(
+            temp_dir, _membros_apresentacao_usados(pacote["servicos"]),
+            copiar_midia, avisos)
+        resumo["apresentacoes_copiadas"] = len(apresentacoes_local)
 
         if modo == "substituir":
             ids_locais = [a.get("id") for a in listar_anuncios()
@@ -625,14 +756,15 @@ def importar_transferencia(
             if alvo is not None and modo == "atualizar":
                 alvo["itens"], prox_item = _converter_itens(
                     serv.get("itens") or [], mapa_anuncios, nome, avisos,
-                    prox_item)
+                    prox_item, apresentacoes_local)
                 resumo["servicos_atualizados"] += 1
                 continue
             if alvo is not None:
                 resumo["servicos_ignorados"] += 1
                 continue
             itens, prox_item = _converter_itens(
-                serv.get("itens") or [], mapa_anuncios, nome, avisos, prox_item)
+                serv.get("itens") or [], mapa_anuncios, nome, avisos,
+                prox_item, apresentacoes_local)
             while prox_serv in usados_serv:
                 prox_serv += 1
             novo = dict(serv)
@@ -656,5 +788,6 @@ def importar_transferencia(
           f"{resumo['anuncios_novos']} anúncio(s) novo(s), "
           f"{resumo['anuncios_atualizados']} atualizado(s), "
           f"{resumo['servicos_novos']} ordem(ns) — "
-          f"{resumo['midia_copiada']} mídia(s) copiada(s).")
+          f"{resumo['midia_copiada']} mídia(s) e "
+          f"{resumo['apresentacoes_copiadas']} apresentação(ões) copiada(s).")
     return resumo

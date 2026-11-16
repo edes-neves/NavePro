@@ -7,6 +7,7 @@ import re
 import unicodedata
 
 from navepro.core.banco import db_query
+from navepro.core.fontes_pil import _texto_simples
 from navepro.core.textos import _termo_like
 
 
@@ -31,12 +32,12 @@ def _montar_slides_letra(titulo: str, letra_completa: str) -> list:
 def _previa_slide(slide: object) -> str:
     """Texto curto de um slide para exibir no controle remoto."""
     if isinstance(slide, dict):
-        return (slide.get("texto") or "").strip()
+        return _texto_simples(slide.get("texto") or "").strip()
     if isinstance(slide, tuple):
-        texto = str(slide[0]) if slide else ""
+        texto = _texto_simples(str(slide[0])) if slide else ""
         ref = str(slide[1]) if len(slide) > 1 and slide[1] else ""
         return f"{ref} — {texto}" if ref else texto
-    return str(slide or "")
+    return _texto_simples(str(slide or ""))
 
 
 def _montar_slides_anuncio(anuncio: dict) -> list:
@@ -44,7 +45,9 @@ def _montar_slides_anuncio(anuncio: dict) -> list:
     slide 0 é o título, os demais são os parágrafos do texto (cada
     parágrafo = 1 slide, exatamente como o editor adiciona telas)."""
     titulo = (anuncio.get('titulo') or '').strip()
-    texto = (anuncio.get('texto') or '').strip()
+    # Slides só de texto não usam a formatação rica (negrito/cor): mostram
+    # o conteúdo como o operador lê, sem as marcas ** e {c:...}.
+    texto = _texto_simples(anuncio.get('texto') or '').strip()
     paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto)
                   if seg.strip()]
     slides = [titulo] if titulo else []

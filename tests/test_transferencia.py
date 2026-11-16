@@ -28,8 +28,8 @@ _MOD = os.path.join(RAIZ, "navepro", "core", "transferencia.py")
 _SRC = open(_MOD, encoding="utf-8").read()
 _TREE = ast.parse(_SRC)
 
-_NOMES_CONST = ("PASTA_MIDIA", "ARQ_MANIFESTO", "ARQ_ANUNCIOS",
-                "ARQ_SERVICOS", "FORMATO_TRANSFERENCIA",
+_NOMES_CONST = ("PASTA_MIDIA", "PASTA_APRESENTACOES", "ARQ_MANIFESTO",
+                "ARQ_ANUNCIOS", "ARQ_SERVICOS", "FORMATO_TRANSFERENCIA",
                 "EXTENSAO_TRANSFERENCIA")
 
 
@@ -51,12 +51,15 @@ def _montar_abrir(windows: bool):
         "_eh_windows": lambda: windows,
     }
     ns.update(_constantes())
-    for no in ast.walk(_TREE):
-        if isinstance(no, ast.FunctionDef) and no.name == "_abrir_pacote":
-            exec(compile(ast.get_source_segment(_SRC, no), "<_abrir_pacote>",
-                         "exec"), ns)  # noqa: S102
-            return ns["_abrir_pacote"]
-    raise AssertionError("_abrir_pacote não encontrada em transferencia.py")
+    for nome in ("_membro_local_seguro", "_abrir_pacote"):
+        for no in ast.walk(_TREE):
+            if isinstance(no, ast.FunctionDef) and no.name == nome:
+                exec(compile(ast.get_source_segment(_SRC, no), f"<{nome}>",
+                             "exec"), ns)  # noqa: S102
+                break
+        else:
+            raise AssertionError(f"{nome} não encontrada em transferencia.py")
+    return ns["_abrir_pacote"]
 
 
 def _extraidos(temp_dir: str) -> set[str]:

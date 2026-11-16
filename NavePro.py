@@ -55,6 +55,7 @@ from navepro.core.foco_apresentacao import (
 )
 from navepro.core.fontes_pil import (
     _caixa_texto_padrao,
+    _texto_simples,
 )
 from navepro.core.inicializacao import (
     _sincronizar_uploads_midia,
@@ -861,7 +862,8 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                 mh = int(1440 * 0.04) or 40
                 mv = int(1080 * 0.06) or 60
                 caixa = _caixa_texto_padrao(
-                    texto_local, 1440 - mh * 2, 1080 - mv * 2, mh, mv,
+                    _texto_simples(texto_local), 1440 - mh * 2, 1080 - mv * 2,
+                    mh, mv,
                     aspect_imagem=float(getattr(
                         self.player.telao, "_composicao_aspect_imagem", 0.0)
                         or 0.0))

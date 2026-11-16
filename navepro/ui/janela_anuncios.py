@@ -12,7 +12,7 @@ import re
 import tkinter as tk
 import tkinter.messagebox
 import tkinter.simpledialog
-from tkinter import ttk
+from tkinter import colorchooser, ttk
 
 from navepro.config import EXTENSOES_AUDIO, EXTENSOES_VIDEO, SUFIXOS_IMAGEM
 from navepro.core.anuncios import (
@@ -29,6 +29,10 @@ from navepro.core.fontes_pil import (
     _caixa_texto_padrao,
     _calcular_texto_em_caixa,
     _fonte_familia_do_pil,
+    _layout_texto_rico,
+    _limite_altura_texto,
+    _texto_simples,
+    _texto_tem_formatacao,
 )
 from navepro.core.log import get_logger
 from navepro.core.paths import UPLOAD_FOLDER
@@ -50,6 +54,109 @@ log = get_logger("janela_anuncios")
 
 # Botões e campos desenham cantos arredondados (fachada do tkinter).
 tk = TkArredondado(tk)
+
+
+def _selecao_do_texto(widget) -> tuple[str, str, str] | None:
+    """Devolve (início, fim, texto) da seleção de um tk.Text, se houver."""
+    try:
+        faixas = widget.tag_ranges("sel")
+        if not faixas:
+            return None
+        # Índices numéricos (não "sel.first/sel.last"): as marcas de seleção
+        # deixam de existir assim que a formatação edita o texto, e aí o
+        # insert/delete falharia em silêncio.
+        inicio, fim = str(faixas[0]), str(faixas[1])
+        return inicio, fim, widget.get(inicio, fim)
+    except Exception:
+        return None
+
+
+def _aplicar_marcacao_texto(widget, antes: str, depois: str,
+                            alternar: bool = False) -> bool:
+    """Envolve a seleção de um tk.Text com as marcas, num único passo de undo.
+
+    Com ``alternar=True``, uma seleção que já começa/termina com as marcas é
+    desmarcada em vez de receber outra camada (usado pelo botão Negrito).
+    Devolve True quando alterou o texto.
+    """
+    selecao = _selecao_do_texto(widget)
+    if selecao is None:
+        return False
+    inicio, _fim, texto = selecao
+    if not texto:
+        return False
+    try:
+        autosep = bool(int(widget.cget("autoseparators")))
+    except Exception:
+        autosep = False
+    try:
+        if autosep:
+            widget.configure(autoseparators=False)
+            widget.edit_separator()
+        if (alternar and texto.startswith(antes)
+                and texto.endswith(depois)
+                and len(texto) >= len(antes) + len(depois)):
+            interno = texto[len(antes):len(texto) - len(depois)]
+            widget.delete(inicio, _fim)
+            widget.insert(inicio, interno)
+            fim_novo = widget.index(f"{inicio}+{len(interno)}c")
+            widget.tag_remove("sel", "1.0", "end")
+            widget.tag_add("sel", inicio, fim_novo)
+            widget.mark_set("insert", fim_novo)
+        else:
+            widget.insert(inicio, antes)
+            fim = widget.index(f"{_fim}+{len(antes)}c")
+            widget.insert(fim, depois)
+            inicio_novo = widget.index(f"{inicio}+{len(antes)}c")
+            fim_novo = widget.index(f"{inicio_novo}+{len(texto)}c")
+            widget.tag_remove("sel", "1.0", "end")
+            widget.tag_add("sel", inicio_novo, fim_novo)
+            widget.mark_set("insert", fim_novo)
+        return True
+    except Exception:
+        return False
+    finally:
+        if autosep:
+            try:
+                widget.edit_separator()
+                widget.configure(autoseparators=True)
+            except Exception:
+                pass
+
+
+def _limpar_formatacao_texto(widget) -> bool:
+    """Remove as marcas de formatação da seleção, num único passo de undo."""
+    selecao = _selecao_do_texto(widget)
+    if selecao is None:
+        return False
+    inicio, fim, texto = selecao
+    simples = _texto_simples(texto)
+    if simples == texto:
+        return False
+    try:
+        autosep = bool(int(widget.cget("autoseparators")))
+    except Exception:
+        autosep = False
+    try:
+        if autosep:
+            widget.configure(autoseparators=False)
+            widget.edit_separator()
+        widget.delete(inicio, fim)
+        widget.insert(inicio, simples)
+        fim_novo = widget.index(f"{inicio}+{len(simples)}c")
+        widget.tag_remove("sel", "1.0", "end")
+        widget.tag_add("sel", inicio, fim_novo)
+        widget.mark_set("insert", fim_novo)
+        return True
+    except Exception:
+        return False
+    finally:
+        if autosep:
+            try:
+                widget.edit_separator()
+                widget.configure(autoseparators=True)
+            except Exception:
+                pass
 
 
 class JanelaAnunciosMixin:
@@ -913,6 +1020,80 @@ class JanelaAnunciosMixin:
                 _adicionar_menu_texto(texto_widget)
                 widget_texto["w"] = texto_widget
 
+                # Formatação do texto (negrito/cor por trecho). As marcas
+                # ficam visíveis no campo e são interpretadas na prévia e no
+                # telão; texto sem marcas continua igual ao de antes.
+                barra_fmt = tk.Frame(painel, bg='#0d1117')
+                barra_fmt.pack(fill='x', side='top', pady=(0, 6))
+
+                def _atualizar_apos_formatar() -> None:
+                    try:
+                        _redesenhar(final=True)
+                    except Exception:
+                        pass
+
+                def _formatar_negrito() -> None:
+                    if _aplicar_marcacao_texto(texto_widget, "**", "**",
+                                               alternar=True):
+                        texto_widget.focus_set()
+                        _atualizar_apos_formatar()
+                    else:
+                        tkinter.messagebox.showinfo(
+                            "Negrito",
+                            "Selecione o trecho que deseja deixar em negrito.",
+                            parent=texto_widget.winfo_toplevel())
+
+                def _formatar_cor() -> None:
+                    selecao = _selecao_do_texto(texto_widget)
+                    if selecao is None or not selecao[2]:
+                        tkinter.messagebox.showinfo(
+                            "Cor do texto",
+                            "Selecione o trecho que deseja colorir.",
+                            parent=texto_widget.winfo_toplevel())
+                        return
+                    try:
+                        cor = colorchooser.askcolor(
+                            color="#f0c040", title="Cor do texto",
+                            parent=texto_widget.winfo_toplevel())[1]
+                    except Exception:
+                        cor = None
+                    if not cor:
+                        return
+                    if _aplicar_marcacao_texto(
+                            texto_widget, f"{{c:{cor.lower()}}}", "{/c}"):
+                        texto_widget.focus_set()
+                        _atualizar_apos_formatar()
+
+                def _formatar_limpar() -> None:
+                    if _limpar_formatacao_texto(texto_widget):
+                        texto_widget.focus_set()
+                        _atualizar_apos_formatar()
+                    else:
+                        tkinter.messagebox.showinfo(
+                            "Limpar formatação",
+                            "Selecione um trecho com negrito ou cor.",
+                            parent=texto_widget.winfo_toplevel())
+
+                tk.Button(barra_fmt, text="B", font=("Arial", 10, "bold"),
+                          bg='#21262d', fg='#f0c040',
+                          activebackground='#30363d', cursor='hand2',
+                          padx=10, pady=1, command=_formatar_negrito
+                          ).pack(side='left')
+                tk.Button(barra_fmt, text="🎨 Cor", font=("Arial", 9, "bold"),
+                          bg='#21262d', fg='#c9d1d9',
+                          activebackground='#30363d', cursor='hand2',
+                          padx=10, pady=1, command=_formatar_cor
+                          ).pack(side='left', padx=6)
+                tk.Button(barra_fmt, text="⌫ Limpar", font=("Arial", 9),
+                          bg='#21262d', fg='#8b949e',
+                          activebackground='#30363d', cursor='hand2',
+                          padx=8, pady=1, command=_formatar_limpar
+                          ).pack(side='left')
+                tk.Label(barra_fmt,
+                         text="Selecione o trecho e use B/Cor",
+                         font=("Arial", 8), fg='#8b949e',
+                         bg='#0d1117').pack(side='right')
+
                 quadro = tk.Frame(painel, bg='#0d1117')
                 quadro.pack(fill='both', expand=True)
                 canvas = tk.Canvas(quadro, bg='#0d1117', width=CW, height=CH,
@@ -1067,28 +1248,58 @@ class JanelaAnunciosMixin:
                     if not txt:
                         return
                     escala = float(tam_txt.get("s") or 1.0)
-                    limite = int(VH * 0.92)
-                    fonte_pil, linhas = _calcular_texto_em_caixa(
-                        txt, tw, th, base_pct=_PCT_FONTE_CAIXA * escala,
-                        limite_alt=limite)
-                    familia = _fonte_familia_do_pil(fonte_pil)
-                    passo = fonte_pil.size + max(1, fonte_pil.size // 5)
-                    cx = px + pw // 2
-                    # Mesmo travamento do telão: o bloco fica centralizado na
-                    # caixa, mas não sai do espaço virtual 1440x1080.
-                    alt_bloco = int(passo * len(linhas) * ESCALA)
-                    cy_txt = py + ph // 2 - alt_bloco // 2
-                    if cy_txt < 0:
-                        cy_txt = 0
-                    elif cy_txt + alt_bloco > CH:
-                        cy_txt = max(0, CH - alt_bloco)
-                    for i, ln in enumerate(linhas):
-                        if ln:
-                            itens["t_txt_" + str(i)] = canvas.create_text(
-                                cx, cy_txt + i * passo * ESCALA, text=ln,
-                                anchor='n', width=pw, fill='#c9d1d9',
-                                font=(familia, max(
-                                    8, int(fonte_pil.size * ESCALA)), 'bold'))
+                    limite = _limite_altura_texto(th, escala, VH)
+                    if _texto_tem_formatacao(txt):
+                        layout = _layout_texto_rico(
+                            txt, tw, th, base_pct=_PCT_FONTE_CAIXA * escala,
+                            limite_alt=limite)
+                        passo = layout["altura_linha"]
+                        alt_bloco = int(layout["altura_bloco"] * ESCALA)
+                        cy_txt = py + ph // 2 - alt_bloco // 2
+                        if cy_txt < 0:
+                            cy_txt = 0
+                        elif cy_txt + alt_bloco > CH:
+                            cy_txt = max(0, CH - alt_bloco)
+                        pt = -max(8, int(round(layout["tamanho"] * ESCALA)))
+                        for i, ln in enumerate(layout["linhas"]):
+                            x = (layout["padding"]
+                                 + (layout["largura_util"]
+                                    - layout["larguras"][i]) // 2)
+                            for j, (parte, negrito, cor,
+                                    largura_parte) in enumerate(ln):
+                                if not parte:
+                                    continue
+                                fonte_pil = layout["fontes"][bool(negrito)]
+                                itens[f"t_txt_{i}_{j}"] = canvas.create_text(
+                                    px + int(x * ESCALA),
+                                    cy_txt + int(i * passo * ESCALA),
+                                    text=parte, anchor='nw',
+                                    fill=(cor or '#c9d1d9'),
+                                    font=(_fonte_familia_do_pil(fonte_pil), pt,
+                                          'bold' if negrito else 'normal'))
+                                x += largura_parte
+                    else:
+                        fonte_pil, linhas = _calcular_texto_em_caixa(
+                            txt, tw, th, base_pct=_PCT_FONTE_CAIXA * escala,
+                            limite_alt=limite)
+                        familia = _fonte_familia_do_pil(fonte_pil)
+                        passo = fonte_pil.size + max(1, fonte_pil.size // 5)
+                        cx = px + pw // 2
+                        # Mesmo travamento do telão: o bloco fica centralizado
+                        # na caixa, mas não sai do espaço virtual 1440x1080.
+                        alt_bloco = int(passo * len(linhas) * ESCALA)
+                        cy_txt = py + ph // 2 - alt_bloco // 2
+                        if cy_txt < 0:
+                            cy_txt = 0
+                        elif cy_txt + alt_bloco > CH:
+                            cy_txt = max(0, CH - alt_bloco)
+                        for i, ln in enumerate(linhas):
+                            if ln:
+                                itens["t_txt_" + str(i)] = canvas.create_text(
+                                    cx, cy_txt + i * passo * ESCALA, text=ln,
+                                    anchor='n', width=pw, fill='#c9d1d9',
+                                    font=(familia, max(
+                                        8, int(fonte_pil.size * ESCALA)), 'bold'))
                     # Alças do texto por cima do conteúdo.
                     _desenhar_alcas(px, py, pw, ph, "t_", '#e3b341')
 
@@ -1282,7 +1493,9 @@ class JanelaAnunciosMixin:
                               "IMAGEM: arraste no meio para mover, puxe as alças "
                               "(laterais/cantos) para redimensionar.\n"
                               "TEXTO: a caixa amarela funciona igual — arraste no meio "
-                              "para mover, puxe as alças para redimensionar.",
+                              "para mover, puxe as alças para redimensionar.\n"
+                              "FORMATAÇÃO: selecione um trecho e use B, Cor ou Limpar; "
+                              "o texto se ajusta sozinho ao tamanho da caixa.",
                          bg='#0d1117', fg='#8b949e', justify='left',
                          font=("Arial", 9)).pack(fill='x', pady=(6, 0))
 
@@ -1409,7 +1622,9 @@ class JanelaAnunciosMixin:
                 def _atualizar_lista():
                     lista_box.delete(0, tk.END)
                     for i, t in enumerate(_slides_estado["lista"]):
-                        rotulo = (t.get("texto") or '').strip().split('\n')[0] or f"(slide {i + 1})"
+                        rotulo = (_texto_simples(t.get("texto") or '')
+                                  .strip().split('\n')[0]
+                                  or f"(slide {i + 1})")
                         if len(rotulo) > 36:
                             rotulo = rotulo[:36] + "…"
                         marcador = "🖼" if t.get("imagem") else "·"

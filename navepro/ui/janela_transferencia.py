@@ -91,8 +91,9 @@ class JanelaTransferenciaMixin:
             janela,
             text=("Gere um arquivo .navepro no computador de origem e importe-o "
                   "no outro.\nVem junto: os anúncios, as ordens de serviço "
-                  "(com os itens\napontando para os anúncios certos) e as mídias "
-                  "usadas pelos anúncios.\n\n🛡️ Antes de importar, o NavePro "
+                  "(com os itens\napontando para os anúncios certos), as mídias "
+                  "usadas pelos anúncios\ne as apresentações (PowerPoint/Impress) "
+                  "usadas nas ordens.\n\n🛡️ Antes de importar, o NavePro "
                   "salva um backup em ~/.navepro/backups —\nnada do que já "
                   "existe é apagado sem esse backup."),
             justify='left', font=("Arial", 10), fg='#c9d1d9', bg='#0d1117',
@@ -127,7 +128,8 @@ class JanelaTransferenciaMixin:
                 "✅ Sim (recomendado): o arquivo fica maior, mas os anúncios\n"
                 "    funcionam no outro computador com as mídias.\n\n"
                 "⚠️ Não: o arquivo fica pequeno, mas as mídias NÃO vêm junto\n"
-                "    (os textos e as ordens vêm de qualquer forma).",
+                "    (os textos, as ordens e as apresentações das ordens\n"
+                "    vêm de qualquer forma).",
                 parent=janela)
             _rodar(
                 "Exportando…",
@@ -207,6 +209,7 @@ class JanelaTransferenciaMixin:
 
         def _exportou(resumo: dict):
             midia = resumo.get("midia") or 0
+            apresentacoes = resumo.get("apresentacoes") or 0
             linhas = [f"Arquivo salvo em:\n\n{resumo['destino']}",
                       f"\n{resumo['anuncios']} anúncio(s) e "
                       f"{resumo['servicos']} ordem(ns) de serviço."]
@@ -215,6 +218,9 @@ class JanelaTransferenciaMixin:
             elif resumo["anuncios"]:
                 linhas.append("\nNenhuma mídia foi incluída (você escolheu "
                               "não incluir).")
+            if apresentacoes:
+                linhas.append(f"{apresentacoes} apresentação(ões) das ordens "
+                              f"foi/foram incluída(s).")
             tkinter.messagebox.showinfo(
                 "✅ Transferência exportada", "\n".join(linhas), parent=janela)
 
@@ -227,6 +233,8 @@ class JanelaTransferenciaMixin:
                 f"Ordens de serviço novas: {resumo['servicos_novos']}",
                 f"Ordens atualizadas: {resumo['servicos_atualizados']}",
                 f"Mídias copiadas para este computador: {resumo['midia_copiada']}",
+                f"Apresentações copiadas para este computador: "
+                f"{resumo.get('apresentacoes_copiadas', 0)}",
             ]
             if resumo.get("backup"):
                 linhas.append(f"\n🛡️ Backup do que estava aqui antes:\n"

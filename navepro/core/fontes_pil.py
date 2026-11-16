@@ -10,25 +10,32 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from navepro.core.ambiente import _eh_windows
 
 _FONTE_PIL_CACHE: dict[str, str | None] = {}
 
 
-def _procurar_fonte_no_sistema() -> str | None:
+def _procurar_fonte_no_sistema(negrito: bool = True) -> str | None:
     """Procura um TTF/OTF adequado nas pastas de fontes do sistema.
 
     Primeiro pelos nomes conhecidos (DejaVu, Liberation, FreeSans, Arial).
     Se nenhum existir — caso de distros que só trazem outra família, como
     algumas edições do BigLinux/GNOME — aceita QUALQUER .ttf/.otf instalado,
-    preferindo peso negrito e família sans. O que não pode acontecer é cair na
-    fonte padrão do PIL (fixa em ~10 px), que deixava o texto minúsculo e sem
-    reação ao A−/A+.
+    preferindo o peso pedido (negrito/normal) e família sans. O que não pode
+    acontecer é cair na fonte padrão do PIL (fixa em ~10 px), que deixava o
+    texto minúsculo e sem reação ao A−/A+.
     """
-    nomes = ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf",
-             "LiberationSans-Bold.ttf", "LiberationSans-Regular.ttf",
-             "FreeSansBold.ttf", "arialbd.ttf", "arial.ttf")
+    if negrito:
+        nomes = ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf",
+                 "LiberationSans-Bold.ttf", "LiberationSans-Regular.ttf",
+                 "FreeSansBold.ttf", "arialbd.ttf", "arial.ttf")
+    else:
+        nomes = ("DejaVuSans.ttf", "LiberationSans-Regular.ttf",
+                 "FreeSans.ttf", "arial.ttf",
+                 "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf",
+                 "arialbd.ttf")
     raizes = [
         "/usr/share/fonts",
         "/usr/local/share/fonts",
@@ -48,11 +55,11 @@ def _procurar_fonte_no_sistema() -> str | None:
                 if arquivo.lower().endswith((".ttf", ".otf")):
                     avulsas.append((dirpath, arquivo))
     if avulsas:
-        # Preferência: negrito > sans > ordem alfabética (determinístico).
+        # Preferência: peso pedido > sans > ordem alfabética (determinístico).
         def _peso(item: tuple) -> tuple:
             _dir, arquivo = item
             baixo = arquivo.lower()
-            return (0 if "bold" in baixo else 1,
+            return (0 if (("bold" in baixo) == negrito) else 1,
                     0 if ("sans" in baixo or "dejavu" in baixo) else 1,
                     baixo)
         avulsas.sort(key=_peso)
@@ -61,8 +68,12 @@ def _procurar_fonte_no_sistema() -> str | None:
     return None
 
 
-def _localizar_fonte_ttf() -> str | None:
-    """Localiza (e memoriza) um TTF em negrito usado para medir/desenhar texto.
+def _localizar_fonte_ttf(negrito: bool = True) -> str | None:
+    """Localiza (e memoriza) um TTF usado para medir/desenhar texto.
+
+    Por padrão devolve o peso negrito (comportamento histórico do app); com
+    ``negrito=False`` devolve o regular, necessário para o texto rico (só o
+    trecho marcado sai em negrito).
 
     Cobre Debian/Ubuntu, Arch, Fedora e a runtime do Flatpak
     (org.freedesktop.Platform), onde o DejaVu fica em /usr/share/fonts/dejavu
@@ -71,42 +82,58 @@ def _localizar_fonte_ttf() -> str | None:
     minúsculo no telão e o A−/A+ não surtia efeito.
     """
     cache = _FONTE_PIL_CACHE
-    if "path" in cache:
-        return cache["path"]
+    chave = "path" if negrito else "path_regular"
+    if chave in cache:
+        return cache[chave]
     if _eh_windows():
+        if negrito:
+            nomes = ('arialbd.ttf', 'arial.ttf')
+        else:
+            nomes = ('arial.ttf', 'arialbd.ttf')
         candidatos = [
-            os.path.join(os.environ.get('WINDIR', 'C:/Windows'),
-                         'Fonts', 'arialbd.ttf'),
-            os.path.join(os.environ.get('WINDIR', 'C:/Windows'),
-                         'Fonts', 'arial.ttf'),
+            os.path.join(os.environ.get('WINDIR', 'C:/Windows'), 'Fonts', n)
+            for n in nomes
         ]
         encontrado = next((p for p in candidatos if os.path.exists(p)), None)
     else:
-        candidatos = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/gnu-free/FreeSansBold.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        ]
+        if negrito:
+            candidatos = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+                "/usr/share/fonts/gnu-free/FreeSansBold.ttf",
+                "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            ]
+        else:
+            candidatos = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/gnu-free/FreeSans.ttf",
+                "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+            ]
         encontrado = next((p for p in candidatos if os.path.exists(p)), None)
         if encontrado is None:
-            encontrado = _procurar_fonte_no_sistema()
-    cache["path"] = encontrado
+            encontrado = _procurar_fonte_no_sistema(negrito)
+    cache[chave] = encontrado
     return encontrado
 
 
-def _carregar_fonte_pil(tamanho: int):
-    """Carrega uma fonte Truetype (DejaVuSans) com fallback para a padrão."""
+def _carregar_fonte_pil(tamanho: int, negrito: bool = True):
+    """Carrega uma fonte Truetype com fallback para a padrão do PIL."""
     try:
         from PIL import ImageFont
     except Exception:
         return None
-    caminho = _localizar_fonte_ttf()
+    caminho = _localizar_fonte_ttf(negrito)
     if caminho:
         try:
             return ImageFont.truetype(caminho, tamanho)
@@ -114,8 +141,13 @@ def _carregar_fonte_pil(tamanho: int):
             pass
     # Último recurso antes da fonte embutida: deixa o próprio Pillow procurar
     # pelo nome da família (alguns builds resolvem via fontconfig).
-    for _nome in ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf",
-                  "LiberationSans-Bold.ttf", "arialbd.ttf"):
+    if negrito:
+        nomes = ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf",
+                 "LiberationSans-Bold.ttf", "arialbd.ttf")
+    else:
+        nomes = ("DejaVuSans.ttf", "LiberationSans-Regular.ttf",
+                 "arial.ttf", "DejaVuSans-Bold.ttf")
+    for _nome in nomes:
         try:
             return ImageFont.truetype(_nome, tamanho)
         except Exception:
@@ -188,6 +220,84 @@ def _fonte_familia_do_pil(fonte) -> str:
         return "Helvetica"
 
 
+# ── Texto rico dos anúncios (negrito e cor por trecho) ──────────────
+#
+# A formatação é guardada no próprio texto, com marcas simples que o
+# operador vê e pode editar/apagar como qualquer outro caractere:
+#
+#   **texto**              → negrito
+#   {c:#RRGGBB}texto{/c}   → cor do trecho
+#
+# Marca sem fechamento é tratada como texto comum (nunca "engole" o que
+# o operador digitou). Texto sem marca continua sendo desenhado pelo
+# caminho antigo (tudo em negrito), preservando os anúncios existentes.
+
+_RE_COR_RICA = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def _analisar_texto_rico(texto: str) -> tuple[list[tuple[str, bool, str | None]], bool]:
+    """Divide o texto em trechos (texto, negrito, cor) e diz se há marcação."""
+    runs: list[tuple[str, bool, str | None]] = []
+    buffer: list[str] = []
+    cores: list[str] = []
+    negrito = False
+    marcou = False
+    texto = texto or ""
+    total = len(texto)
+    i = 0
+
+    def _descarregar() -> None:
+        if buffer:
+            cor = cores[-1] if cores else None
+            runs.append(("".join(buffer), negrito, cor))
+            buffer.clear()
+
+    while i < total:
+        if texto.startswith("**", i) and (
+                negrito or texto.find("**", i + 2) != -1):
+            _descarregar()
+            negrito = not negrito
+            marcou = True
+            i += 2
+            continue
+        if texto.startswith("{c:", i):
+            fim = texto.find("}", i + 3)
+            if fim != -1:
+                cor = texto[i + 3:fim].strip().lower()
+                fecha = texto[fim + 1:].lower().find("{/c}")
+                if _RE_COR_RICA.fullmatch(cor) and fecha != -1:
+                    _descarregar()
+                    cores.append(cor)
+                    marcou = True
+                    i = fim + 1
+                    continue
+        if cores and texto[i:i + 4].lower() == "{/c}":
+            _descarregar()
+            cores.pop()
+            marcou = True
+            i += 4
+            continue
+        buffer.append(texto[i])
+        i += 1
+    _descarregar()
+    return runs, marcou
+
+
+def _parse_texto_rico(texto: str) -> list[tuple[str, bool, str | None]]:
+    """Trechos (texto, negrito, cor) do texto, descartando as marcas válidas."""
+    return _analisar_texto_rico(texto)[0]
+
+
+def _texto_tem_formatacao(texto: str) -> bool:
+    """True quando o texto usa ao menos uma marca válida de negrito/cor."""
+    return _analisar_texto_rico(texto)[1]
+
+
+def _texto_simples(texto: str) -> str:
+    """Texto sem as marcas de formatação (para listas, prévias e slides)."""
+    return "".join(trecho for trecho, _negrito, _cor in _parse_texto_rico(texto))
+
+
 # Fração da ALTURA da caixa de texto que corresponde ao tamanho de fonte
 # "de projeto". A caixa do compositor foi desenhada para ~3 linhas de texto
 # preenchendo a caixa, ou seja 1/(3 * 1.2) ≈ 0.28. O valor antigo era 0.10,
@@ -245,6 +355,165 @@ def _calcular_texto_em_caixa(texto: str, caixa_larg: int, caixa_alt: int,
             break
         tam, fonte, linhas = maior, f2, l2
     return fonte, linhas
+
+
+def _limite_altura_texto(caixa_alt: int, escala: float = 1.0,
+                         tela_alt: int = 0) -> int:
+    """Altura máxima do bloco de texto para o auto-ajuste.
+
+    Na escala normal (A−/A+ em 1.0) o texto cabe na PRÓPRIA CAIXA: é o que o
+    operador vê na prévia ao redimensioná-la. Escalas maiores que 1.0 podem
+    passar da caixa (até 92% da tela), pois são um aumento explícito.
+    """
+    caixa = max(60, int(caixa_alt or 0))
+    if tela_alt:
+        limite_tela = int(max(60, tela_alt) * 0.92)
+    else:
+        limite_tela = caixa
+    if float(escala or 1.0) > 1.0 + 1e-9:
+        return max(caixa, limite_tela)
+    return min(limite_tela, caixa)
+
+
+def _quebrar_linhas_ricas(runs: list, largura_max: int, fontes: dict,
+                          draw) -> tuple[list, list]:
+    """Quebra os trechos em linhas, medindo cada palavra com seu peso.
+
+    Devolve (linhas, larguras). Cada linha é uma lista de
+    (texto, negrito, cor, largura) já compactada — trechos vizinhos com o
+    mesmo estilo viram um só, para o desenho não sair picado.
+    """
+    tokens: list[tuple[str, bool, str | None]] = []
+    for trecho, negrito, cor in runs:
+        for parte in re.findall(r"\n|[^\S\n]+|\S+", trecho or ""):
+            tokens.append((parte, negrito, cor))
+    linhas: list[tuple[list, float]] = []
+    atual: list[tuple[str, bool, str | None, float]] = []
+    largura_atual = 0.0
+
+    def _largura(parte: str, negrito: bool) -> float:
+        fonte = fontes.get(bool(negrito)) or fontes.get(False)
+        try:
+            return float(draw.textlength(parte, font=fonte))
+        except Exception:
+            try:
+                return float(len(parte) * fonte.size * 0.6)
+            except Exception:
+                return float(len(parte) * 10)
+
+    def _fechar() -> None:
+        nonlocal atual, largura_atual
+        while atual and atual[-1][0] and not atual[-1][0].strip():
+            removido = atual.pop()
+            largura_atual -= removido[3]
+        compacta: list[tuple[str, bool, str | None, float]] = []
+        for item in atual:
+            if (compacta and compacta[-1][1] == item[1]
+                    and compacta[-1][2] == item[2]):
+                ant = compacta[-1]
+                compacta[-1] = (ant[0] + item[0], item[1], item[2],
+                                ant[3] + item[3])
+            else:
+                compacta.append(item)
+        linhas.append((compacta, max(0.0, largura_atual)))
+        atual = []
+        largura_atual = 0.0
+
+    for parte, negrito, cor in tokens:
+        if parte == "\n":
+            _fechar()
+            continue
+        if not parte.strip():
+            if atual:
+                w = _largura(parte, negrito)
+                atual.append((parte, negrito, cor, w))
+                largura_atual += w
+            continue
+        w = _largura(parte, negrito)
+        if atual and largura_atual + w > largura_max:
+            _fechar()
+        atual.append((parte, negrito, cor, w))
+        largura_atual += w
+    if atual or not linhas:
+        _fechar()
+    resultado = [[(t, n, c, w) for t, n, c, w in linha]
+                 for linha, _larg in linhas]
+    larguras = [int(round(larg)) for _linha, larg in linhas]
+    return resultado, larguras
+
+
+def _layout_texto_rico(texto: str, caixa_larg: int, caixa_alt: int,
+                       base_pct: float = _PCT_FONTE_CAIXA,
+                       limite_alt: int | None = None,
+                       negrito_base: bool = False,
+                       alinhamento: str = "center") -> dict:
+    """Calcula fonte, linhas e posição dos trechos dentro da caixa.
+
+    Usado de forma IDÊNTICA pela prévia do editor e pelo telão. A fonte é
+    proporcional à altura da caixa e encolhe para o bloco caber em
+    'limite_alt' (por padrão, a própria caixa) e na largura útil. Trechos
+    com negrito/cor mantêm o estilo por linha.
+
+    Retorna um dict com 'linhas' (cada item: texto, negrito, cor, largura),
+    'larguras', 'altura_linha', 'altura_bloco', 'tamanho', 'padding',
+    'largura_util', 'altura_util', 'alinhamento', 'fontes' e 'tem_formatacao'.
+    """
+    runs, tem = _analisar_texto_rico(texto or "")
+    if not tem:
+        runs = [(texto or "", negrito_base, None)]
+    larg = max(60, int(caixa_larg))
+    alt = max(60, int(caixa_alt))
+    limite = max(60, int(limite_alt)) if limite_alt else alt
+    pad = max(2, int(min(larg, alt) * 0.02))
+    larg_util = max(20, larg - pad * 2)
+    alt_util = max(20, limite - pad * 2)
+    desenho = _draw_pil_reciclavel()
+
+    def _medir(tam: int) -> tuple:
+        fontes = {False: _carregar_fonte_pil(tam, negrito=False),
+                  True: _carregar_fonte_pil(tam, negrito=True)}
+        linhas, larguras = _quebrar_linhas_ricas(
+            runs, larg_util, fontes, desenho)
+        altura_linha = tam + max(1, tam // 5)
+        altura_bloco = altura_linha * max(1, len(linhas))
+        largura_max = max(larguras, default=0)
+        return fontes, linhas, larguras, altura_linha, altura_bloco, largura_max
+
+    base = max(12, min(400, int(round(alt * (base_pct or _PCT_FONTE_CAIXA)))))
+    tam = base
+    fontes, linhas, larguras, altura_linha, bloco, larg_max = _medir(tam)
+    # Mínimo de 8 px: é o menor tamanho que a prévia e o telão desenham, então
+    # encolher abaixo disso só faria o layout medir uma coisa e desenhar
+    # outra. Texto muito longo numa caixa pequena chega nesse piso.
+    while (bloco > alt_util or larg_max > larg_util) and tam > 8:
+        fator = min(1.0,
+                    alt_util / max(1, bloco),
+                    larg_util / max(1, larg_max))
+        tam = max(8, min(tam - 1, int(tam * fator) - 1))
+        fontes, linhas, larguras, altura_linha, bloco, larg_max = _medir(tam)
+    while tam < base:
+        maior = min(base, tam + max(1, int(tam * 0.03)))
+        f2, l2, larg2, alt_linha2, bloco2, larg_max2 = _medir(maior)
+        if bloco2 > alt_util or larg_max2 > larg_util:
+            break
+        tam = maior
+        fontes, linhas, larguras = f2, l2, larg2
+        altura_linha, bloco, larg_max = alt_linha2, bloco2, larg_max2
+    return {
+        "tamanho": tam,
+        "linhas": linhas,
+        "larguras": larguras,
+        "altura_linha": altura_linha,
+        "altura_bloco": bloco,
+        "largura_max": larg_max,
+        "tem_formatacao": tem,
+        "negrito_base": negrito_base,
+        "padding": pad,
+        "largura_util": larg_util,
+        "altura_util": alt_util,
+        "alinhamento": alinhamento,
+        "fontes": fontes,
+    }
 
 
 def _caixa_texto_padrao(texto: str, area_larg: int, area_alt: int,

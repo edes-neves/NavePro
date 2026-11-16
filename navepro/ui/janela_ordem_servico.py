@@ -21,6 +21,7 @@ from navepro.core.anuncios import (
     _listar_anuncios_db,
 )
 from navepro.core.banco import db_query
+from navepro.core.fontes_pil import _texto_simples
 from navepro.core.inicializacao import _sincronizar_uploads_midia
 from navepro.core.log import get_logger
 from navepro.core.servicos import (
@@ -1818,7 +1819,7 @@ class JanelaOrdemServicoMixin:
                 anun_preview.delete('1.0', tk.END)
                 if an:
                     cat = (an.get("categoria") or "").strip()
-                    texto = (an.get("texto") or "").strip()
+                    texto = _texto_simples(an.get("texto") or "").strip()
                     anun_preview.insert(
                         tk.END, ((cat + "\n") if cat else "") + texto[:500])
                 else:
@@ -2316,7 +2317,7 @@ class JanelaOrdemServicoMixin:
                             parent=add_win)
                         return
                     ref_id = ref_an.get("id")
-                    letra_snap = ref_an.get("texto") or ""
+                    letra_snap = _texto_simples(ref_an.get("texto") or "")
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_an.get("titulo") or f"Item ({tipo.title()})"
                 elif tipo == "anuncio":
@@ -2328,7 +2329,7 @@ class JanelaOrdemServicoMixin:
                         return
                     ref_an = rows_match[0]
                     ref_id = ref_an.get("id")
-                    letra_snap = ref_an.get("texto") or ""
+                    letra_snap = _texto_simples(ref_an.get("texto") or "")
                     if not titulo or _usou_titulo_como_busca:
                         titulo = ref_an.get("titulo") or f"Item ({tipo.title()})"
                 elif tipo == "versiculo" and _usou_painel_biblia:

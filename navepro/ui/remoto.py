@@ -24,6 +24,7 @@ from navepro.core.anuncios import (
     _listar_anuncios_db,
 )
 from navepro.core.banco import db_query
+from navepro.core.fontes_pil import _texto_simples
 from navepro.core.log import get_logger
 from navepro.core.paths import CONFIG_FILE, UPLOAD_FOLDER
 from navepro.core.rede import _ip_da_rede
@@ -1122,7 +1123,7 @@ class ControleRemotoMixin:
             if ref_an is None:
                 return (False, 'O anúncio selecionado não foi encontrado.', {})
             ref_id = ref_an.get('id')
-            letra_snap = ref_an.get('texto') or ''
+            letra_snap = _texto_simples(ref_an.get('texto') or '')
             if not titulo or _usou_titulo_como_busca:
                 titulo = ref_an.get('titulo') or 'Item (Anúncio)'
         elif tipo == 'anuncio':
@@ -1132,7 +1133,7 @@ class ControleRemotoMixin:
                         f'Nenhum anúncio encontrado para: "{termo}".', {})
             ref_an = rows[0]
             ref_id = ref_an.get('id')
-            letra_snap = ref_an.get('texto') or ''
+            letra_snap = _texto_simples(ref_an.get('texto') or '')
             if not titulo or _usou_titulo_como_busca:
                 titulo = ref_an.get('titulo') or 'Item (Anúncio)'
         elif tipo == 'versiculo' and _usou_painel_biblia:

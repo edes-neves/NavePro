@@ -27,6 +27,9 @@ from navepro.core.fontes_pil import (
     _caixa_texto_config,
     _calcular_texto_em_caixa,
     _fonte_familia_do_pil,
+    _layout_texto_rico,
+    _limite_altura_texto,
+    _texto_tem_formatacao,
 )
 from navepro.core.log import get_logger
 from navepro.core.monitores import _escolher_monitor_telao, get_monitors_config
@@ -170,6 +173,7 @@ class TelaoWindow:
         self._texto_escala = 1.0
         self._texto_largura_base = None
         self._caixa_texto_itens: list = []
+        self._texto_rico_itens: list = []
         self._caixa_texto_box: tuple | None = None
         self._caixa_texto_margem_ref: int = 0
         self._caixa_texto_ref_cabe: bool = False
@@ -798,8 +802,18 @@ class TelaoWindow:
         # Agenda retorno automático do relógio + temperatura
         seg = max(1, int(float(cfg.get("duracao_seg", 30))))
         self._proj_timer = self.root.after(seg * 1000, self._retornar_ao_relogio)
+    def _limpar_texto_rico(self) -> None:
+        """Remove os itens do texto rico (negrito/cor) desenhados no canvas."""
+        for item in getattr(self, "_texto_rico_itens", []) or []:
+            try:
+                self.canvas.delete(item)
+            except tk.TclError:
+                pass
+        self._texto_rico_itens = []
+
     def _limpar_caixa_texto(self) -> None:
         """Remove a caixa (cartão) desenhada atrás do texto bíblico."""
+        self._limpar_texto_rico()
         for item in getattr(self, "_caixa_texto_itens", []) or []:
             try:
                 self.canvas.delete(item)
@@ -1484,6 +1498,7 @@ class TelaoWindow:
         if not texto:
             # Slide só de imagem: esconde o texto de um slide anterior
             # (overlay_text foi usado pela projeção/tela anterior).
+            self._limpar_texto_rico()
             self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
             self._current_text = ""
         self._composicao_aspect_imagem = ow / max(1.0, oh)
@@ -1525,9 +1540,46 @@ class TelaoWindow:
         if alt_tela < 200:
             # Canvas ainda sem tamanho (primeira projeção): usa o monitor.
             alt_tela = int(getattr(self._monitor, "height", 0) or 0) or ch
-        # A caixa é guia de layout: a fonte vem do tamanho da caixa * a escala
-        # do A−/A+ e o bloco pode ocupar até 92% da altura do telão.
-        limite = int(alt_tela * 0.92)
+        # Com a escala normal o texto é ajustado para caber na própria caixa;
+        # o A+ (escala > 1) permite passar da caixa, até 92% do telão.
+        limite = _limite_altura_texto(ch, escala, alt_tela)
+        self._limpar_texto_rico()
+        if _texto_tem_formatacao(texto):
+            # Texto rico: cada trecho (negrito/cor) vira um item do canvas.
+            # O overlay_text fica oculto para não duplicar o texto.
+            layout = _layout_texto_rico(
+                texto, cw, ch, base_pct=_PCT_FONTE_CAIXA * escala,
+                limite_alt=limite)
+            self.canvas.itemconfig(self.overlay_text, text="", state="hidden")
+            passo = layout["altura_linha"]
+            alt_bloco = layout["altura_bloco"]
+            topo = cy + (ch - alt_bloco) // 2
+            if topo < 0:
+                topo = 0
+            elif topo + alt_bloco > alt_tela:
+                topo = max(0, alt_tela - alt_bloco)
+            pt = -max(8, min(300, int(layout["tamanho"])))
+            for i, linha in enumerate(layout["linhas"]):
+                x = (cx + layout["padding"]
+                     + (layout["largura_util"]
+                        - layout["larguras"][i]) // 2)
+                y = topo + i * passo
+                for parte, negrito, cor, largura_parte in linha:
+                    if not parte:
+                        continue
+                    fonte_pil = layout["fontes"][bool(negrito)]
+                    item = self.canvas.create_text(
+                        x, y, text=parte, anchor="nw",
+                        font=(_fonte_familia_do_pil(fonte_pil), pt,
+                              "bold" if negrito else "normal"),
+                        fill=cor or cor_texto)
+                    self._texto_rico_itens.append(item)
+                    x += largura_parte
+            self._current_text = texto
+            self._current_temp = ""
+            self.root.update_idletasks()
+            return
+        # Caminho histórico (texto sem marcação): um único item, tudo negrito.
         fonte_pil, linhas = _calcular_texto_em_caixa(
             texto, cw, ch, base_pct=_PCT_FONTE_CAIXA * escala,
             limite_alt=limite)

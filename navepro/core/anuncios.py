@@ -15,6 +15,7 @@ import shutil
 
 from navepro.config import EXTENSOES_AUDIO, EXTENSOES_VIDEO, SUFIXOS_IMAGEM
 from navepro.core.banco import db_execute, db_query
+from navepro.core.fontes_pil import _texto_simples
 from navepro.core.log import get_logger
 from navepro.core.paths import ANUNCIOS_FILE, UPLOAD_FOLDER
 from navepro.core.textos import _numero_do_titulo, _termo_like, remover_acentos
@@ -161,7 +162,8 @@ def _montar_slides_anuncio_servico(anuncio: dict) -> list:
     """Monta os slides de um anúncio (slide 0 = título; 1 parágrafo por slide),
     no mesmo formato usado pela janela Anúncios."""
     titulo = (anuncio.get('titulo') or '').strip()
-    texto = (anuncio.get('texto') or '').strip()
+    # Texto puro: a formatação rica só vale na composição com imagem.
+    texto = _texto_simples(anuncio.get('texto') or '').strip()
     paragrafos = [seg.strip() for seg in re.split(r'\n\s*\n', texto) if seg.strip()]
     slides = [titulo] if titulo else []
     for paragrafo in paragrafos:
