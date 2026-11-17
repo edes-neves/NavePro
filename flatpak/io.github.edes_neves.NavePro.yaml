@@ -124,7 +124,7 @@ modules:
       - install -Dm755 navepro.sh /app/bin/navepro
       - install -Dm755 smplayer-host /app/bin/smplayer
       - install -Dm755 mpv-host /app/bin/mpv
-      - install -Dm644 NavePro.py AS21.xml biblia-em-txt.txt -t /app/lib/navepro/
+      - install -Dm644 NavePro.py license_manager.py AS21.xml biblia-em-txt.txt -t /app/lib/navepro/
       - cp -r navepro img icones /app/lib/navepro/
       # icones/ é o fallback do ícone dos botões quando a distro não traz
       # fonte de emoji (navepro/core/icones.py): sem ela, os botões ficariam
@@ -142,6 +142,8 @@ modules:
         path: mpv-host
       - type: file
         path: ../NavePro.py
+      - type: file
+        path: ../license_manager.py
       - type: file
         path: ../Biblias/AS21.xml
       - type: file
