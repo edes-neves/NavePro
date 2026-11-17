@@ -8,6 +8,7 @@ do modo demonstração (servidor/API, controle remoto e marca d'água).
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
@@ -116,11 +117,7 @@ class LicencaMixin:
                           "marca d'água de teste."))
 
         def _importar() -> None:
-            caminho = tkinter.filedialog.askopenfilename(
-                title="Selecione o arquivo licenca.key",
-                filetypes=[("Licença NavePro", "*.key"),
-                           ("Todos os arquivos", "*.*")],
-                parent=janela)
+            caminho = self._selecionar_arquivo_licenca(janela)
             if not caminho:
                 return
             ok, mensagem = importar_arquivo_licenca(caminho)
@@ -180,6 +177,48 @@ class LicencaMixin:
                 "Contato",
                 f"E-mail: {EMAIL_CONTATO}\nWhatsApp: {WHATSAPP_CONTATO}",
                 parent=self.root)
+
+    def _selecionar_arquivo_licenca(self, janela) -> str:
+        """Abre o seletor de licença ocultando pastas/arquivos com ponto.
+
+        O diálogo nativo do Tk mostra arquivos ocultos por padrão. Aqui ele é
+        configurado para escondê-los e exibir a opção de mostrá-los.
+        """
+        root = self.root
+        try:
+            root.tk.call("auto_load", "::tk::dialog::file::")
+        except tk.TclError:
+            pass
+
+        btn_anterior = var_anterior = None
+        try:
+            btn_anterior = root.tk.call(
+                "set", "::tk::dialog::file::showHiddenBtn")
+            var_anterior = root.tk.call(
+                "set", "::tk::dialog::file::showHiddenVar")
+            root.tk.call("set", "::tk::dialog::file::showHiddenBtn", 1)
+            root.tk.call("set", "::tk::dialog::file::showHiddenVar", 0)
+        except tk.TclError:
+            btn_anterior = var_anterior = None
+
+        try:
+            return tkinter.filedialog.askopenfilename(
+                title="Selecione o arquivo licenca.key",
+                initialdir=os.path.expanduser("~"),
+                filetypes=[("Licença NavePro", "*.key"),
+                           ("Todos os arquivos", "*.*")],
+                parent=janela)
+        finally:
+            if btn_anterior is not None:
+                try:
+                    root.tk.call(
+                        "set", "::tk::dialog::file::showHiddenBtn",
+                        btn_anterior)
+                    root.tk.call(
+                        "set", "::tk::dialog::file::showHiddenVar",
+                        var_anterior)
+                except tk.TclError:
+                    pass
 
     def _iniciar_servidor_api(self) -> None:
         """Sobe a API/controle remoto local (somente em modo licenciado)."""
