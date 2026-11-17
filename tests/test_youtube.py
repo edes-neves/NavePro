@@ -257,10 +257,27 @@ checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
        "item.get('youtube_url')" in _fonte_app + _fonte_exec)
 checar("ao salvar, o vídeo é baixado para tocar do computador",
        "_baixar_video_youtube_ui(" in _fonte_os)
+checar("vídeo já baixado não abre a janela de progresso",
+       "video_youtube_baixado(url)" in _fonte_os)
 checar("ao executar, usa o arquivo local baixado",
        "obter_video_youtube(_url_youtube)" in _fonte_exec)
 checar("ao fechar o app, apaga os vídeos temporários",
        "limpar_videos_youtube()" in _fonte_app)
+checar("progresso do download sobe à frente (lift/wait_visibility)",
+       "janela.lift()" in _fonte_os and "janela.wait_visibility()" in _fonte_os)
+checar("a Ordem de Projeção é o pai do diálogo de download",
+       "parent=janela" in _fonte_os)
+checar("execução usa a janela informada como pai do progresso",
+       "parent or getattr(self, \"root\", None)" in _fonte_exec)
+_fonte_yt = open(os.path.join(RAIZ, "navepro", "core", "youtube.py"),
+                 encoding="utf-8").read()
+checar("a barra do download é determinada (mostra porcentagem)",
+       "mode='determinate'" in _fonte_os and "lbl_pct" in _fonte_os)
+checar("o runtime JS é baixado sozinho quando o yt-dlp exige",
+       "_baixar_deno" in _fonte_yt
+       and "_garantir_runtime_js(executavel" in _fonte_yt)
+checar("o download usa fragmentos em paralelo (mais rápido)",
+       "--concurrent-fragments" in _fonte_yt)
 
 # ── 8. Item YouTube no controle remoto (_remoto_resolver_item) ────────
 # O editor do celular marca a caixinha "Vídeo do YouTube" sob o tipo Vídeo e

@@ -1,6 +1,6 @@
-"""Licenciamento híbrido do NavePro (teste de 10 dias + lista negra online).
+"""Licenciamento híbrido do NavePro (teste de 30 dias + lista negra online).
 
-O primeiro uso em cada computador libera **todos os recursos por 10 dias**
+O primeiro uso em cada computador libera **todos os recursos por 30 dias**
 (sem marca d'água e sem os limites do modo demonstração). O início do teste
 fica em ``~/.navepro/trial.json``; depois do prazo, o app entra no modo
 demonstração até receber uma licença válida.
@@ -57,7 +57,7 @@ NOME_ARQUIVO_LICENCA = "licenca.key"
 NOME_ARQUIVO_TESTE = "trial.json"
 
 # Tempo de teste completo (sem limites) a partir do primeiro uso no computador.
-DIAS_TESTE = 10
+DIAS_TESTE = 30
 
 # Lista negra pública (uma ID de máquina por linha). Falhas de rede são
 # silenciosas: sem internet o app continua funcionando no modo offline.
@@ -230,7 +230,7 @@ def _dias_restantes_teste(dados: dict, hoje: _dt.date) -> int:
 
 def _avaliar_teste(dados: dict, hoje: _dt.date, machine_id: str,
                    consultar_lista_negra: bool) -> tuple[bool, str, str]:
-    """Aplica o teste de 10 dias ou o modo demonstração."""
+    """Aplica o teste de 30 dias ou o modo demonstração."""
     if dados.get("bloqueado"):
         _definir_estado(False, "Licença revogada", machine_id=machine_id)
         return False, "Licença revogada", machine_id
@@ -271,7 +271,7 @@ def modo_demonstracao() -> bool:
 
 
 def em_periodo_teste() -> bool:
-    """True quando os recursos estão liberados pelo teste de 10 dias."""
+    """True quando os recursos estão liberados pelo teste de 30 dias."""
     return bool(_ESTADO.get("licenciado") and _ESTADO.get("teste"))
 
 
@@ -393,7 +393,7 @@ def importar_arquivo_licenca(origem: str) -> tuple[bool, str]:
 
 def verificar_licenca(*, consultar_lista_negra: bool = True
                       ) -> tuple[bool, str, str]:
-    """Valida a licença local, o teste de 10 dias ou a revogação online.
+    """Valida a licença local, o teste de 30 dias ou a revogação online.
 
     Retorna ``(liberado, motivo, machine_id)``. ``liberado`` é True tanto para
     licença válida quanto para o período de teste. Nunca lança exceção por

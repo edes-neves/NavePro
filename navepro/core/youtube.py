@@ -10,13 +10,19 @@ from __future__ import annotations
 import glob
 import json
 import os
+import platform
+import queue
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import time
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 from urllib.parse import urlparse
 
 from navepro.core.ambiente import _ambiente_sem_appimage, _eh_flatpak
@@ -34,6 +40,30 @@ _DOMINIOS_YOUTUBE = ("youtube.com", "youtube-nocookie.com")
 # fica em uma pasta temporária e é apagado quando o NavePro é fechado.
 _VIDEOS_BAIXADOS: dict[str, str] = {}
 _VIDEOS_LOCK = threading.Lock()
+
+# Runtimes JavaScript aceitos pelo yt-dlp para resolver o desafio do YouTube.
+# O Deno vem primeiro por ser o recomendado e habilitado por padrão.
+_RUNTIMES_JS_YOUTUBE = ("deno", "node", "qjs", "bun")
+
+# Capacidades do yt-dlp instalado (saída de --help) e opções extras de JS,
+# cacheadas por caminho do executável. O yt-dlp do Ubuntu 24.04 (2024.04.09)
+# não conhece --js-runtimes/--remote-components; passar essas opções sempre
+# faria um yt-dlp antigo (que ainda funciona) recusar o comando inteiro.
+_AJUDA_YTDLP: dict[str, str] = {}
+_CACHE_OPCOES_JS: dict[str, list[str]] = {}
+_CACHE_YTDLP_LOCK = threading.Lock()
+
+# Runtime JavaScript baixado pelo próprio NavePro (uma vez) quando o sistema
+# não tem nenhum. Fica em ~/.navepro/bin e é usado pelo yt-dlp do host também
+# no Flatpak (o home é compartilhado com o host pelo manifesto).
+_DENO_URL = ("https://github.com/denoland/deno/releases/latest/download/"
+             "{asset}")
+_DENO_LOCK = threading.Lock()
+
+# Marcadores das linhas de progresso do yt-dlp (ver _executar_ytdlp_stream).
+_MARCA_TOTAL = "NPINFO "
+_RE_PROGRESSO = re.compile(
+    r"^NAVEPRO (\S+)\|(\S+)\|(\S+)\|(\S+)\|(\S+)\s*$")
 
 
 def _normalizar_url_youtube(url: str) -> str:
@@ -70,28 +100,256 @@ def _eh_url_youtube(url: str) -> bool:
                for dominio in _DOMINIOS_YOUTUBE)
 
 
-def _comando_info_youtube(executavel: str, url: str) -> list[str]:
-    """Monta o comando que consulta os metadados do vídeo.
+def _caminho_no_host(caminho: str) -> str:
+    """Traduz um caminho visto no sandbox Flatpak para o caminho do host."""
+    if caminho.startswith("/run/host/"):
+        return caminho[len("/run/host"):]
+    if caminho.startswith("/app/"):
+        # /app só existe no sandbox; no host vale o nome no PATH.
+        return os.path.basename(caminho)
+    return caminho
 
-    Dentro do Flatpak o yt-dlp do host não roda direito no sandbox: o pacote
-    da distro importa módulos de /usr/lib/python3/dist-packages (invisível
-    aqui) e o venv do pipx costuma ter sido criado com outra versão do
-    Python. Por isso o yt-dlp é executado no HOST com `flatpak-spawn --host`,
-    do mesmo jeito que os wrappers de mpv/smplayer já fazem. O caminho
-    /run/host/... é traduzido para o caminho equivalente do sistema.
+
+def _prefixo_ytdlp(executavel: str) -> list[str]:
+    """Prefixo para executar o yt-dlp (no host, quando dentro do Flatpak).
+
+    Dentro do sandbox o yt-dlp do host não roda: o pacote da distro importa
+    módulos de /usr/lib/python3/dist-packages (invisível aqui) e o venv do
+    pipx costuma ter sido criado com outra versão do Python. Por isso ele é
+    executado no HOST com `flatpak-spawn --host`, do mesmo jeito que os
+    wrappers de mpv/smplayer já fazem.
     """
-    caminho = executavel
     if _eh_flatpak():
-        if caminho.startswith("/run/host/"):
-            caminho = caminho[len("/run/host"):]
-        elif caminho.startswith("/app/"):
-            # /app só existe no sandbox; no host vale o nome no PATH.
-            caminho = os.path.basename(caminho)
-        return ["flatpak-spawn", "--host", caminho,
-                "--no-playlist", "--skip-download", "--no-warnings",
-                "--dump-single-json", url]
-    return [caminho, "--no-playlist", "--skip-download", "--no-warnings",
-            "--dump-single-json", url]
+        return ["flatpak-spawn", "--host", _caminho_no_host(executavel)]
+    return [executavel]
+
+
+def _ajuda_ytdlp(executavel: str) -> str:
+    """Saída de `yt-dlp --help` (cacheada por executável; "" se falhar).
+
+    Serve só para saber quais opções esta versão conhece. É preferível a
+    comparar versões: o yt-dlp pode vir do apt, pipx ou binário oficial, e
+    cada um tem um conjunto diferente de flags.
+    """
+    with _CACHE_YTDLP_LOCK:
+        if executavel in _AJUDA_YTDLP:
+            return _AJUDA_YTDLP[executavel]
+    texto = ""
+    try:
+        resultado = subprocess.run(
+            [*_prefixo_ytdlp(executavel), "--help"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=_ambiente_sem_appimage())
+        if resultado.returncode == 0:
+            texto = (resultado.stdout or "") + (resultado.stderr or "")
+    except (subprocess.SubprocessError, OSError, ValueError):
+        texto = ""
+    with _CACHE_YTDLP_LOCK:
+        _AJUDA_YTDLP[executavel] = texto
+    return texto
+
+
+def _pasta_bin_navepro() -> str:
+    """Pasta de executáveis baixados pelo próprio NavePro."""
+    return os.path.join(DATA_USER_DIR, "bin")
+
+
+def _nome_executavel_deno() -> str:
+    return "deno.exe" if sys.platform.startswith("win") else "deno"
+
+
+def _deno_instalado() -> str | None:
+    caminho = os.path.join(_pasta_bin_navepro(), _nome_executavel_deno())
+    return caminho if os.path.isfile(caminho) else None
+
+
+def _asset_deno(plataforma: str | None = None,
+                maquina: str | None = None) -> str | None:
+    """Nome do ZIP oficial do Deno para a plataforma/arquitetura atual."""
+    plataforma = plataforma or sys.platform
+    maquina = (maquina or platform.machine()).lower()
+    if plataforma.startswith("win"):
+        if maquina in ("amd64", "x86_64"):
+            return "deno-x86_64-pc-windows-msvc.zip"
+        if maquina in ("arm64", "aarch64"):
+            return "deno-aarch64-pc-windows-msvc.zip"
+    elif plataforma.startswith("linux"):
+        if maquina in ("x86_64", "amd64"):
+            return "deno-x86_64-unknown-linux-gnu.zip"
+        if maquina in ("aarch64", "arm64"):
+            return "deno-aarch64-unknown-linux-gnu.zip"
+    elif plataforma == "darwin":
+        if maquina in ("x86_64", "amd64"):
+            return "deno-x86_64-apple-darwin.zip"
+        if maquina in ("aarch64", "arm64"):
+            return "deno-aarch64-apple-darwin.zip"
+    return None
+
+
+def _validar_deno(caminho: str) -> None:
+    try:
+        resultado = subprocess.run(
+            [caminho, "--version"], capture_output=True, text=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=_ambiente_sem_appimage())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"o Deno baixado não executou: {exc}") from exc
+    if resultado.returncode != 0:
+        raise RuntimeError("o Deno baixado não executou corretamente.")
+
+
+def _baixar_deno(ao_progresso=None) -> str:
+    """Baixa o Deno para ~/.navepro/bin (sem sudo) e devolve o caminho.
+
+    É o que permite o YouTube voltar a funcionar no Ubuntu 26.04 sem o
+    usuário instalar pacote nenhum: o yt-dlp do sistema exige um runtime
+    JavaScript, mas o Ubuntu sugere (não instala) o Node/Deno.
+    """
+    asset = _asset_deno()
+    if not asset:
+        raise RuntimeError(
+            "não há runtime Deno para esta plataforma/arquitetura.")
+    pasta = _pasta_bin_navepro()
+    os.makedirs(pasta, exist_ok=True)
+    alvo = os.path.join(pasta, _nome_executavel_deno())
+    if os.path.isfile(alvo):
+        return alvo
+    with _DENO_LOCK:
+        if os.path.isfile(alvo):
+            return alvo
+        zip_path = os.path.join(pasta, "deno.zip.part")
+        tmp_exe = os.path.join(
+            pasta, "deno.novo" + (".exe" if sys.platform.startswith("win")
+                                  else ""))
+        try:
+            if ao_progresso is not None:
+                ao_progresso(0.0, "Preparando o YouTube "
+                                  "(baixando o runtime JS, uma vez só)...")
+            pedido = urllib.request.Request(
+                _DENO_URL.format(asset=asset),
+                headers={"User-Agent": "NavePro"})
+            with _baixar(pedido, timeout=120) as resposta, \
+                    open(zip_path, "wb") as saida:
+                try:
+                    total = int(resposta.headers.get("Content-Length") or 0)
+                except (TypeError, ValueError):
+                    total = 0
+                baixado = 0
+                while True:
+                    bloco = resposta.read(256 * 1024)
+                    if not bloco:
+                        break
+                    saida.write(bloco)
+                    baixado += len(bloco)
+                    if ao_progresso is not None and total > 0:
+                        ao_progresso(
+                            min(99.0, baixado * 100.0 / total),
+                            "Preparando o YouTube (runtime JS)...")
+            with zipfile.ZipFile(zip_path) as pacote:
+                membro = next(
+                    (nome for nome in pacote.namelist()
+                     if os.path.basename(nome) == _nome_executavel_deno()),
+                    None)
+                if not membro:
+                    raise RuntimeError(
+                        "o pacote baixado do Deno não contém o executável.")
+                with pacote.open(membro) as origem, \
+                        open(tmp_exe, "wb") as destino:
+                    shutil.copyfileobj(origem, destino)
+            if not sys.platform.startswith("win"):
+                os.chmod(tmp_exe, 0o755)
+            _validar_deno(tmp_exe)
+            os.replace(tmp_exe, alvo)
+            with _CACHE_YTDLP_LOCK:
+                _CACHE_OPCOES_JS.clear()
+            log.info("⬇️ Runtime JavaScript (Deno) instalado em %s", alvo)
+            if ao_progresso is not None:
+                ao_progresso(100.0, "Runtime JS pronto.")
+            return alvo
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"não foi possível preparar o runtime JS: {exc}") from exc
+        finally:
+            for caminho in (zip_path, tmp_exe):
+                try:
+                    os.remove(caminho)
+                except OSError:
+                    pass
+
+
+def _runtime_js_youtube() -> tuple[str, str] | None:
+    """Runtime JavaScript disponível para o yt-dlp resolver o challenge."""
+    for nome in _RUNTIMES_JS_YOUTUBE:
+        caminho = localizar_executavel(nome)
+        if caminho:
+            return nome, _caminho_no_host(caminho)
+    deno = _deno_instalado()
+    if deno is not None:
+        return "deno", _caminho_no_host(deno)
+    return None
+
+
+def _garantir_runtime_js(executavel: str, ao_progresso=None
+                         ) -> tuple[str, str] | None:
+    """Instala sob demanda o Deno quando o yt-dlp exige runtime JS."""
+    runtime = _runtime_js_youtube()
+    if runtime is not None:
+        return runtime
+    if "--js-runtimes" not in _ajuda_ytdlp(executavel).lower():
+        # yt-dlp antigo (ex.: Ubuntu 24.04): não precisa e recusaria a opção.
+        return None
+    try:
+        caminho = _baixar_deno(ao_progresso)
+    except RuntimeError as exc:
+        log.warning("⚠️ Não foi possível baixar o runtime JS do YouTube: %s",
+                    exc)
+        return None
+    return ("deno", _caminho_no_host(caminho))
+
+
+def _opcoes_js_youtube(executavel: str) -> list[str]:
+    """Opções de runtime JS/EJS que o yt-dlp instalado entende.
+
+    Desde o yt-dlp 2025.11 o YouTube exige resolver um desafio JavaScript
+    com um runtime externo (Deno/Node/QuickJS) e os scripts do yt-dlp-ejs.
+    O pacote do Ubuntu 26.04 (2026.03.17) já tem essa exigência, mas nem o
+    runtime nem os scripts são instalados por padrão — sem eles o download
+    termina em "HTTP Error 403: Forbidden", enquanto o yt-dlp antigo do
+    Ubuntu 24.04 (2024.04.09) ainda funciona com o solver interno.
+
+    Devolve lista vazia quando a versão não conhece as opções (para não
+    quebrar o yt-dlp antigo) ou quando não há runtime instalado.
+    """
+    with _CACHE_YTDLP_LOCK:
+        if executavel in _CACHE_OPCOES_JS:
+            return list(_CACHE_OPCOES_JS[executavel])
+    ajuda = _ajuda_ytdlp(executavel).lower()
+    opcoes: list[str] = []
+    if "--js-runtimes" in ajuda:
+        runtime = _runtime_js_youtube()
+        if runtime is not None:
+            opcoes += ["--js-runtimes", f"{runtime[0]}:{runtime[1]}"]
+            if "--remote-components" in ajuda:
+                # O pacote da distro não traz o yt-dlp-ejs; o GitHub supre.
+                opcoes += ["--remote-components", "ejs:github"]
+    with _CACHE_YTDLP_LOCK:
+        _CACHE_OPCOES_JS[executavel] = list(opcoes)
+    return opcoes
+
+
+def _comando_info_youtube(executavel: str, url: str) -> list[str]:
+    """Monta o comando que consulta os metadados do vídeo."""
+    return [
+        *_prefixo_ytdlp(executavel),
+        *_opcoes_js_youtube(executavel),
+        "--no-playlist", "--skip-download", "--no-warnings",
+        "--dump-single-json", url,
+    ]
 
 
 def _obter_info_youtube(url: str, timeout: float = 15.0) -> dict | None:
@@ -193,47 +451,100 @@ def _remover_arquivos_parciais(pasta: str, base: str) -> None:
             pass
 
 
+def _eh_ytdlp(executavel: str) -> bool:
+    nome = os.path.basename(executavel).lower()
+    return "youtube-dl" not in nome or "yt-dlp" in nome
+
+
 def _comando_baixar_youtube(executavel: str, url: str, pasta: str,
-                            base: str) -> list[str]:
+                            base: str, cliente_youtube: str = "",
+                            com_progresso: bool = False) -> list[str]:
     """Monta o comando do yt-dlp que baixa o vídeo para ``pasta``.
 
     O nome de saída é único por download; depois o arquivo é localizado pelo
     prefixo (a extensão pode ser mp4, mkv ou webm, conforme o formato).
+    `cliente_youtube` força o cliente do extrator (ex.: ``tv,web_safari``) e
+    só é usado nas novas tentativas depois de um 403. `com_progresso` emite
+    linhas ``NAVEPRO ...``/``NPINFO ...`` em vez de suprimir a barra.
     """
-    caminho = executavel
-    if _eh_flatpak():
-        if caminho.startswith("/run/host/"):
-            caminho = caminho[len("/run/host"):]
-        elif caminho.startswith("/app/"):
-            caminho = os.path.basename(caminho)
-        prefixo = ["flatpak-spawn", "--host", caminho]
-    else:
-        prefixo = [caminho]
+    prefixo = _prefixo_ytdlp(executavel)
+    eh_ytdlp = _eh_ytdlp(executavel)
+    ajuda = _ajuda_ytdlp(executavel).lower() if eh_ytdlp else ""
 
-    nome = os.path.basename(executavel).lower()
-    if "youtube-dl" in nome and "yt-dlp" not in nome:
+    if not eh_ytdlp:
         formato = ["-f", "best[ext=mp4]/best"]
     elif localizar_executavel("ffmpeg"):
         formato = [
-            "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+            # 1080p é o suficiente para projeção e evita baixar 4K (muito
+            # maior e mais lento). O último fallback mantém o melhor formato
+            # quando o vídeo só oferece resoluções acima disso.
+            "-f",
+            "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/"
+            "b[height<=1080][ext=mp4]/"
+            "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
             "--merge-output-format", "mp4",
         ]
     else:
         # Sem ffmpeg não há como juntar vídeo+áudio: pega o melhor arquivo
         # único (normalmente 720p), que ainda é reproduzível pelo player.
-        formato = ["-f", "b[ext=mp4]/b"]
+        formato = ["-f", "b[height<=1080][ext=mp4]/b[ext=mp4]/b"]
+
+    opcoes_cliente = (["--extractor-args",
+                       f"youtube:player_client={cliente_youtube}"]
+                      if cliente_youtube else [])
+
+    # Fragmentos em paralelo são o maior ganho de velocidade em vídeos DASH
+    # (o padrão do yt-dlp é um por vez). Só é passado se a versão conhece.
+    opcoes_velocidade = []
+    if "--concurrent-fragments" in ajuda:
+        opcoes_velocidade = ["--concurrent-fragments", "4"]
+
+    opcoes_progresso = []
+    if com_progresso and eh_ytdlp:
+        # O --print (que implica --quiet) precisa vir antes do --no-quiet.
+        opcoes_progresso = [
+            "--newline",
+            "--print", "before_dl:NPINFO %(filesize_approx)s",
+            "--no-quiet",
+            "--progress-template",
+            "download:NAVEPRO %(progress.percent)s|"
+            "%(progress.downloaded_bytes)s|%(progress.total_bytes)s|"
+            "%(progress.eta)s|%(progress.speed)s",
+        ]
 
     return [
         *prefixo,
+        *_opcoes_js_youtube(executavel),
+        *opcoes_cliente,
+        *opcoes_velocidade,
+        *opcoes_progresso,
         "--no-playlist",
         "--no-warnings",
-        "--no-progress",
+        *([] if com_progresso else ["--no-progress"]),
         "--socket-timeout", "30",
         "--retries", "3",
         "-o", os.path.join(pasta, base + ".%(ext)s"),
         *formato,
         url,
     ]
+
+
+def _parece_erro_403(resultado: subprocess.CompletedProcess) -> bool:
+    """True se o yt-dlp foi recusado pelo YouTube (HTTP 403/Forbidden)."""
+    texto = (resultado.stderr or resultado.stdout or "").lower()
+    return "403" in texto or "forbidden" in texto
+
+
+def _dica_erro_403(executavel: str) -> str:
+    """Explica o 403 e o que instalar/atualizar (texto para a interface)."""
+    if "--js-runtimes" in _ajuda_ytdlp(executavel).lower() \
+            and _runtime_js_youtube() is None:
+        return ("\n\nO yt-dlp desta versão precisa de um runtime JavaScript "
+                "para o YouTube e nenhum foi encontrado. Instale o Node.js "
+                "('sudo apt install nodejs') ou o Deno e tente novamente.")
+    return ("\n\nO YouTube recusou o download (HTTP 403). Atualize o yt-dlp "
+            "('pipx upgrade yt-dlp') ou instale o binário oficial com "
+            "'pipx install \"yt-dlp[default]\"'.")
 
 
 def _resumo_erro_ytdlp(resultado: subprocess.CompletedProcess) -> str:
@@ -245,11 +556,162 @@ def _resumo_erro_ytdlp(resultado: subprocess.CompletedProcess) -> str:
     return linhas[-1][:500] if linhas else saida[:500]
 
 
-def baixar_video_youtube(url: str, timeout: float | None = 1800) -> str:
+def _formatar_velocidade(bytes_por_segundo: float) -> str:
+    if not bytes_por_segundo or bytes_por_segundo <= 0:
+        return ""
+    valor = float(bytes_por_segundo)
+    for unidade in ("B/s", "KB/s", "MB/s", "GB/s"):
+        if valor < 1024 or unidade == "GB/s":
+            return f"{valor:.1f} {unidade}"
+        valor /= 1024
+    return ""
+
+
+def _formatar_eta(segundos: float) -> str:
+    if not segundos or segundos <= 0:
+        return ""
+    total = int(segundos)
+    if total >= 3600:
+        return f"{total // 3600}h{(total % 3600) // 60:02d}min"
+    return f"{total // 60}:{total % 60:02d}"
+
+
+def _float_ou_zero(texto: str) -> float:
+    try:
+        return float(texto)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _executar_ytdlp_stream(comando: list[str], timeout: float | None,
+                           ao_progresso) -> subprocess.CompletedProcess:
+    """Executa o yt-dlp lendo a saída linha a linha e informa o progresso.
+
+    O yt-dlp imprime o progresso no stdout. Aqui traduzimos as linhas
+    ``NAVEPRO`` para uma porcentagem global (somando vídeo+áudio) e
+    devolvemos um ``CompletedProcess`` compatível com o caminho sem
+    progresso (stdout = log sem as linhas de progresso).
+    """
+    fila: queue.Queue[str | None] = queue.Queue()
+    processo = subprocess.Popen(
+        comando, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        env=_ambiente_sem_appimage())
+
+    def _ler_saida() -> None:
+        try:
+            if processo.stdout is not None:
+                for linha in processo.stdout:
+                    fila.put(linha)
+        finally:
+            fila.put(None)
+
+    threading.Thread(target=_ler_saida, daemon=True,
+                     name="navepro-ytdlp-saida").start()
+
+    limite = time.monotonic() + timeout if timeout else None
+    base_bytes = 0.0
+    ultimo_total = 0.0
+    ultimo_baixado = 0.0
+    total_esperado = 0.0
+    ultimo_pct = -1.0
+    log_linhas: list[str] = []
+
+    while True:
+        try:
+            item = fila.get(timeout=0.5)
+        except queue.Empty:
+            if limite is not None and time.monotonic() >= limite:
+                try:
+                    processo.kill()
+                except OSError:
+                    pass
+                processo.wait()
+                raise subprocess.TimeoutExpired(comando, timeout) from None
+            continue
+        if item is None:
+            break
+        linha = item.rstrip()
+        if not linha:
+            continue
+        if linha.startswith(_MARCA_TOTAL):
+            total_esperado = _float_ou_zero(
+                linha[len(_MARCA_TOTAL):].strip())
+            continue
+        encontrado = _RE_PROGRESSO.match(linha)
+        if encontrado:
+            pct_str, baixado_s, total_s, eta_s, velocidade_s = \
+                encontrado.groups()
+            baixado = _float_ou_zero(baixado_s)
+            total = _float_ou_zero(total_s)
+            if baixado < ultimo_baixado and ultimo_total > 0:
+                base_bytes += ultimo_total
+            ultimo_baixado = baixado
+            ultimo_total = total
+            if total_esperado > 0:
+                pct = (base_bytes + baixado) * 100.0 / total_esperado
+            elif total > 0:
+                pct = baixado * 100.0 / total
+            else:
+                pct = _float_ou_zero(pct_str)
+            pct = max(0.0, min(100.0, pct))
+            # Evita encher a fila da interface em downloads muito rápidos.
+            if pct - ultimo_pct < 1.0 and pct < 100.0:
+                continue
+            ultimo_pct = pct
+            partes = []
+            velocidade = _formatar_velocidade(
+                _float_ou_zero(velocidade_s))
+            if velocidade:
+                partes.append(velocidade)
+            eta = _formatar_eta(_float_ou_zero(eta_s))
+            if eta:
+                partes.append(f"faltam {eta}")
+            ao_progresso(pct, " · ".join(partes) or "Baixando...")
+            continue
+        if linha.startswith("[download] Destination:"):
+            if ultimo_total > 0 and ultimo_baixado >= ultimo_total * 0.99:
+                base_bytes += ultimo_total
+            ultimo_baixado = 0.0
+            ultimo_total = 0.0
+            continue
+        if "[Merger]" in linha or "[ffmpeg]" in linha \
+                or "Merging formats" in linha:
+            ao_progresso(100.0, "Finalizando o vídeo...")
+        log_linhas.append(linha)
+        if len(log_linhas) > 400:
+            del log_linhas[:200]
+
+    codigo = processo.wait()
+    if processo.stdout is not None:
+        try:
+            processo.stdout.close()
+        except OSError:
+            pass
+    return subprocess.CompletedProcess(
+        comando, codigo, "\n".join(log_linhas), "")
+
+
+def _executar_ytdlp(comando: list[str], timeout: float | None,
+                    ao_progresso) -> subprocess.CompletedProcess:
+    if ao_progresso is None:
+        return subprocess.run(
+            comando, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=_ambiente_sem_appimage())
+    return _executar_ytdlp_stream(comando, timeout, ao_progresso)
+
+
+def baixar_video_youtube(url: str, timeout: float | None = 1800,
+                         ao_progresso=None) -> str:
     """Baixa o vídeo do YouTube e devolve o caminho do arquivo local.
 
     Levanta ``ValueError`` para URL inválida e ``RuntimeError`` quando o
     yt-dlp não existe, a rede falha ou o download não gera um arquivo.
+    `ao_progresso(porcentagem, texto)` é chamado durante o download (e
+    enquanto o runtime JS é preparado), sempre em thread de trabalho.
     """
     url = _normalizar_url_youtube(url)
     if not _eh_url_youtube(url):
@@ -262,28 +724,58 @@ def baixar_video_youtube(url: str, timeout: float | None = 1800) -> str:
             "yt-dlp não encontrado. Instale com 'sudo apt install yt-dlp' "
             "(ou 'pipx install yt-dlp').")
 
+    # Ubuntu 26.04: o yt-dlp do sistema exige runtime JS e não o instala.
+    # Baixa o Deno para ~/.navepro/bin na primeira vez, sem sudo.
+    _garantir_runtime_js(executavel, ao_progresso)
+    if ao_progresso is not None:
+        ao_progresso(0.0, "Iniciando download...")
+
     pasta = _pasta_videos_youtube()
     os.makedirs(pasta, exist_ok=True)
     base = "video_" + uuid.uuid4().hex
-    comando = _comando_baixar_youtube(executavel, url, pasta, base)
 
-    try:
-        resultado = subprocess.run(
-            comando, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=timeout,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            env=_ambiente_sem_appimage())
-    except subprocess.TimeoutExpired as exc:
+    # Primeira tentativa com o cliente padrão do yt-dlp. Se o YouTube
+    # responder 403, tenta clientes alternativos: o yt-dlp de algumas
+    # distros (ex.: Ubuntu 26.04, 2026.03.17) ainda usa o "android_vr",
+    # cujos formatos passaram a ser recusados pelo YouTube; o yt-dlp
+    # oficial removeu esse cliente. O "tv,web_safari" é a alternativa
+    # atual. O yt-dlp antigo do Ubuntu 24.04 funciona no primeiro try.
+    clientes = [""]
+    if _eh_ytdlp(executavel):
+        clientes += ["default,-android_vr", "tv,web_safari"]
+
+    resultado = None
+    for indice, cliente in enumerate(clientes):
+        comando = _comando_baixar_youtube(
+            executavel, url, pasta, base, cliente_youtube=cliente,
+            com_progresso=ao_progresso is not None)
         _remover_arquivos_parciais(pasta, base)
-        raise RuntimeError("Tempo esgotado ao baixar o vídeo do YouTube.") from exc
-    except OSError as exc:
-        _remover_arquivos_parciais(pasta, base)
-        raise RuntimeError(f"Falha ao executar o yt-dlp: {exc}") from exc
+        try:
+            resultado = _executar_ytdlp(comando, timeout, ao_progresso)
+        except subprocess.TimeoutExpired as exc:
+            _remover_arquivos_parciais(pasta, base)
+            raise RuntimeError(
+                "Tempo esgotado ao baixar o vídeo do YouTube.") from exc
+        except OSError as exc:
+            _remover_arquivos_parciais(pasta, base)
+            raise RuntimeError(
+                f"Falha ao executar o yt-dlp: {exc}") from exc
+        if resultado.returncode == 0:
+            break
+        if not _parece_erro_403(resultado) or indice + 1 >= len(clientes):
+            break
+        log.info("↩️ YouTube recusou o cliente padrão (403); "
+                 "tentando novamente com o cliente %s.",
+                 clientes[indice + 1])
+        if ao_progresso is not None:
+            ao_progresso(0.0, "Tentando novamente com outro cliente...")
 
     if resultado.returncode != 0:
         detalhe = _resumo_erro_ytdlp(resultado)
         _remover_arquivos_parciais(pasta, base)
-        raise RuntimeError(f"Falha ao baixar o vídeo do YouTube: {detalhe}")
+        dica = _dica_erro_403(executavel) if _parece_erro_403(resultado) else ""
+        raise RuntimeError(
+            f"Falha ao baixar o vídeo do YouTube: {detalhe}{dica}")
 
     padrao = os.path.join(glob.escape(pasta), glob.escape(base) + ".*")
     candidatos = [caminho for caminho in glob.glob(padrao)
@@ -298,14 +790,29 @@ def baixar_video_youtube(url: str, timeout: float | None = 1800) -> str:
     return caminho
 
 
-def obter_video_youtube(url: str) -> str:
-    """Devolve o vídeo local, baixando-o na primeira vez nesta sessão."""
+def video_youtube_baixado(url: str) -> str | None:
+    """Caminho local do vídeo se ele já foi baixado nesta sessão.
+
+    Não baixa nada: serve para a interface decidir se mostra ou não o
+    diálogo de progresso. Devolve ``None`` quando o arquivo não existe mais.
+    """
     url = _normalizar_url_youtube(url)
     with _VIDEOS_LOCK:
         caminho = _VIDEOS_BAIXADOS.get(url)
     if caminho and os.path.isfile(caminho):
         return caminho
-    caminho = baixar_video_youtube(url)
+    return None
+
+
+def obter_video_youtube(url: str, ao_progresso=None) -> str:
+    """Devolve o vídeo local, baixando-o na primeira vez nesta sessão."""
+    url = _normalizar_url_youtube(url)
+    caminho = video_youtube_baixado(url)
+    if caminho:
+        if ao_progresso is not None:
+            ao_progresso(100.0, "Vídeo já estava baixado.")
+        return caminho
+    caminho = baixar_video_youtube(url, ao_progresso=ao_progresso)
     with _VIDEOS_LOCK:
         _VIDEOS_BAIXADOS[url] = caminho
     return caminho

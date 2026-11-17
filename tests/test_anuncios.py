@@ -23,12 +23,14 @@ if _AQUI not in sys.path:
 from fixture_biblia import criar_biblia  # noqa: E402
 from fixture_log import log  # noqa: E402
 
+import license_manager as lm  # noqa: E402
 from navepro.config import (  # noqa: E402
     EXTENSOES_AUDIO,
     EXTENSOES_VIDEO,
     SUFIXOS_IMAGEM,
 )
 from navepro.core.fontes_pil import _texto_simples  # noqa: E402
+from navepro.core.slides import _montar_slides_anuncio  # noqa: E402
 from navepro.core.textos import _numero_do_titulo, _termo_like, remover_acentos  # noqa: E402
 
 _MOD = os.path.join(RAIZ, "navepro", "core", "anuncios.py")
@@ -220,6 +222,16 @@ def _rodar() -> int:
            ok and [c for c in telao.chamadas if isinstance(c, tuple)][-1][0]
            == "imagem")
 
+    # ── 6b. Limite de slides: só a janela Anúncios é liberada ───────
+    _janela = open(os.path.join(
+        RAIZ, "navepro", "ui", "janela_anuncios.py"),
+        encoding="utf-8").read()
+    _nave = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+    checar("janela Anúncios projeta todos os slides no modo demo",
+           "sem_limite_demo=True" in _janela)
+    checar("o limite do modo demo continua no núcleo do app",
+           "if not sem_limite_demo:" in _nave)
+
     # ── 7. Cópia para uploads (sem colisão, sem sobrescrever) ───────
     origem = os.path.join(raiz, "origem", "video.mp4")
     os.makedirs(os.path.dirname(origem), exist_ok=True)
@@ -271,6 +283,71 @@ def _rodar() -> int:
     checar("migração é idempotente (2ª chamada → 0)",
            ns2["_migrar_anuncios_do_json"]() == 0
            and len(ns2["_listar_anuncios_db"]()) == 2)
+
+    # ── 10. Janela Anúncios ignora o limite de slides no demo ───────
+    # A limitação continua para o controle remoto e a Ordem de Serviço;
+    # só a projeção disparada pela janela Anúncios passa sem_limite_demo.
+    _np = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
+    _arvore_np = ast.parse(_np)
+
+    class _TelaoProj:
+        def __init__(self):
+            self.slides = []
+
+        def projetar_slides(self, slides):
+            self.slides = list(slides)
+
+    class _JogadorProj:
+        def __init__(self):
+            self.telao = _TelaoProj()
+
+    class _SelfProj:
+        def __init__(self):
+            self.player = _JogadorProj()
+            self._anuncio_proj = {}
+
+    _anuncios = {"lista": []}
+    _ns_proj = {
+        "os": os,
+        "json": json,
+        "Callable": __import__("collections.abc").abc.Callable,
+        "limitar_slides_anuncio": lm.limitar_slides_anuncio,
+        "_montar_slides_anuncio": _montar_slides_anuncio,
+        "_listar_anuncios_db": lambda: _anuncios["lista"],
+    }
+    for _no in ast.walk(_arvore_np):
+        if isinstance(_no, ast.FunctionDef) and _no.name == "projetar_anuncio":
+            _mod = ast.Module(body=[_no], type_ignores=[])
+            ast.fix_missing_locations(_mod)
+            exec(compile(_mod, "<projetar_anuncio>", "exec"),
+                 _ns_proj)  # noqa: S102
+            break
+    _projetar = _ns_proj["projetar_anuncio"]
+    _estado_lm = dict(lm._ESTADO)
+    try:
+        lm._definir_estado(False, "Modo Demonstração")
+        _mslides = [{"texto": f"slide {i}", "imagem": ""} for i in range(5)]
+        _anuncios["lista"] = [{
+            "id": 1, "titulo": "T", "tipo_midia": "slide",
+            "config_midia": json.dumps({"mslides": _mslides})}]
+        app = _SelfProj()
+        _projetar(app, 1, sem_limite_demo=True)
+        checar("janela Anúncios: multi-slide projeta todos no demo",
+               len(app.player.telao.slides) == 5)
+        _anuncios["lista"] = [{
+            "id": 2, "titulo": "T", "tipo_midia": "slide",
+            "texto": "a\n\nb\n\nc\n\nd"}]
+        app = _SelfProj()
+        _projetar(app, 2, sem_limite_demo=True)
+        checar("janela Anúncios: anúncio de texto projeta todos no demo",
+               len(app.player.telao.slides) == 5)
+        app = _SelfProj()
+        _projetar(app, 2, sem_limite_demo=False)
+        checar("fora da janela Anúncios o limite de 3 slides continua",
+               len(app.player.telao.slides) == 3)
+    finally:
+        lm._ESTADO.clear()
+        lm._ESTADO.update(_estado_lm)
 
     return falhas
 

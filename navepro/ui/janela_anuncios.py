@@ -618,7 +618,8 @@ class JanelaAnunciosMixin:
                 tkinter.messagebox.showwarning("Seleção", "Selecione um anúncio.", parent=janela)
                 return
             res = self.projetar_anuncio(
-                int(sel[0]), ao_atualizar=_atualizar_indicador_slide)
+                int(sel[0]), ao_atualizar=_atualizar_indicador_slide,
+                sem_limite_demo=True)
             if not res.get('ok'):
                 tkinter.messagebox.showwarning(
                     "Anúncio", res.get('erro', ''), parent=janela)

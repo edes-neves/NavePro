@@ -738,13 +738,16 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
     # ── Projeção reutilizável (janelas + controle remoto) ─────────
 
     def projetar_anuncio(self, anuncio_id: int,
-                         ao_atualizar: Callable | None = None) -> dict:
+                         ao_atualizar: Callable | None = None,
+                         sem_limite_demo: bool = False) -> dict:
         """Projeta o anúncio `anuncio_id` (vídeo/áudio/imagem/slides).
 
         Usado pela janela de Anúncios e pelo controle remoto. Não abre
         diálogo: devolve {'ok': False, 'erro': ...} para o chamador
         decidir o que mostrar. `ao_atualizar` é chamado após projetar
         (ex.: atualizar o indicador de slide da janela).
+        `sem_limite_demo=True` é exclusivo da janela Anúncios: no modo
+        demonstração ela projeta todos os slides (a marca d'água continua).
         """
         anuncio = next(
             (a for a in _listar_anuncios_db()
@@ -819,11 +822,14 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                 "id": anuncio_id, "dados": dict(anuncio),
                 "config": cfg_a, "mslides": mslides_orig, "idx_map": idx_map})
         else:
-            slides = _montar_slides_anuncio(dict(anuncio))
+            slides = _montar_slides_anuncio(dict(anuncio),
+                                            aplicar_limite=False)
             self._anuncio_proj.update({
                 "id": None, "dados": {}, "config": {},
                 "mslides": None, "idx_map": []})
-        self.player.telao.projetar_slides(limitar_slides_anuncio(slides))
+        if not sem_limite_demo:
+            slides = limitar_slides_anuncio(slides)
+        self.player.telao.projetar_slides(slides)
         if ao_atualizar:
             ao_atualizar()
         return {'ok': True, 'titulo': anuncio.get('titulo') or '',

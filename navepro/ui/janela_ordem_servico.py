@@ -7,6 +7,7 @@ herda deste mixin para montar a janela.
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import tkinter as tk
 import tkinter.messagebox
@@ -55,6 +56,7 @@ from navepro.core.youtube import (
     _eh_url_youtube,
     _obter_info_youtube,
     obter_video_youtube,
+    video_youtube_baixado,
 )
 from navepro.ui.apoio import (
     _colar_texto_campo,
@@ -73,18 +75,28 @@ class JanelaOrdemServicoMixin:
         """Baixa o vídeo com uma janela de progresso e devolve (caminho, erro).
 
         O download roda em uma thread para a interface continuar respondendo;
-        a janela só fecha quando o yt-dlp termina (ou falha).
+        a janela só fecha quando o yt-dlp termina (ou falha). O `parent` deve
+        ser a janela que está na frente (Ordem de Projeção/editor): no GNOME
+        do Ubuntu 26.04 uma Toplevel transient da janela principal fica
+        atrás da janela de Ordem de Projeção e o operador não vê o progresso.
         """
+        # Já baixado nesta sessão: reproduz direto, sem criar janela nenhuma
+        # (nem por um frame). Só mostra o progresso quando há download real.
+        caminho_existente = video_youtube_baixado(url)
+        if caminho_existente:
+            return caminho_existente, ""
+        try:
+            if parent is None or not parent.winfo_exists():
+                parent = getattr(self, "root", None)
+        except (AttributeError, tk.TclError):
+            parent = getattr(self, "root", None)
         janela = tk.Toplevel(parent)
         janela.title("📥 Baixando vídeo do YouTube")
         janela.configure(bg='#0d1117')
-        janela.transient(parent)
+        if parent is not None:
+            janela.transient(parent)
         janela.resizable(False, False)
         janela.protocol("WM_DELETE_WINDOW", lambda: None)
-        try:
-            janela.grab_set()
-        except tk.TclError:
-            pass
         try:
             _centralizar_sobre(janela, parent)
         except Exception:
@@ -98,20 +110,66 @@ class JanelaOrdemServicoMixin:
         tk.Label(main, text=url, bg='#0d1117', fg='#8b949e',
                  font=("Arial", 9), wraplength=520,
                  justify='left').pack(anchor='w', pady=(6, 10))
-        barra = ttk.Progressbar(main, mode='indeterminate', length=520)
+        barra = ttk.Progressbar(main, mode='determinate', maximum=100,
+                                length=520)
         barra.pack(fill='x')
-        barra.start(12)
+        rodape = tk.Frame(main, bg='#0d1117')
+        rodape.pack(fill='x', pady=(6, 0))
+        lbl_pct = tk.Label(rodape, text="0%", bg='#0d1117', fg='#f0c040',
+                           font=("Arial", 11, "bold"))
+        lbl_pct.pack(side='left')
+        lbl_status = tk.Label(rodape, text="Preparando...",
+                              bg='#0d1117', fg='#c9d1d9',
+                              font=("Arial", 9), wraplength=440,
+                              justify='left')
+        lbl_status.pack(side='left', padx=(10, 0))
         tk.Label(main, text=("O vídeo será reproduzido do computador. "
                              "Aguarde o download terminar."),
-                 bg='#0d1117', fg='#c9d1d9',
+                 bg='#0d1117', fg='#8b949e',
                  font=("Arial", 9)).pack(anchor='w', pady=(8, 0))
+
+        # Garante que a janela seja mapeada e fique na frente antes do grab.
+        # Em Wayland/mutter o mapeamento é assíncrono: sem wait_visibility
+        # o grab_set pode valer para uma janela ainda não visível.
+        try:
+            janela.deiconify()
+            janela.lift()
+            janela.update_idletasks()
+        except tk.TclError:
+            pass
+        try:
+            janela.wait_visibility()
+        except tk.TclError:
+            pass
+        try:
+            janela.grab_set()
+        except tk.TclError:
+            pass
+
+        def _soltar_topmost() -> None:
+            try:
+                janela.attributes("-topmost", False)
+            except tk.TclError:
+                pass
+
+        try:
+            janela.focus_force()
+            janela.attributes("-topmost", True)
+            janela.after(250, _soltar_topmost)
+        except tk.TclError:
+            pass
 
         resultado: dict[str, str] = {}
         concluido = threading.Event()
+        fila_progresso: queue.Queue[tuple[float, str]] = queue.Queue()
+
+        def _ao_progresso(percentual: float, texto: str) -> None:
+            fila_progresso.put((float(percentual), texto or ""))
 
         def _trabalho() -> None:
             try:
-                resultado["caminho"] = obter_video_youtube(url)
+                resultado["caminho"] = obter_video_youtube(
+                    url, ao_progresso=_ao_progresso)
             except Exception as exc:
                 resultado["erro"] = str(exc)
                 log.exception("Falha ao baixar vídeo do YouTube: %s", exc)
@@ -121,10 +179,27 @@ class JanelaOrdemServicoMixin:
         threading.Thread(target=_trabalho, daemon=True,
                          name="navepro-baixar-youtube").start()
 
-        def _verificar() -> None:
-            if concluido.is_set():
+        def _drenar_progresso() -> None:
+            while True:
                 try:
-                    barra.stop()
+                    percentual, texto = fila_progresso.get_nowait()
+                except queue.Empty:
+                    return
+                try:
+                    barra['value'] = max(0.0, min(100.0, percentual))
+                    lbl_pct.config(text=f"{percentual:.0f}%")
+                    if texto:
+                        lbl_status.config(text=texto)
+                except tk.TclError:
+                    return
+
+        def _verificar() -> None:
+            _drenar_progresso()
+            if concluido.is_set():
+                _drenar_progresso()
+                try:
+                    barra['value'] = 100
+                    lbl_pct.config(text="100%")
                 except tk.TclError:
                     pass
                 try:
@@ -2612,7 +2687,8 @@ class JanelaOrdemServicoMixin:
             res = self.executar_proximo_item_servico(
                 serv, escolhido=escolhido,
                 ao_destacar=lambda it: _selecionar_item(
-                    str(it.get('id')), ver=True))
+                    str(it.get('id')), ver=True),
+                parent=janela)
             if not res.get('ok'):
                 if res.get('codigo') == 'vazio':
                     tkinter.messagebox.showinfo(

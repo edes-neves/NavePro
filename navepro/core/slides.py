@@ -41,10 +41,15 @@ def _previa_slide(slide: object) -> str:
     return _texto_simples(str(slide or ""))
 
 
-def _montar_slides_anuncio(anuncio: dict) -> list:
+def _montar_slides_anuncio(anuncio: dict, aplicar_limite: bool = True) -> list:
     """Monta os slides de um anúncio respeitando o texto digitado:
     slide 0 é o título, os demais são os parágrafos do texto (cada
-    parágrafo = 1 slide, exatamente como o editor adiciona telas)."""
+    parágrafo = 1 slide, exatamente como o editor adiciona telas).
+
+    `aplicar_limite=False` é usado apenas pela janela Anúncios: no modo
+    demonstração ela projeta todos os slides (a marca d'água continua).
+    As demais origens (controle remoto e Ordem de Serviço) seguem o limite.
+    """
     titulo = (anuncio.get('titulo') or '').strip()
     # Slides só de texto não usam a formatação rica (negrito/cor): mostram
     # o conteúdo como o operador lê, sem as marcas ** e {c:...}.
@@ -56,7 +61,7 @@ def _montar_slides_anuncio(anuncio: dict) -> list:
         slides.append(paragrafo)
     if not slides:
         slides = [titulo or "ANÚNCIO"]
-    return limitar_slides_anuncio(slides)
+    return limitar_slides_anuncio(slides) if aplicar_limite else slides
 
 
 def _buscar_hino_por_termo(termo: str) -> list[dict]:

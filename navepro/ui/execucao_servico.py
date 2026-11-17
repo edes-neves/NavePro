@@ -42,7 +42,8 @@ tk = TkArredondado(tk)
 class ExecucaoServicoMixin:
     def executar_proximo_item_servico(self, servico: dict | None, *,
                                       escolhido: int | str | None = None,
-                                      ao_destacar: Callable | None = None
+                                      ao_destacar: Callable | None = None,
+                                      parent=None
                                       ) -> dict:
         """Reproduz APENAS o próximo item de `servico` e para.
 
@@ -60,6 +61,9 @@ class ExecucaoServicoMixin:
         {'ok': False, 'codigo': ('sem_servico'|'vazio'|'item_inexistente'|
         'falha'), 'erro'}.
         `ao_destacar(item)` é chamado para a janela realçar o item na lista.
+        `parent` é a janela que deve ficar atrás do diálogo de download
+        (normalmente a própria janela da Ordem de Projeção); sem ele, o
+        progresso pode nascer atrás dela no GNOME/Wayland.
         """
         if not servico:
             return {'ok': False, 'codigo': 'sem_servico',
@@ -130,7 +134,8 @@ class ExecucaoServicoMixin:
                         and hasattr(self, "_baixar_video_youtube_ui")):
                     caminho_media, erro_download = \
                         self._baixar_video_youtube_ui(
-                            getattr(self, "root", None), _url_youtube)
+                            parent or getattr(self, "root", None),
+                            _url_youtube)
                     if erro_download:
                         raise RuntimeError(erro_download)
                 else:

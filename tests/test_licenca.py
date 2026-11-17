@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Testes headless do licenciamento (teste de 10 dias, assinatura e revogação)."""
+"""Testes headless do licenciamento (teste de 30 dias, assinatura e revogação)."""
 
 import base64
 import datetime as dt
@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import padding, rsa  # noqa: E402
 
 import license_manager as lm  # noqa: E402
+from navepro.core.slides import _montar_slides_anuncio  # noqa: E402
 
 falhas = 0
 
@@ -106,7 +107,7 @@ def _rodar() -> int:
             caminho = os.path.join(tmp, lm.NOME_ARQUIVO_LICENCA)
 
             ok, motivo, _ = lm.verificar_licenca(consultar_lista_negra=False)
-            checar("primeiro uso → teste de 10 dias com tudo liberado",
+            checar("primeiro uso → teste de 30 dias com tudo liberado",
                    ok and motivo.startswith("Período de teste")
                    and lm.em_periodo_teste()
                    and lm.status_licenca()["dias_restantes"] == lm.DIAS_TESTE
@@ -114,7 +115,7 @@ def _rodar() -> int:
 
             _gravar_teste(trial, mid, inicio_dias=lm.DIAS_TESTE)
             ok, motivo, _ = lm.verificar_licenca(consultar_lista_negra=False)
-            checar("após 10 dias → modo demonstração",
+            checar("após 30 dias → modo demonstração",
                    not ok and motivo == "Período de teste encerrado"
                    and lm.modo_demonstracao(), motivo)
 
@@ -179,6 +180,12 @@ def _rodar() -> int:
             checar("modo demo limita anúncios a 3 slides",
                    lm.limitar_slides_anuncio(["a", "b", "c", "d", "e"])
                    == ["a", "b", "c"])
+            anuncio_demo = {"titulo": "T", "texto": "a\n\nb\n\nc\n\nd"}
+            checar("projeção comum do anúncio continua limitada no demo",
+                   len(_montar_slides_anuncio(anuncio_demo)) == 3)
+            checar("janela Anúncios projeta todos os slides no demo",
+                   len(_montar_slides_anuncio(
+                       anuncio_demo, aplicar_limite=False)) == 5)
             lm._definir_estado(True, "Licenciado", machine_id=mid)
             checar("modo licenciado não limita anúncios",
                    len(lm.limitar_slides_anuncio(["a", "b", "c", "d", "e"]))
