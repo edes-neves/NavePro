@@ -1,10 +1,9 @@
 name: Flatpak
 
 on:
+  # O release por tag é feito pelo build.yml (unificado: exe + AppImage +
+  # Flatpak). Este workflow fica para builds/publicações manuais.
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   build:

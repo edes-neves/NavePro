@@ -1,0 +1,248 @@
+# Release do NavePro — builds protegidos (.exe e AppImage) + Flatpak.
+#
+# Substitui os triggers de tag de exe.yml e flatpak.yml (que ficam apenas com
+# workflow_dispatch para builds manuais) para não gerar anexos duplicados na
+# mesma Release.
+#
+# Ao publicar uma tag v*:
+#   - Windows: PyArmor + PyInstaller -> NavePro.exe
+#   - Linux:   PyArmor + PyInstaller + appimagetool -> NavePro-<versão>.AppImage
+#   - Flatpak: manifest do código-fonte (sem PyArmor; exigência do Flathub)
+#   - Release: anexa os 3 instaladores
+#   - gh-pages: publica o repositório Flatpak auto-hospedado
+#
+# A ofuscação do NavePro.py exige uma licença registrada do PyArmor. O trial
+# ofusca apenas license_manager.py e o build continua (build_release.py avisa).
+# Para usar a licença registrada, cadastre o segredo PYARMOR_LICENSE_B64 com o
+# conteúdo de license.lic em Base64.
+
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUTF8: '1'
+
+jobs:
+  windows:
+    name: Windows (.exe protegido)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          # python.org: Tk 8.6 (o Tk 9 quebra os aliases de fonte do app)
+          python-version: '3.12'
+
+      - name: Configurar licença do PyArmor (opcional)
+        shell: bash
+        env:
+          PYARMOR_LICENSE_B64: ${{ secrets.PYARMOR_LICENSE_B64 }}
+        run: |
+          if [ -n "${PYARMOR_LICENSE_B64:-}" ]; then
+            mkdir -p "$HOME/.pyarmor"
+            echo "$PYARMOR_LICENSE_B64" | base64 -d > "$HOME/.pyarmor/license.lic"
+            echo "Licença do PyArmor configurada."
+          else
+            echo "Sem segredo PYARMOR_LICENSE_B64; usando o trial do PyArmor."
+          fi
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyarmor
+
+      - name: Gerar NavePro.exe
+        run: python build_release.py --target windows
+
+      - name: Subir o .exe como artifact
+        uses: actions/upload-artifact@v8
+        with:
+          name: NavePro-exe
+          path: dist/NavePro.exe
+          if-no-files-found: error
+
+  appimage:
+    name: Linux (AppImage protegido)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Instalar Python com Tk 8.6 e dependências de build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-tk
+          python3 -m venv .venv
+          ./.venv/bin/python -m pip install --upgrade pip
+          ./.venv/bin/python -m pip install -r requirements.txt pyarmor
+
+      - name: Configurar licença do PyArmor (opcional)
+        env:
+          PYARMOR_LICENSE_B64: ${{ secrets.PYARMOR_LICENSE_B64 }}
+        run: |
+          if [ -n "${PYARMOR_LICENSE_B64:-}" ]; then
+            mkdir -p "$HOME/.pyarmor"
+            echo "$PYARMOR_LICENSE_B64" | base64 -d > "$HOME/.pyarmor/license.lic"
+            echo "Licença do PyArmor configurada."
+          else
+            echo "Sem segredo PYARMOR_LICENSE_B64; usando o trial do PyArmor."
+          fi
+
+      - name: Baixar o appimagetool
+        run: |
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+      - name: Descobrir a versão
+        id: versao
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSAO="${GITHUB_REF_NAME#v}"
+          else
+            VERSAO="$(./.venv/bin/python -c 'from navepro.config import APP_VERSION; print(APP_VERSION)')"
+          fi
+          echo "valor=$VERSAO" >> "$GITHUB_OUTPUT"
+          echo "Versão: $VERSAO"
+
+      - name: Gerar o AppImage
+        env:
+          PYTHON_BIN: ./.venv/bin/python
+          APPIMAGE_TOOL: ./appimagetool
+        run: |
+          ./packaging/linux/build_appimage.sh "${{ steps.versao.outputs.valor }}"
+
+      - name: Subir o AppImage como artifact
+        uses: actions/upload-artifact@v8
+        with:
+          name: NavePro-appimage
+          path: NavePro-*.AppImage
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Docker é exigido pelo docker/setup-qemu-action (binfmt para aarch64).
+      - name: Instalar Docker (aarch64)
+        if: matrix.arch != 'x86_64'
+        run: |
+          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
+          tar xzvf docker.tgz
+          mv docker/* /usr/bin
+
+      - name: Set up QEMU (${{ matrix.arch }})
+        if: matrix.arch != 'x86_64'
+        id: qemu
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          arch: ${{ matrix.arch }}
+          manifest-path: flatpak/io.github.edes_neves.NavePro.yaml
+          cache: true
+          cache-key: flatpak-${{ matrix.arch }}
+          build-bundle: true
+          bundle: NavePro-${{ matrix.arch }}.flatpak
+
+      - name: Subir o bundle como artifact
+        uses: actions/upload-artifact@v8
+        with:
+          name: NavePro-flatpak-${{ matrix.arch }}
+          path: NavePro-${{ matrix.arch }}.flatpak
+          if-no-files-found: error
+
+  release:
+    name: Anexar instaladores à Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, appimage, flatpak]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar todos os artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Anexar à Release da tag
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.flatpak
+          overwrite_files: true
+
+  publish-repo:
+    name: Publicar repositório Flatpak (gh-pages)
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Baixar repositório publicado (gh-pages)
+        uses: actions/checkout@v5
+        with:
+          ref: gh-pages
+          path: pages
+
+      - name: Construir no repositório publicado
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          arch: x86_64
+          manifest-path: flatpak/io.github.edes_neves.NavePro.yaml
+          repo-dir: pages
+          build-bundle: false
+          upload-artifact: false
+          cache: false
+
+      - name: Atualizar metadados do repositório (appstream)
+        run: flatpak build-update-repo "$GITHUB_WORKSPACE/pages"
+
+      - name: Publicar no branch gh-pages
+        run: |
+          cd "$GITHUB_WORKSPACE/pages"
+          git config user.name "NavePro Bot"
+          git config user.email "edes-neves@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Sem alterações no repositório; nada a publicar."
+          else
+            TAG=$(git -C "$GITHUB_WORKSPACE" describe --tags --abbrev=0 2>/dev/null || echo "$GITHUB_REF_NAME")
+            git commit -m "Publicar NavePro $TAG no repositório Flatpak"
+            git push origin gh-pages
+          fi

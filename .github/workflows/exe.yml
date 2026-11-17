@@ -12,10 +12,9 @@
 name: NavePro.exe
 
 on:
+  # O release por tag é feito pelo build.yml (unificado: exe + AppImage +
+  # Flatpak). Este workflow fica para builds manuais de conferência.
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   build:
