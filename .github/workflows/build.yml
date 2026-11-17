@@ -78,7 +78,9 @@ jobs:
 
   appimage:
     name: Linux (AppImage protegido)
-    runs-on: ubuntu-latest
+    # 22.04: Python 3.10 + Tk 8.6 e glibc antiga. O ubuntu-latest de 2026 traz
+    # Python 3.14 compilado para x86-64-v3 (SIGILL em CPUs sem AVX2) e Tk 9.
+    runs-on: ubuntu-22.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
@@ -231,7 +233,7 @@ jobs:
           cache: false
 
       - name: Atualizar metadados do repositório (appstream)
-        run: flatpak build-update-repo "$GITHUB_WORKSPACE/pages"
+        run: flatpak build-update-repo --generate-static-deltas "$GITHUB_WORKSPACE/pages"
 
       - name: Publicar no branch gh-pages
         run: |
