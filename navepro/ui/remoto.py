@@ -38,7 +38,9 @@ from navepro.core.servicos import (
     _carregar_servicos_json,
     _faixa_versiculo_item,
     _salvar_servicos_json,
+    definir_marcar_reproduzidos,
     dia_do_servico,
+    marcar_item_servico,
 )
 from navepro.core.slides import (
     _buscar_hino_por_termo,
@@ -324,11 +326,17 @@ class ControleRemotoMixin:
                     {'id': a.get('id'), 'titulo': a.get('titulo') or '',
                      'tipo': a.get('tipo_midia') or 'slide'}
                     for a in _listar_anuncios_db()]},
-                'listar_servicos': lambda d: {'ok': True, 'servicos': [
-                    {'id': s.get('id'), 'nome': s.get('nome') or '',
-                     'dia': dia_do_servico(s),
-                     'itens': len(s.get('itens') or [])}
-                    for s in (_carregar_servicos_json().get('servicos') or [])]},
+                'listar_servicos': lambda d: {
+                    'ok': True,
+                    'marcar_reproduzidos': bool(
+                        _carregar_servicos_json().get(
+                            '_marcar_reproduzidos', False)),
+                    'servicos': [
+                        {'id': s.get('id'), 'nome': s.get('nome') or '',
+                         'dia': dia_do_servico(s),
+                         'itens': len(s.get('itens') or [])}
+                        for s in (_carregar_servicos_json().get('servicos')
+                                  or [])]},
                 'servico_itens': lambda d: self._remoto_servico_itens(d),
                 'relogio_estado': lambda d: self._remoto_relogio_estado(),
                 'sorteio_estado': lambda d: self._remoto_sorteio_estado(),
@@ -342,6 +350,7 @@ class ControleRemotoMixin:
                 'projetar_anuncio': lambda d: self._remoto_projetar_anuncio(d),
                 'executar_servico': lambda d: self._remoto_executar_servico(d),
                 'servico_item': lambda d: self._remoto_servico_item(d),
+                'servico_auto': lambda d: self._remoto_servico_auto(d),
                 'medidor': lambda d: self._remoto_medidor(d),
                 'relogio': lambda d: self._remoto_relogio(d),
                 'abrir_config_projecao': lambda d:
@@ -969,7 +978,8 @@ class ControleRemotoMixin:
     def _remoto_executar_servico(self, dados: dict) -> dict:
         """Roda o próximo item de um serviço (ou o `item` escolhido)."""
         alvo = str(dados.get('id') or '')
-        servicos = _carregar_servicos_json().get('servicos') or []
+        todos = _carregar_servicos_json()
+        servicos = todos.get('servicos') or []
         serv = next((s for s in servicos
                      if str(s.get('id') or '') == alvo
                      or str(s.get('nome') or '') == alvo), None)
@@ -979,8 +989,19 @@ class ControleRemotoMixin:
         # Não converter para int: o id do item pode ser texto (dados antigos/
         # importados ou editados à mão) e int() derrubava o botão do item.
         escolhido = None if item is None or item == '' else item
+        marcar = bool(todos.get('_marcar_reproduzidos', False))
         self.player._garantir_telao()
-        return self.executar_proximo_item_servico(serv, escolhido=escolhido)
+        # A marcação é feita pelo próprio executar_proximo_item_servico:
+        # no fim da mídia ou quando o próximo item começa.
+        return self.executar_proximo_item_servico(
+            serv, escolhido=escolhido, marcar_reproduzido=marcar)
+    def _remoto_servico_auto(self, dados: dict) -> dict:
+        """Liga/desliga a marcação automática de itens reproduzidos."""
+        ativo = bool(dados.get('ativo'))
+        if not definir_marcar_reproduzidos(ativo):
+            return {'ok': False,
+                    'erro': 'Não foi possível salvar em servicos.json.'}
+        return {'ok': True, 'marcar_reproduzidos': ativo}
     def _remoto_servico_itens(self, dados: dict) -> dict:
         """Lista os itens de UM serviço para a aba Serviço do celular."""
         serv = self._localizar_servico(str(dados.get('servico') or ''))
@@ -1042,6 +1063,7 @@ class ControleRemotoMixin:
                 'detalhe': detalhe, 'previa': previa,
                 'caminho_arquivo': item.get('caminho_arquivo') or '',
                 'youtube_url': item.get('youtube_url') or '',
+                'reproduzido': bool(item.get('reproduzido')),
                 'ref': ref}
     def _remoto_resolver_item(self, dados: dict) -> tuple:
         """Resolve um item da Ordem de Serviço vindo do celular.
@@ -1269,6 +1291,18 @@ class ControleRemotoMixin:
                 return {'ok': False,
                         'erro': 'Não foi possível salvar em servicos.json.'}
             return {'ok': True, 'total': len(serv['itens'])}
+
+        if operacao in ('marcar', 'marcar_reproduzido', 'reproduzido'):
+            idx = next((i for i, x in enumerate(itens)
+                        if str(x.get('id') or '') == str(item_id)), None)
+            if idx is None:
+                return {'ok': False, 'erro': 'Item não encontrado.'}
+            marcado = bool(dados.get('reproduzido'))
+            if not marcar_item_servico(serv.get('id'), item_id, marcado):
+                return {'ok': False,
+                        'erro': 'Não foi possível salvar em servicos.json.'}
+            return {'ok': True, 'id': itens[idx].get('id'),
+                    'reproduzido': marcado}
 
         if operacao in ('mover', 'mover_item', 'subir', 'descer'):
             direcao = str(dados.get('direcao') or operacao).strip().lower()

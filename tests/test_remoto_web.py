@@ -102,6 +102,18 @@ check("dia escolhido sobrevive ao recarregar a página",
 check("campo Programação aparece acima da lista",
       'class="serv-subtitulo">Programa' in PAGINA)
 
+# ── 4c. Itens reproduzidos no controle remoto ────────────────────────
+check("aba Serviço tem a opção Marcar reproduzidos",
+      'id="chk_marcar_reproduzidos"' in PAGINA
+      and "alternarMarcarReproduzidos" in JS)
+check("cada item tem caixa de reproduzido",
+      "item-marcado" in JS and "marcarItemServico" in JS)
+check("item reproduzido fica tachado no celular",
+      ".item-servico.reproduzido .item-titulo" in CSS
+      and "text-decoration: line-through" in CSS)
+check("API de marcação automática é chamada pela página",
+      "/api/remoto/servico_auto" in PAGINA)
+
 # ── 5. Botões "Buscar": lupa e texto cabem dentro do botão ───────────
 _botoes_busca = re.findall(
     r'<button class="([^"]*)"[^>]*>\s*&#128269;\s*Buscar</button>', PAGINA)

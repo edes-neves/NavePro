@@ -28,7 +28,12 @@ from navepro.core.foco_apresentacao import (
 )
 from navepro.core.log import get_logger
 from navepro.core.mediaplayer import _eh_url
-from navepro.core.servicos import _SERVICO_PROXIMO_ITEM, _slides_versiculo_item
+from navepro.core.servicos import (
+    _SERVICO_ITEM_REPRODUZINDO,
+    _SERVICO_PROXIMO_ITEM,
+    _slides_versiculo_item,
+    marcar_item_servico,
+)
 from navepro.core.slides import _montar_slides_letra
 from navepro.core.widgets_arredondados import TkArredondado
 from navepro.core.youtube import obter_video_youtube
@@ -43,7 +48,9 @@ class ExecucaoServicoMixin:
     def executar_proximo_item_servico(self, servico: dict | None, *,
                                       escolhido: int | str | None = None,
                                       ao_destacar: Callable | None = None,
-                                      parent=None
+                                      parent=None,
+                                      marcar_reproduzido: bool = False,
+                                      ao_terminar: Callable | None = None
                                       ) -> dict:
         """Reproduz APENAS o próximo item de `servico` e para.
 
@@ -64,6 +71,10 @@ class ExecucaoServicoMixin:
         `parent` é a janela que deve ficar atrás do diálogo de download
         (normalmente a própria janela da Ordem de Projeção); sem ele, o
         progresso pode nascer atrás dela no GNOME/Wayland.
+        `marcar_reproduzido=True` marca o item como reproduzido quando ele
+        termina: no fim da mídia (`ao_terminar`) ou quando o próximo item
+        começa (slides que permanecem no telão). O chamador persiste em
+        servicos.json.
         """
         if not servico:
             return {'ok': False, 'codigo': 'sem_servico',
@@ -109,6 +120,37 @@ class ExecucaoServicoMixin:
         titulo_item = (item.get('titulo_custom') or '').strip()
         letra = (item.get('letra_snapshot') or '').strip()
 
+        # O item anterior terminou quando este começou (mídia substituída ou
+        # slide que saiu do telão). Marca-o agora, mas só se ele ainda não
+        # tinha terminado sozinho (fim natural da mídia).
+        anterior_id = None
+        pendente = dict(_SERVICO_ITEM_REPRODUZINDO)
+        _SERVICO_ITEM_REPRODUZINDO.clear()
+        if marcar_reproduzido and pendente:
+            anterior = pendente.get("item_id")
+            anterior_servico = pendente.get("servico_id")
+            if str(anterior_servico) == str(servico.get("id")):
+                item_anterior = next(
+                    (x for x in itens
+                     if str(x.get("id")) == str(anterior)), None)
+                if (item_anterior is not None
+                        and not item_anterior.get("reproduzido")):
+                    item_anterior["reproduzido"] = True
+                    anterior_id = item_anterior.get("id")
+                    if not marcar_item_servico(
+                            anterior_servico, anterior_id, True):
+                        log.warning("⚠️ Não foi possível guardar o item "
+                                    "anterior como reproduzido.")
+            elif anterior is not None:
+                # O telão só mostra um item por vez: o pendente de outra
+                # programação terminou quando este começou.
+                if marcar_item_servico(
+                        anterior_servico, anterior, True):
+                    anterior_id = anterior
+                else:
+                    log.warning("⚠️ Não foi possível guardar o item "
+                                "anterior como reproduzido.")
+
         # Destaque do item em execução na lista da janela de serviço.
         # Não é escolha do operador: não registra nada em _item_escolhido.
         if ao_destacar:
@@ -143,6 +185,7 @@ class ExecucaoServicoMixin:
             except Exception as exc:
                 log.exception("Falha ao obter o vídeo do YouTube: %s", exc)
                 return {'ok': False, 'codigo': 'falha',
+                        'anterior_reproduzido_id': anterior_id,
                         'erro': ('Não foi possível baixar o vídeo do '
                                  f'YouTube: {exc}')}
         elif tipo in ('video', 'audio', 'sermao') and _caminho_direto \
@@ -264,6 +307,25 @@ class ExecucaoServicoMixin:
                         self.player.index = self._snapshot_servico["index"]
                         self.arquivos_encontrados = self._snapshot_servico["arquivos"]
                         self.arquivo_atual = self._snapshot_servico["atual"]
+                    # A mídia terminou de verdade: só agora o item é marcado.
+                    if marcar_reproduzido:
+                        if not item.get("reproduzido"):
+                            item["reproduzido"] = True
+                            if not marcar_item_servico(
+                                    servico.get("id"), item.get("id"), True):
+                                log.warning(
+                                    "⚠️ Não foi possível guardar o item "
+                                    "reproduzido.")
+                        if (_SERVICO_ITEM_REPRODUZINDO.get("chave") == chave
+                                and str(_SERVICO_ITEM_REPRODUZINDO.get(
+                                    "item_id")) == str(item.get("id"))):
+                            _SERVICO_ITEM_REPRODUZINDO.clear()
+                        if ao_terminar is not None:
+                            try:
+                                ao_terminar(item)
+                            except Exception:
+                                log.exception(
+                                    "Falha ao atualizar a marcação do item.")
 
                 self.player.on_state_change = _fim_item_servico
                 self.player.carregar_playlist([caminho])
@@ -306,7 +368,19 @@ class ExecucaoServicoMixin:
 
         if not iniciado:
             return {'ok': False, 'codigo': 'falha',
+                    'anterior_reproduzido_id': anterior_id,
                     'erro': f"Não foi possível reproduzir o item {prox + 1}."}
+        if marcar_reproduzido:
+            # Fica pendente até a mídia terminar (callback) ou até o próximo
+            # item começar (slides que continuam no telão). O telão só mostra
+            # um item por vez, então há um único pendente no processo.
+            _SERVICO_ITEM_REPRODUZINDO.update({
+                "chave": chave,
+                "servico_id": servico.get("id"),
+                "item_id": item.get("id")})
+        else:
+            _SERVICO_ITEM_REPRODUZINDO.clear()
         _SERVICO_PROXIMO_ITEM[chave] = prox + 1
         return {'ok': True, 'indice': prox, 'id': item.get('id'),
+                'anterior_reproduzido_id': anterior_id,
                 'titulo': titulo_item}

@@ -91,6 +91,10 @@ r = despacho("listar_servicos", {})
 checar("listar_servicos devolve o dia de cada programação",
        r.get("ok") and r["servicos"][0]["dia"] == "terca"
        and r["servicos"][1]["dia"] == "terca")
+checar("listar_servicos informa a marcação automática",
+       r.get("marcar_reproduzidos") is False)
+checar("marcação automática tem ação própria no despacho",
+       "'servico_auto': lambda" in _SRC)
 checar("servico_itens também informa o dia",
        "'dia': dia_do_servico(serv)" in _SRC)
 

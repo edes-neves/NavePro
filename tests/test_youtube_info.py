@@ -64,6 +64,8 @@ def _rodar() -> int:
     original_localizar = yt.localizar_executavel
     original_run = yt.subprocess.run
     original_flatpak = yt._eh_flatpak
+    original_gerenciado = yt._ytdlp_gerenciado
+    yt._ytdlp_gerenciado = lambda: None
 
     def _run_ok(*_args, **_kwargs):
         return SimpleNamespace(
@@ -174,6 +176,7 @@ def _rodar() -> int:
     yt._eh_flatpak = original_flatpak
     yt.localizar_executavel = original_localizar
     yt.subprocess.run = original_run
+    yt._ytdlp_gerenciado = original_gerenciado
 
     return falhas
 

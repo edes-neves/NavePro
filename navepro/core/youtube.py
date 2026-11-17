@@ -60,6 +60,14 @@ _DENO_URL = ("https://github.com/denoland/deno/releases/latest/download/"
              "{asset}")
 _DENO_LOCK = threading.Lock()
 
+# yt-dlp oficial baixado pelo NavePro. O pacote do Ubuntu 26.04 (2026.03.17)
+# é velho demais para o YouTube atual; o binário oficial é usado quando
+# disponível (com fallback para o yt-dlp do sistema).
+_YTDLP_URL = ("https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
+              "{asset}")
+_YTDLP_LOCK = threading.Lock()
+_YTDLP_VALIDADE_DIAS = 120
+
 # Marcadores das linhas de progresso do yt-dlp (ver _executar_ytdlp_stream).
 _MARCA_TOTAL = "NPINFO "
 _RE_PROGRESSO = re.compile(
@@ -282,6 +290,138 @@ def _baixar_deno(ao_progresso=None) -> str:
                     pass
 
 
+def _nome_executavel_ytdlp() -> str:
+    return "yt-dlp.exe" if sys.platform.startswith("win") else "yt-dlp"
+
+
+def _asset_ytdlp(plataforma: str | None = None,
+                 maquina: str | None = None) -> str | None:
+    """Nome do binário oficial do yt-dlp para a plataforma atual."""
+    plataforma = plataforma or sys.platform
+    maquina = (maquina or platform.machine()).lower()
+    if plataforma.startswith("win"):
+        if maquina in ("amd64", "x86_64"):
+            return "yt-dlp.exe"
+        if maquina in ("arm64", "aarch64"):
+            return "yt-dlp_arm64.exe"
+        if maquina in ("x86", "i386", "i686"):
+            return "yt-dlp_x86.exe"
+    elif plataforma.startswith("linux"):
+        # Zipapp oficial: pequeno e usa o Python já presente no sistema/host.
+        return "yt-dlp"
+    elif plataforma == "darwin":
+        return "yt-dlp_macos"
+    return None
+
+
+def _ytdlp_gerenciado() -> str | None:
+    caminho = os.path.join(_pasta_bin_navepro(), _nome_executavel_ytdlp())
+    return caminho if os.path.isfile(caminho) else None
+
+
+def _validar_ytdlp(caminho: str) -> None:
+    try:
+        resultado = subprocess.run(
+            [caminho, "--version"], capture_output=True, text=True,
+            timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=_ambiente_sem_appimage())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"o yt-dlp baixado não executou: {exc}") from exc
+    if resultado.returncode != 0:
+        raise RuntimeError("o yt-dlp baixado não executou corretamente.")
+
+
+def _baixar_ytdlp(ao_progresso=None) -> str:
+    """Baixa o yt-dlp oficial atual para ~/.navepro/bin (sem sudo).
+
+    O pacote do Ubuntu 26.04 é de março/2026 e o YouTube já mudou desde
+    então; o binário oficial do projeto acompanha essas mudanças e evita o
+    erro "Requested format is not available"/403 sem o usuário atualizar
+    nada manualmente.
+    """
+    asset = _asset_ytdlp()
+    if not asset:
+        raise RuntimeError("não há yt-dlp para esta plataforma/arquitetura.")
+    pasta = _pasta_bin_navepro()
+    os.makedirs(pasta, exist_ok=True)
+    alvo = os.path.join(pasta, _nome_executavel_ytdlp())
+    with _YTDLP_LOCK:
+        if os.path.isfile(alvo):
+            try:
+                idade = time.time() - os.path.getmtime(alvo)
+            except OSError:
+                idade = 0
+            if idade <= _YTDLP_VALIDADE_DIAS * 86400:
+                return alvo
+        tmp = os.path.join(
+            pasta,
+            "yt-dlp.novo" + (".exe" if sys.platform.startswith("win")
+                             else ""))
+        try:
+            if ao_progresso is not None:
+                ao_progresso(0.0, "Preparando o YouTube "
+                                  "(baixando yt-dlp atualizado)...")
+            pedido = urllib.request.Request(
+                _YTDLP_URL.format(asset=asset),
+                headers={"User-Agent": "NavePro"})
+            with _baixar(pedido, timeout=120) as resposta, \
+                    open(tmp, "wb") as saida:
+                try:
+                    total = int(resposta.headers.get("Content-Length") or 0)
+                except (TypeError, ValueError):
+                    total = 0
+                baixado = 0
+                while True:
+                    bloco = resposta.read(256 * 1024)
+                    if not bloco:
+                        break
+                    saida.write(bloco)
+                    baixado += len(bloco)
+                    if ao_progresso is not None and total > 0:
+                        ao_progresso(
+                            min(99.0, baixado * 100.0 / total),
+                            "Preparando o YouTube (yt-dlp atualizado)...")
+            if not sys.platform.startswith("win"):
+                os.chmod(tmp, 0o755)
+            _validar_ytdlp(tmp)
+            os.replace(tmp, alvo)
+            with _CACHE_YTDLP_LOCK:
+                _AJUDA_YTDLP.pop(alvo, None)
+                _CACHE_OPCOES_JS.pop(alvo, None)
+            log.info("⬇️ yt-dlp oficial instalado em %s", alvo)
+            if ao_progresso is not None:
+                ao_progresso(100.0, "yt-dlp atualizado pronto.")
+            return alvo
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"não foi possível preparar o yt-dlp: {exc}") from exc
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _garantir_ytdlp(ao_progresso=None) -> str | None:
+    """Usa/baixa o yt-dlp oficial atual sem exigir ação do usuário."""
+    alvo = _ytdlp_gerenciado()
+    if alvo is not None:
+        try:
+            idade = time.time() - os.path.getmtime(alvo)
+        except OSError:
+            idade = 0
+        if idade <= _YTDLP_VALIDADE_DIAS * 86400:
+            return alvo
+    try:
+        return _baixar_ytdlp(ao_progresso)
+    except RuntimeError as exc:
+        log.warning("⚠️ Não foi possível baixar o yt-dlp atualizado: %s", exc)
+        return _ytdlp_gerenciado()
+
+
 def _runtime_js_youtube() -> tuple[str, str] | None:
     """Runtime JavaScript disponível para o yt-dlp resolver o challenge."""
     for nome in _RUNTIMES_JS_YOUTUBE:
@@ -362,7 +502,8 @@ def _obter_info_youtube(url: str, timeout: float = 15.0) -> dict | None:
     url = (url or "").strip()
     if not _eh_url_youtube(url):
         return None
-    executavel = (localizar_executavel("yt-dlp")
+    executavel = (_ytdlp_gerenciado()
+                  or localizar_executavel("yt-dlp")
                   or localizar_executavel("youtube-dl"))
     if not executavel:
         log.warning("⚠️ yt-dlp não encontrado para obter informações do YouTube.")
@@ -529,10 +670,23 @@ def _comando_baixar_youtube(executavel: str, url: str, pasta: str,
     ]
 
 
-def _parece_erro_403(resultado: subprocess.CompletedProcess) -> bool:
-    """True se o yt-dlp foi recusado pelo YouTube (HTTP 403/Forbidden)."""
+def _precisa_retentar(resultado: subprocess.CompletedProcess) -> bool:
+    """Erros que podem sumir ao trocar o cliente do extrator do YouTube."""
     texto = (resultado.stderr or resultado.stdout or "").lower()
-    return "403" in texto or "forbidden" in texto
+    return ("403" in texto or "forbidden" in texto
+            or "requested format is not available" in texto)
+
+
+def _dica_erro_youtube(resultado: subprocess.CompletedProcess,
+                       executavel: str) -> str:
+    texto = (resultado.stderr or resultado.stdout or "").lower()
+    if "403" in texto or "forbidden" in texto:
+        return _dica_erro_403(executavel)
+    if "requested format is not available" in texto:
+        return ("\n\nO YouTube não ofereceu formatos baixáveis. O NavePro "
+                "tenta baixar o yt-dlp oficial atual; se isso falhou, "
+                "verifique a internet ou atualize o yt-dlp.")
+    return ""
 
 
 def _dica_erro_403(executavel: str) -> str:
@@ -717,14 +871,20 @@ def baixar_video_youtube(url: str, timeout: float | None = 1800,
     if not _eh_url_youtube(url):
         raise ValueError("URL inválida! Insira uma URL do YouTube")
 
-    executavel = (localizar_executavel("yt-dlp")
+    if ao_progresso is not None:
+        ao_progresso(0.0, "Preparando o YouTube...")
+    # Usa o yt-dlp oficial atual (baixado uma vez, sem sudo). O pacote do
+    # Ubuntu 26.04 é antigo demais para o YouTube de hoje.
+    gerenciado = _garantir_ytdlp(ao_progresso)
+    executavel = (gerenciado
+                  or localizar_executavel("yt-dlp")
                   or localizar_executavel("youtube-dl"))
     if not executavel:
         raise RuntimeError(
             "yt-dlp não encontrado. Instale com 'sudo apt install yt-dlp' "
             "(ou 'pipx install yt-dlp').")
 
-    # Ubuntu 26.04: o yt-dlp do sistema exige runtime JS e não o instala.
+    # Ubuntu 26.04: o yt-dlp exige runtime JS e o sistema não o instala.
     # Baixa o Deno para ~/.navepro/bin na primeira vez, sem sudo.
     _garantir_runtime_js(executavel, ao_progresso)
     if ao_progresso is not None:
@@ -745,6 +905,7 @@ def baixar_video_youtube(url: str, timeout: float | None = 1800,
         clientes += ["default,-android_vr", "tv,web_safari"]
 
     resultado = None
+    primeiro_resultado = None
     for indice, cliente in enumerate(clientes):
         comando = _comando_baixar_youtube(
             executavel, url, pasta, base, cliente_youtube=cliente,
@@ -762,18 +923,24 @@ def baixar_video_youtube(url: str, timeout: float | None = 1800,
                 f"Falha ao executar o yt-dlp: {exc}") from exc
         if resultado.returncode == 0:
             break
-        if not _parece_erro_403(resultado) or indice + 1 >= len(clientes):
+        if primeiro_resultado is None:
+            primeiro_resultado = resultado
+        if not _precisa_retentar(resultado) or indice + 1 >= len(clientes):
             break
-        log.info("↩️ YouTube recusou o cliente padrão (403); "
+        log.info("↩️ YouTube recusou o cliente padrão; "
                  "tentando novamente com o cliente %s.",
                  clientes[indice + 1])
         if ao_progresso is not None:
             ao_progresso(0.0, "Tentando novamente com outro cliente...")
 
     if resultado.returncode != 0:
-        detalhe = _resumo_erro_ytdlp(resultado)
+        # Mostra o PRIMEIRO erro: se a tentativa inicial deu 403, os retries
+        # com outros clientes podem terminar em "format not available", que
+        # esconde a causa real (yt-dlp antigo sem formato baixável).
+        base_erro = primeiro_resultado or resultado
+        detalhe = _resumo_erro_ytdlp(base_erro)
         _remover_arquivos_parciais(pasta, base)
-        dica = _dica_erro_403(executavel) if _parece_erro_403(resultado) else ""
+        dica = _dica_erro_youtube(base_erro, executavel)
         raise RuntimeError(
             f"Falha ao baixar o vídeo do YouTube: {detalhe}{dica}")
 

@@ -40,14 +40,16 @@ def _rodar() -> int:
         "eh_flatpak": yt._eh_flatpak,
         "baixar": yt.baixar_video_youtube,
         "baixar_deno": yt._baixar_deno,
+        "garantir_ytdlp": yt._garantir_ytdlp,
     }
     pasta = tempfile.mkdtemp(prefix="navepro-yt-teste-")
     try:
         def _sem_rede(*_args, **_kwargs):
             raise RuntimeError("sem rede (teste)")
 
-        # Nunca baixa o Deno de verdade durante a suíte.
+        # Nunca baixa Deno/yt-dlp de verdade durante a suíte.
         yt._baixar_deno = _sem_rede
+        yt._garantir_ytdlp = lambda ao_progresso=None: "/fake/yt-dlp"
         yt.localizar_executavel = _fake_localizar
         yt._VIDEOS_BAIXADOS.clear()
 
@@ -197,7 +199,14 @@ def _rodar() -> int:
         else:
             checar("403 sem runtime JS ensina a instalar Node/Deno", False)
 
-        # ── Deno: asset por plataforma ───────────────────────────────
+        # ── yt-dlp/Deno: asset por plataforma ───────────────────────
+        checar("yt-dlp: asset Linux é o zipapp oficial",
+               yt._asset_ytdlp("linux", "x86_64") == "yt-dlp")
+        checar("yt-dlp: asset Windows x64 é o .exe",
+               yt._asset_ytdlp("win32", "AMD64") == "yt-dlp.exe")
+        checar("yt-dlp: asset Windows arm64 é o .exe próprio",
+               yt._asset_ytdlp("win32", "arm64")
+               == "yt-dlp_arm64.exe")
         checar("Deno: asset Linux x86_64",
                yt._asset_deno("linux", "x86_64")
                == "deno-x86_64-unknown-linux-gnu.zip")
@@ -320,6 +329,7 @@ def _rodar() -> int:
         yt._eh_flatpak = original["eh_flatpak"]
         yt.baixar_video_youtube = original["baixar"]
         yt._baixar_deno = original["baixar_deno"]
+        yt._garantir_ytdlp = original["garantir_ytdlp"]
         yt._VIDEOS_BAIXADOS.clear()
         yt._AJUDA_YTDLP.clear()
         yt._CACHE_OPCOES_JS.clear()

@@ -158,6 +158,33 @@ def _proximo_id_servico_livre(dados: dict) -> int:
     return cand
 
 
+def marcar_item_servico(servico_id, item_id, marcado: bool = True) -> bool:
+    """Marca/desmarca um item como reproduzido, preservando o arquivo atual.
+
+    Relê o servicos.json e altera só o campo do item. Evita que a janela
+    (aberta há mais tempo) sobrescreva uma marcação/opção feita pelo
+    controle remoto com um `dados` em memória desatualizado.
+    """
+    dados = _carregar_servicos_json()
+    serv = next((s for s in (dados.get("servicos") or [])
+                 if str(s.get("id") or "") == str(servico_id)), None)
+    if serv is None:
+        return False
+    item = next((x for x in (serv.get("itens") or [])
+                 if str(x.get("id") or "") == str(item_id)), None)
+    if item is None:
+        return False
+    item["reproduzido"] = bool(marcado)
+    return _salvar_servicos_json(dados)
+
+
+def definir_marcar_reproduzidos(ativo: bool) -> bool:
+    """Liga/desliga a marcação automática preservando o restante do arquivo."""
+    dados = _carregar_servicos_json()
+    dados["_marcar_reproduzidos"] = bool(ativo)
+    return _salvar_servicos_json(dados)
+
+
 def _migrar_servicos_do_banco() -> bool:
     """Migra UMA vez as ordens de serviço do SQLite para servicos.json.
 
@@ -217,6 +244,11 @@ def _migrar_servicos_do_banco() -> bool:
 # Chave = id do serviço (ou nome como fallback). Valor = índice do item
 # que deve ser reproduzido no próximo clique.
 _SERVICO_PROXIMO_ITEM: dict = {}
+
+# Item que está em reprodução agora (chave = id/nome do serviço). Usado para
+# marcar como reproduzido só quando ele termina (fim da mídia) ou quando o
+# próximo item começa (slides que ficam no telão).
+_SERVICO_ITEM_REPRODUZINDO: dict = {}
 
 
 def _analisar_faixa_versiculos(texto: str) -> tuple:

@@ -133,6 +133,7 @@ def _ns_excluir(dados, servico, selecionado, salvar_ok=True, resposta=True):
         "_ordenar_servicos": lambda: sorted(
             dados["servicos"], key=lambda s: s.get("id") or 0, reverse=True),
         "_SERVICO_PROXIMO_ITEM": proximo,
+        "_SERVICO_ITEM_REPRODUZINDO": {},
         "_item_escolhido": escolhido,
         "servico_selecionado_id": selecionado,
         "_carregar_servicos": _carregar_servicos,
@@ -298,6 +299,20 @@ def _rodar():
           and 'text="➕ Nova Projeção"' in _SRC)
     check("antigo rótulo Projeção foi removido",
           'text="Projeção:"' not in _SRC)
+
+    # ── 11) Itens reproduzidos: caixinha, tachado e opção no topo ────
+    check("cada item tem a caixa de reproduzido na primeira coluna",
+          "command=lambda i=iid: _alternar_reproduzido(i)" in _SRC)
+    check("caixa marcada usa indicador de alto contraste",
+          "selectcolor='#238636'" in _SRC)
+    check("item marcado fica tachado (overstrike)",
+          "_fonte_com_risco" in _SRC and '"overstrike"' in _SRC)
+    check("topo tem a opção Marcar reproduzidos",
+          'text="Marcar reproduzidos"' in _SRC)
+    check("execução marca o item só quando ele termina",
+          "marcar_reproduzido=marcar" in _SRC
+          and "ao_terminar=_ao_terminar_item" in _SRC
+          and "anterior_reproduzido_id" in _SRC)
 
     dados_dia = {"servicos": [
         {"id": 1, "nome": "Culto", "dia": "domingo", "itens": []},

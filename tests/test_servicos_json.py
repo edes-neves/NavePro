@@ -23,6 +23,7 @@ if _AQUI not in sys.path:
 
 from fixture_log import log  # noqa: E402
 
+import navepro.core.servicos as servicos_mod  # noqa: E402
 from navepro.core.servicos import (  # noqa: E402
     dia_do_servico,
     normalizar_dia_servico,
@@ -126,6 +127,32 @@ def _rodar() -> int:
                == "terca")
         checar("programação sem dia/data cai no Domingo",
                dia_do_servico({}) == "domingo")
+
+        # ── 8. Marcação de itens reproduzidos ───────────────────────
+        original_carregar = servicos_mod._carregar_servicos_json
+        original_salvar = servicos_mod._salvar_servicos_json
+        salvo: dict = {}
+
+        def _salvar_fake(d):
+            salvo.clear()
+            salvo.update(d)
+            return True
+
+        servicos_mod._carregar_servicos_json = lambda: {
+            "servicos": [{"id": 1, "nome": "Culto",
+                          "itens": [{"id": 10, "titulo_custom": "A"}]}],
+            "_marcar_reproduzidos": False}
+        servicos_mod._salvar_servicos_json = _salvar_fake
+        try:
+            checar("marca item reproduzido preservando o arquivo",
+                   servicos_mod.marcar_item_servico(1, 10, True)
+                   and salvo["servicos"][0]["itens"][0]["reproduzido"] is True)
+            checar("opção de marcar reproduzidos é salva",
+                   servicos_mod.definir_marcar_reproduzidos(True)
+                   and salvo["_marcar_reproduzidos"] is True)
+        finally:
+            servicos_mod._carregar_servicos_json = original_carregar
+            servicos_mod._salvar_servicos_json = original_salvar
 
     return falhas
 

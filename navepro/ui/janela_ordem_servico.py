@@ -30,6 +30,7 @@ from navepro.core.fontes_pil import _texto_simples
 from navepro.core.inicializacao import _sincronizar_uploads_midia
 from navepro.core.log import get_logger
 from navepro.core.servicos import (
+    _SERVICO_ITEM_REPRODUZINDO,
     _SERVICO_PROXIMO_ITEM,
     _analisar_faixa_versiculos,
     _carregar_servicos_json,
@@ -38,6 +39,8 @@ from navepro.core.servicos import (
     _migrar_servicos_do_banco,
     _proximo_id_servico_livre,
     _salvar_servicos_json,
+    definir_marcar_reproduzidos,
+    marcar_item_servico,
 )
 from navepro.core.slides import (
     _buscar_hino_por_termo,
@@ -355,6 +358,26 @@ class JanelaOrdemServicoMixin:
         combo_servico._navepro_servico_var = servico_var
         combo_servico.pack(side='left', padx=5)
 
+        marcar_reproduzidos_var = tk.BooleanVar(
+            value=bool(dados.get("_marcar_reproduzidos", False)))
+
+        def _alternar_marcar_reproduzidos() -> None:
+            ativo = bool(marcar_reproduzidos_var.get())
+            dados["_marcar_reproduzidos"] = ativo
+            if not definir_marcar_reproduzidos(ativo):
+                log.debug("Não foi possível guardar a opção de marcar "
+                          "itens reproduzidos em servicos.json.")
+
+        chk_marcar = tk.Checkbutton(
+            prog_frame, text="Marcar reproduzidos",
+            variable=marcar_reproduzidos_var,
+            command=_alternar_marcar_reproduzidos,
+            bg='#161b22', fg='#c9d1d9', activebackground='#161b22',
+            activeforeground='#f0c040', selectcolor='#6e40c9',
+            highlightthickness=0, bd=0, font=("Arial", 10, "bold"))
+        chk_marcar._navepro_var = marcar_reproduzidos_var
+        chk_marcar.pack(side='right', padx=8)
+
         servico_selecionado_id = [None]
 
         def _rotulo_servico(s: dict) -> str:
@@ -607,19 +630,100 @@ class JanelaOrdemServicoMixin:
                 pass
 
         def _atualizar_selecao_visual() -> None:
-            for iid, dados in _cards.items():
+            for iid, dados_card in _cards.items():
                 selecionado = iid in _selecionados
+                check_var = dados_card.get("check_var")
+                marcado = (bool(check_var.get())
+                           if check_var is not None else False)
                 fundo = COR_SELECAO if selecionado else (
                     COR_CARD if cartoes_ativo["on"] else COR_FUNDO_LISTA)
                 try:
-                    for frame in dados["frames"]:
+                    for frame in dados_card["frames"]:
                         frame.configure(bg=fundo)
-                    for widget, cor_normal in dados["fundos"]:
-                        widget.configure(
-                            bg=fundo,
-                            fg='#ffffff' if selecionado else cor_normal)
+                    for widget, cor_normal in dados_card["fundos"]:
+                        if selecionado:
+                            cor = '#ffffff'
+                        elif marcado:
+                            cor = COR_TEXTO_FRACO
+                        else:
+                            cor = cor_normal
+                        widget.configure(bg=fundo, fg=cor)
+                    chk = dados_card.get("check")
+                    if chk is not None:
+                        chk.configure(bg=fundo, activebackground=fundo)
                 except tk.TclError:
                     pass
+
+        def _fonte_com_risco(fonte, riscado: bool):
+            if not riscado:
+                return fonte
+            familia, tamanho = fonte[0], fonte[1]
+            estilos = [str(p) for p in fonte[2:] if p]
+            if "overstrike" not in estilos:
+                estilos.append("overstrike")
+            return (familia, tamanho, " ".join(estilos))
+
+        def _aplicar_estilo_reproduzido(iid: str) -> None:
+            dados_card = _cards.get(iid)
+            if not dados_card:
+                return
+            check_var = dados_card.get("check_var")
+            marcado = (bool(check_var.get())
+                       if check_var is not None else False)
+            for widget, fonte in dados_card.get("fontes", []):
+                try:
+                    widget.configure(
+                        font=_fonte_com_risco(fonte, marcado))
+                except tk.TclError:
+                    pass
+            _atualizar_selecao_visual()
+
+        def _alternar_reproduzido(iid: str) -> None:
+            serv = _servico_atual()
+            dados_card = _cards.get(iid)
+            if serv is None or dados_card is None:
+                return
+            item = next((x for x in (serv.get("itens") or [])
+                         if str(x.get("id")) == iid), None)
+            if item is None:
+                return
+            check_var = dados_card.get("check_var")
+            marcado = (bool(check_var.get())
+                       if check_var is not None else False)
+            anterior = bool(item.get("reproduzido"))
+            item["reproduzido"] = marcado
+            if not marcar_item_servico(serv.get("id"), iid, marcado):
+                item["reproduzido"] = anterior
+                if check_var is not None:
+                    try:
+                        check_var.set(anterior)
+                    except tk.TclError:
+                        pass
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar a marcação do item.",
+                    parent=janela)
+                return
+            _aplicar_estilo_reproduzido(iid)
+
+        def _sincronizar_marca_item(item_id) -> None:
+            if item_id is None:
+                return
+            iid = str(item_id)
+            dados_card = _cards.get(iid)
+            serv = _servico_atual()
+            if dados_card is None or serv is None:
+                return
+            item = next((x for x in (serv.get("itens") or [])
+                         if str(x.get("id")) == iid), None)
+            if item is None:
+                return
+            check_var = dados_card.get("check_var")
+            if check_var is not None:
+                try:
+                    check_var.set(bool(item.get("reproduzido")))
+                except tk.TclError:
+                    return
+            _aplicar_estilo_reproduzido(iid)
 
         def _definir_selecao(novos) -> None:
             _selecionados.clear()
@@ -664,7 +768,7 @@ class JanelaOrdemServicoMixin:
             try:
                 largura = max(1, lista_canvas.winfo_width())
                 lista_canvas.itemconfigure(_canvas_window, width=largura)
-                wrap = max(180, largura - 230)
+                wrap = max(180, largura - 255)
                 for dados in _cards.values():
                     dados["titulo"].configure(wraplength=wrap)
                     url = dados.get("url")
@@ -1203,11 +1307,22 @@ class JanelaOrdemServicoMixin:
             card.pack(fill='x', padx=8, pady=4 if ativo else 2)
             card.columnconfigure(2, weight=1)
 
-            lbl_num = tk.Label(card, text=str(indice), bg=fundo,
+            marcado = bool(it.get("reproduzido"))
+            primeira = tk.Frame(card, bg=fundo)
+            primeira.grid(row=0, column=0, sticky='nw',
+                          padx=(8, 4), pady=(6, 8))
+            check_var = tk.BooleanVar(value=marcado)
+            chk = tk.Checkbutton(
+                primeira, variable=check_var,
+                command=lambda i=iid: _alternar_reproduzido(i),
+                bg=fundo, fg='#ffffff', activebackground=fundo,
+                activeforeground='#ffffff', selectcolor='#238636',
+                highlightthickness=0, bd=0, cursor='hand2')
+            chk.pack(side='left')
+            lbl_num = tk.Label(primeira, text=str(indice), bg=fundo,
                                fg=COR_DESTAQUE, width=3, anchor='center',
                                font=("Arial", 11, "bold"))
-            lbl_num.grid(row=0, column=0, sticky='nw',
-                         padx=(10, 4), pady=(8, 8))
+            lbl_num.pack(side='left', padx=(2, 0))
 
             lbl_tipo = tk.Label(card, text=f"{tipo_emoji} {tipo.title()}",
                                 bg=fundo, fg=COR_TEXTO_FRACO, anchor='w',
@@ -1242,16 +1357,28 @@ class JanelaOrdemServicoMixin:
                       (lbl_dur, COR_TEXTO)]
             if lbl_url is not None:
                 fundos.append((lbl_url, '#58a6ff'))
+            fontes = [(lbl_num, ("Arial", 11, "bold")),
+                      (lbl_tipo, ("Arial", 9, "bold")),
+                      (lbl_titulo, ("Arial", 11,
+                                    "bold" if ativo else "normal")),
+                      (lbl_dur, ("Arial", 10))]
+            if lbl_url is not None:
+                fontes.append((lbl_url, ("Arial", 9)))
             _cards[iid] = {
                 "frame": card,
-                "frames": [card, titulo_frame],
+                "frames": [card, titulo_frame, primeira],
                 "titulo": lbl_titulo,
                 "url": lbl_url,
                 "duracao": lbl_dur,
                 "fundos": fundos,
+                "fontes": fontes,
+                "check_var": check_var,
+                "check": chk,
             }
             _ordem.append(iid)
             _textos_base[iid] = texto_duracao
+            if marcado:
+                _aplicar_estilo_reproduzido(iid)
             if caminho:
                 _linhas_path[iid] = caminho
                 if _eh_url_youtube(caminho):
@@ -1538,6 +1665,8 @@ class JanelaOrdemServicoMixin:
             # A execução não pode continuar apontando para o serviço removido.
             _SERVICO_PROXIMO_ITEM.pop(sid, None)
             _SERVICO_PROXIMO_ITEM.pop(nome, None)
+            if _SERVICO_ITEM_REPRODUZINDO.get("servico_id") == sid:
+                _SERVICO_ITEM_REPRODUZINDO.clear()
             _item_escolhido["id"] = None
             servico_selecionado_id[0] = None
             _carregar_servicos()
@@ -2778,11 +2907,22 @@ class JanelaOrdemServicoMixin:
             # seleção da lista é ignorada: o botão só avança item a item e, ao
             # terminar, volta ao primeiro — nunca mais volta ao item escolhido.
             _item_escolhido["id"] = None
+            marcar = bool(marcar_reproduzidos_var.get())
+
+            def _ao_terminar_item(item) -> None:
+                if item is not None:
+                    _sincronizar_marca_item(item.get("id"))
+
             res = self.executar_proximo_item_servico(
                 serv, escolhido=escolhido,
                 ao_destacar=lambda it: _selecionar_item(
                     str(it.get('id')), ver=True),
-                parent=janela)
+                parent=janela,
+                marcar_reproduzido=marcar,
+                ao_terminar=_ao_terminar_item)
+            anterior = res.get('anterior_reproduzido_id')
+            if anterior is not None:
+                _sincronizar_marca_item(anterior)
             if not res.get('ok'):
                 if res.get('codigo') == 'vazio':
                     tkinter.messagebox.showinfo(

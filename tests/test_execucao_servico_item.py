@@ -108,6 +108,8 @@ _EXEC_NS = {
     "Callable": __import__("collections.abc").abc.Callable,
     "log": types.SimpleNamespace(exception=lambda *a, **k: None),
     "_SERVICO_PROXIMO_ITEM": {},
+    "_SERVICO_ITEM_REPRODUZINDO": {},
+    "marcar_item_servico": lambda *a, **k: True,
     "_slides_versiculo_item": lambda item: [item.get("letra_snapshot") or ""],
     "_montar_slides_letra": lambda titulo, letra: [(titulo, letra)],
     "_buscar_anuncio_por_ref": lambda ref: None,
@@ -130,6 +132,7 @@ exec(compile(_extrair(_TREE_EXEC, _SRC_EXEC, "ExecucaoServicoMixin",
              "<executar_proximo_item_servico>", "exec"), _EXEC_NS)  # noqa: S102
 _executar = _EXEC_NS["executar_proximo_item_servico"]
 _PONTEIRO = _EXEC_NS["_SERVICO_PROXIMO_ITEM"]
+_REPRODUZINDO = _EXEC_NS["_SERVICO_ITEM_REPRODUZINDO"]
 
 
 def _servico(ids):
@@ -217,6 +220,59 @@ checar("YouTube: falha no download devolve erro sem tocar a URL",
        and app.player.playlist == [], repr(r))
 _EXEC_NS["obter_video_youtube"] = _YT_ORIGINAL
 
+# ── 4c. Marcar o item só quando ele terminar ─────────────────────────
+_PONTEIRO.clear()
+_REPRODUZINDO.clear()
+app = _App()
+serv_marca = _servico([1])
+r = _executar(app, serv_marca, marcar_reproduzido=True)
+checar("item não é marcado antes de terminar",
+       r.get("ok") and not serv_marca["itens"][0].get("reproduzido")
+       and _REPRODUZINDO.get("item_id") == 1)
+
+_PONTEIRO.clear()
+_REPRODUZINDO.clear()
+app = _App()
+serv_dois = _servico([1, 2])
+_executar(app, serv_dois, marcar_reproduzido=True)
+r = _executar(app, serv_dois, marcar_reproduzido=True)
+checar("item anterior é marcado quando o próximo começa",
+       r.get("ok") and serv_dois["itens"][0].get("reproduzido") is True
+       and not serv_dois["itens"][1].get("reproduzido")
+       and r.get("anterior_reproduzido_id") == 1)
+
+# Trocar de programação também encerra o item pendente da anterior.
+_PONTEIRO.clear()
+_REPRODUZINDO.clear()
+chamadas_marca = []
+_original_marcar = _EXEC_NS["marcar_item_servico"]
+_EXEC_NS["marcar_item_servico"] = (
+    lambda sid, iid, m=True: (chamadas_marca.append((sid, iid)), True)[-1])
+try:
+    app = _App()
+    serv_a = {"id": "a", "nome": "A", "itens": [{
+        "id": 1, "tipo": "hino", "titulo_custom": "A1",
+        "letra_snapshot": "x"}]}
+    serv_b = {"id": "b", "nome": "B", "itens": [{
+        "id": 1, "tipo": "hino", "titulo_custom": "B1",
+        "letra_snapshot": "y"}]}
+    _executar(app, serv_a, marcar_reproduzido=True)
+    _executar(app, serv_b, marcar_reproduzido=True)
+    checar("trocar de programação marca o item pendente da anterior",
+           ("a", 1) in chamadas_marca)
+finally:
+    _EXEC_NS["marcar_item_servico"] = _original_marcar
+
+_PONTEIRO.clear()
+_REPRODUZINDO.clear()
+app = _App()
+serv_sem_marca = _servico([1])
+r = _executar(app, serv_sem_marca)
+checar("sem a opção ligada o item não é marcado nem fica pendente",
+       r.get("ok")
+       and not serv_sem_marca["itens"][0].get("reproduzido")
+       and not _REPRODUZINDO)
+
 # ── 5. API remota não converte o id do item para int ─────────────────
 _REMOTO_NS = {"_carregar_servicos_json": lambda: {"servicos": [{
     "id": 1, "nome": "Teste", "itens": [{"id": "a"}, {"id": "b"}]}]}}
@@ -231,7 +287,8 @@ class _SelfRemoto:
         self.capturado = []
         self.player = types.SimpleNamespace(_garantir_telao=lambda: None)
 
-    def executar_proximo_item_servico(self, servico, *, escolhido=None):
+    def executar_proximo_item_servico(self, servico, *, escolhido=None,
+                                      marcar_reproduzido=False):
         self.capturado.append(escolhido)
         return {"ok": True, "id": escolhido}
 

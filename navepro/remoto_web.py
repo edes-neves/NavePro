@@ -25,7 +25,9 @@ A API usada (tudo com o header `X-Token`):
   POST /api/remoto/player      → {acao: play_pause|parar} (pausa/continua/para)
   POST /api/remoto/anuncio     → {id}
   POST /api/remoto/servico     → {id, item?}
-  POST /api/remoto/servico_item→ {operacao: add|editar|apagar|mover, servico, ...}
+  POST /api/remoto/servico_item→ {operacao: add|editar|apagar|mover|marcar,
+                                   servico, ...}
+  POST /api/remoto/servico_auto→ {ativo} liga/desliga marcar reproduzidos
   POST /api/remoto/medidor     → {qual, acao, seg?, titulo?}
   POST /api/remoto/tamanho     → {qual, acao}
   GET  /api/remoto/relogio     → configuração e estado do relógio
@@ -194,6 +196,18 @@ _REMOTO_CSS = """
   .serv-subtitulo {
     font-size: 13px; font-weight: 700; color: #f0c040; margin: 2px 0 6px;
   }
+  .serv-auto { margin: 0 0 10px; font-size: 13px; }
+  .item-servico input.item-marcado {
+    width: auto; margin: 0 0 6px 0; align-self: flex-start;
+  }
+  li.item-servico.reproduzido .item-titulo,
+  li.item-servico.reproduzido .item-url,
+  li.item-servico.reproduzido .item-meta,
+  li.item-servico.reproduzido .item-detalhe,
+  li.item-servico.reproduzido .item-previa {
+    text-decoration: line-through; color: #8b949e;
+  }
+  li.item-servico.reproduzido { opacity: .75; }
   /* Aba Serviço: nome e ações empilhados para caber no celular. */
   li.servico-linha { flex-wrap: wrap; row-gap: 8px; }
   li.servico-linha .nome { flex: 1 1 100%; white-space: normal;
@@ -1184,6 +1198,7 @@ var DIAS_SERVICO = [
   ['sabado', 'S\u00e1bado']
 ];
 var SERVICOS_CACHE = [];  // todas as programações devolvidas pela API
+var MARCAR_REPRODUZIDOS = false;  // marca automaticamente ao executar
 var DIA_SERVICO = diaServicoInicial();
 
 function diaServicoInicial() {
@@ -1208,6 +1223,29 @@ function diaDoServico(s) {
     if (DIAS_SERVICO[i][0] === dia) return dia;
   }
   return 'domingo';
+}
+
+function atualizarCheckMarcar() {
+  var chk = document.getElementById('chk_marcar_reproduzidos');
+  if (chk) chk.checked = !!MARCAR_REPRODUZIDOS;
+}
+
+function alternarMarcarReproduzidos(ativo) {
+  apiPost('/api/remoto/servico_auto', {ativo: !!ativo}).then(function(j) {
+    if (j && j.ok) {
+      MARCAR_REPRODUZIDOS = !!j.marcar_reproduzidos;
+      aviso(MARCAR_REPRODUZIDOS
+            ? 'Itens reproduzidos ser\u00e3o marcados'
+            : 'Marca\u00e7\u00e3o autom\u00e1tica desligada', '#238636');
+    } else {
+      MARCAR_REPRODUZIDOS = !ativo;
+      aviso('N\u00e3o foi poss\u00edvel salvar a op\u00e7\u00e3o');
+    }
+    atualizarCheckMarcar();
+  }).catch(function() {
+    MARCAR_REPRODUZIDOS = !ativo;
+    atualizarCheckMarcar();
+  });
 }
 
 // Preferência visual da lista de itens: cartões (padrão) ou linhas sem caixas.
@@ -1372,6 +1410,8 @@ function carregarServicos() {
   renderizarDiasServico();
   apiGet('/api/remoto/servicos').then(function(j) {
     SERVICOS_CACHE = (j && j.servicos) || [];
+    MARCAR_REPRODUZIDOS = !!(j && j.marcar_reproduzidos);
+    atualizarCheckMarcar();
     if (!SERVICOS_CACHE.length) {
       document.getElementById('lista_servicos').innerHTML =
         '<li class="vazio">Nenhuma programa\u00e7\u00e3o cadastrada.</li>';
@@ -1423,9 +1463,19 @@ function carregarItensServico() {
           String(EXECUCAO.servico) === String(servId) &&
           String(EXECUCAO.item) === String(it.id);
         var li = document.createElement('li');
-        li.className = 'item-servico' + (emExec ? ' em-execucao' : '');
+        li.className = 'item-servico' + (emExec ? ' em-execucao' : '') +
+          (it.reproduzido ? ' reproduzido' : '');
         var info = document.createElement('div');
         info.className = 'nome';
+        var chkMarcado = document.createElement('input');
+        chkMarcado.type = 'checkbox';
+        chkMarcado.className = 'item-marcado';
+        chkMarcado.checked = !!it.reproduzido;
+        chkMarcado.title = 'Item reproduzido';
+        chkMarcado.onchange = function() {
+          marcarItemServico(it.id, chkMarcado.checked);
+        };
+        info.appendChild(chkMarcado);
         var titulo = document.createElement('div');
         titulo.className = 'item-titulo';
         titulo.innerHTML = '<span class="ordem">' + (i + 1) + '.</span> ' +
@@ -1480,6 +1530,17 @@ function moverItem(id, direcao) {
   apiPost('/api/remoto/servico_item',
           {operacao: 'mover', servico: SERVICO_SEL.id, id: id, direcao: direcao})
     .then(function(j) { if (j.ok) carregarItensServico(); });
+}
+
+function marcarItemServico(id, marcado) {
+  if (!SERVICO_SEL) return;
+  apiPost('/api/remoto/servico_item',
+          {operacao: 'marcar', servico: SERVICO_SEL.id, id: id,
+           reproduzido: !!marcado})
+    .then(function(j) {
+      if (!j || !j.ok) aviso('N\u00e3o foi poss\u00edvel marcar o item');
+      carregarItensServico();
+    });
 }
 
 function apagarItem(it) {
@@ -1944,6 +2005,11 @@ function iniciar() {
     if (document.getElementById('aba-anuncio').classList.contains('on')) carregarAnuncios();
   }, 15000);
   setInterval(atualizarSorteio, 4000);
+  // Reflete no celular a marcação feita quando a mídia termina (o PC a
+  // grava em servicos.json; o item aberto é recarregado periodicamente).
+  setInterval(function() {
+    if (SERVICO_SEL) carregarItensServico();
+  }, 5000);
 }
 
 iniciar();
@@ -2157,6 +2223,11 @@ PAGINA = """<!DOCTYPE html>
   <div class="card">
     <h3>Ordem de Proje&ccedil;&atilde;o</h3>
     <div class="dias-servico" id="dias_servico"></div>
+    <label class="check serv-auto">
+      <input type="checkbox" id="chk_marcar_reproduzidos"
+             onchange="alternarMarcarReproduzidos(this.checked)">
+      Marcar reproduzidos
+    </label>
     <div class="serv-subtitulo">Programa&ccedil;&atilde;o:</div>
     <ul id="lista_servicos"><li class="vazio">Carregando...</li></ul>
     <div class="linha" style="margin-top:10px">
