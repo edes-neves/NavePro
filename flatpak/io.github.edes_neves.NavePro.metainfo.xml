@@ -35,6 +35,19 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.4.1" date="2026-11-17">
+      <description>
+        <ul>
+          <li>YouTube: corrige o erro 403/formatos no Ubuntu 26.04 baixando e usando o yt-dlp oficial atualizado e o runtime Deno automaticamente</li>
+          <li>YouTube: barra de progresso com porcentagem, velocidade e tempo restante; download mais rápido com fragmentos em paralelo e limite de 1080p</li>
+          <li>Ordem de Projeção: programações separadas por dia da semana (Domingo a Sábado), campo Programação e botão + Nova Projeção</li>
+          <li>Ordem de Projeção: itens reproduzidos ficam tachados e com a caixa marcada ao terminar; opção Marcar reproduzidos no topo</li>
+          <li>Controle remoto: dias da semana, opção Marcar reproduzidos e caixa por item com o mesmo estado do computador</li>
+          <li>Anúncios: no modo demonstração a janela Anúncios projeta todos os slides, mantendo a marca d'água</li>
+          <li>Licença: período de teste passa de 10 para 30 dias</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.4.0" date="2026-11-16">
       <description>
         <ul>

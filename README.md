@@ -555,6 +555,26 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 
 ## 📜 Histórico recente
 
+### 2.4.1
+
+- **YouTube — Ubuntu 26.04**: corrige o erro `403`/`Requested format is not
+  available` baixando e usando automaticamente o **yt-dlp oficial atualizado**
+  e, quando necessário, o runtime **Deno**. O binário oficial fica em
+  `~/.navepro/bin` e se renova sozinho depois de 120 dias.
+- **YouTube — progresso**: barra com porcentagem, velocidade e tempo restante;
+  fragmentos baixados em paralelo e limite de 1080p para downloads mais rápidos.
+- **Ordem de Projeção — dias**: programações separadas por dia da semana
+  (Domingo a Sábado), campo **Programação:** e botão **+ Nova Projeção**;
+  várias programações podem coexistir no mesmo dia.
+- **Itens reproduzidos**: ao terminar a mídia (ou quando o próximo item começa),
+  o item fica **tachado e apagado**, com a caixa da primeira coluna marcada.
+  A opção **Marcar reproduzidos** no topo liga/desliga a marcação automática.
+- **Controle remoto**: mesmos dias da semana, opção **Marcar reproduzidos** e
+  caixa por item, refletindo o estado gravado pelo computador.
+- **Anúncios no modo demonstração**: a janela **Anúncios** projeta todos os
+  slides, mantendo a marca d'água.
+- **Licença**: o período de teste passa de 10 para **30 dias**.
+
 ### 2.4.0
 
 - **Build protegido**: o licenciamento é ofuscado com **PyArmor** no `.exe` e no
