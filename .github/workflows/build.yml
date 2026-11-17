@@ -233,7 +233,11 @@ jobs:
           cache: false
 
       - name: Atualizar metadados do repositório (appstream)
-        run: flatpak build-update-repo --generate-static-deltas "$GITHUB_WORKSPACE/pages"
+        run: |
+          # --generate-static-deltas lista refs/remotes; o checkout do gh-pages
+          # não traz essa pasta (o build local precisava do mesmo mkdir).
+          mkdir -p "$GITHUB_WORKSPACE/pages/refs/remotes"
+          flatpak build-update-repo --generate-static-deltas "$GITHUB_WORKSPACE/pages"
 
       - name: Publicar no branch gh-pages
         run: |

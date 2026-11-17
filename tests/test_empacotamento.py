@@ -49,6 +49,8 @@ def _rodar() -> int:
            "runs-on: ubuntu-22.04" in bloco_appimage)
     checar("repositório Flatpak publica índices de delta",
            'build-update-repo --generate-static-deltas' in workflow)
+    checar("CI cria refs/remotes antes dos índices de delta",
+           'pages/refs/remotes' in workflow)
 
     return falhas
 
