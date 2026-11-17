@@ -177,15 +177,7 @@ class AtualizacaoMixin:
                     "Feche e abra o NavePro para usar a versão nova.",
                     parent=self.root)
             else:
-                tkinter.messagebox.showerror(
-                    "Não foi possível atualizar",
-                    "O comando do Flatpak falhou.\n\n"
-                    "Rode no terminal:\n\n"
-                    f"  {texto_cmd}\n\n"
-                    "Se pedir senha de administrador, o NavePro está "
-                    "instalado no sistema (não no seu usuário) e a "
-                    "atualização precisa ser feita por um administrador.",
-                    parent=self.root)
+                self._mostrar_comando_manual(texto_cmd)
 
         tk.Button(janela, text="Fechar", font=("Arial", 11, "bold"),
                   bg='#21262d', fg='#c9d1d9', activebackground='#30363d',
@@ -193,6 +185,61 @@ class AtualizacaoMixin:
                   cursor='hand2').pack(pady=(0, 10))
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _mostrar_comando_manual(self, texto_cmd: str) -> None:
+        """Mostra o comando num campo selecionável (para copiar e colar)."""
+        janela = tk.Toplevel(self.root)
+        janela.title("Como atualizar manualmente")
+        janela.geometry("640x230")
+        janela.configure(bg='#0d1117')
+        janela.transient(self.root)
+        _centralizar_sobre(janela, self.root)
+        _habilitar_maximizar_janela(janela, area=self._area_monitor_operador())
+
+        tk.Label(
+            janela,
+            text=("O comando do Flatpak falhou. Rode no terminal "
+                  "(ou copie o comando abaixo):"),
+            bg='#0d1117', fg='#c9d1d9', justify='left', wraplength=600,
+        ).pack(fill='x', padx=12, pady=(12, 6))
+
+        campo = tk.Entry(
+            janela, font=("monospace", 9), bg='#161b22', fg='#c9d1d9',
+            insertbackground='#c9d1d9', bd=0, highlightthickness=1,
+            highlightbackground='#30363d', readonlybackground='#161b22')
+        campo.insert(0, texto_cmd)
+        campo.configure(state='readonly')
+        campo.pack(fill='x', padx=12, ipady=4)
+        campo.select_range(0, 'end')
+        campo.icursor(0)
+        campo.focus_set()
+
+        tk.Label(
+            janela,
+            text=("Se pedir senha de administrador, o NavePro está instalado "
+                  "no sistema (não no seu usuário) e a atualização precisa "
+                  "ser feita por um administrador."),
+            bg='#0d1117', fg='#8b949e', justify='left', wraplength=600,
+        ).pack(fill='x', padx=12, pady=8)
+
+        botoes = tk.Frame(janela, bg='#0d1117')
+        botoes.pack(pady=(0, 12))
+
+        def _copiar() -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(texto_cmd)
+            copiar.configure(text="✅ Copiado")
+
+        copiar = tk.Button(
+            botoes, text="Copiar comando", font=("Arial", 11, "bold"),
+            bg='#21262d', fg='#c9d1d9', activebackground='#30363d',
+            command=_copiar, cursor='hand2')
+        copiar.pack(side='left', padx=6)
+        tk.Button(
+            botoes, text="Fechar", font=("Arial", 11, "bold"),
+            bg='#21262d', fg='#c9d1d9', activebackground='#30363d',
+            command=janela.destroy, cursor='hand2').pack(side='left', padx=6)
+
     def _baixar_atualizacao(self, versao: str, url: str,
                             nome_arquivo: str,
                             release: dict | None = None) -> None:
