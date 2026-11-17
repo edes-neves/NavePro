@@ -179,6 +179,21 @@ _REMOTO_CSS = """
     .bib-versiculos { grid-area: versiculos; }
     #lista_biblia { max-height: 60vh; overflow-y: auto; }
   }
+  /* Aba Serviço: dias da semana (Domingo..Sábado) acima das programações. */
+  .dias-servico {
+    display: grid; gap: 6px; margin-bottom: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  }
+  .dia-btn {
+    background: #21262d; color: #c9d1d9; border: 0; border-radius: 8px;
+    padding: 9px 4px; font-size: 13px; font-weight: 700; cursor: pointer;
+    min-height: 38px; line-height: 1.15;
+  }
+  .dia-btn.on { background: #6e40c9; color: #fff; }
+  .dia-btn:active { filter: brightness(1.3); }
+  .serv-subtitulo {
+    font-size: 13px; font-weight: 700; color: #f0c040; margin: 2px 0 6px;
+  }
   /* Aba Serviço: nome e ações empilhados para caber no celular. */
   li.servico-linha { flex-wrap: wrap; row-gap: 8px; }
   li.servico-linha .nome { flex: 1 1 100%; white-space: normal;
@@ -1157,7 +1172,44 @@ function carregarAnuncios() {
 }
 
 // ── Serviço ──
-var SERVICO_SEL = null;   // {id, nome} do serviço aberto
+var SERVICO_SEL = null;   // {id, nome, dia} do serviço aberto
+// Dias da semana: Domingo (0) a Sábado (6), na mesma chave salva no NavePro.
+var DIAS_SERVICO = [
+  ['domingo', 'Domingo'],
+  ['segunda', 'Segunda'],
+  ['terca', 'Ter\u00e7a'],
+  ['quarta', 'Quarta'],
+  ['quinta', 'Quinta'],
+  ['sexta', 'Sexta'],
+  ['sabado', 'S\u00e1bado']
+];
+var SERVICOS_CACHE = [];  // todas as programações devolvidas pela API
+var DIA_SERVICO = diaServicoInicial();
+
+function diaServicoInicial() {
+  var salvo = '';
+  try { salvo = localStorage.getItem('navepro_dia_servico') || ''; } catch (e) {}
+  for (var i = 0; i < DIAS_SERVICO.length; i++) {
+    if (DIAS_SERVICO[i][0] === salvo) return salvo;
+  }
+  return DIAS_SERVICO[new Date().getDay()][0];
+}
+
+function rotuloDiaServico(dia) {
+  for (var i = 0; i < DIAS_SERVICO.length; i++) {
+    if (DIAS_SERVICO[i][0] === dia) return DIAS_SERVICO[i][1];
+  }
+  return DIAS_SERVICO[0][1];
+}
+
+function diaDoServico(s) {
+  var dia = String((s && s.dia) || '').toLowerCase();
+  for (var i = 0; i < DIAS_SERVICO.length; i++) {
+    if (DIAS_SERVICO[i][0] === dia) return dia;
+  }
+  return 'domingo';
+}
+
 // Preferência visual da lista de itens: cartões (padrão) ou linhas sem caixas.
 var CARTOES_ATIVO = localStorage.getItem('navepro_cartoes') !== '0';
 var YT_INFO_URL = '';     // URL cujas informações do YouTube já foram confirmadas
@@ -1261,28 +1313,71 @@ function alternarCartoes() {
   atualizarBotaoCartoes();
 }
 
+function renderizarDiasServico() {
+  var box = document.getElementById('dias_servico');
+  if (!box) return;
+  box.innerHTML = '';
+  DIAS_SERVICO.forEach(function(d) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dia-btn' + (d[0] === DIA_SERVICO ? ' on' : '');
+    b.textContent = d[1];
+    b.onclick = function() { selecionarDiaServico(d[0]); };
+    box.appendChild(b);
+  });
+}
+
+function selecionarDiaServico(dia) {
+  var valido = false;
+  for (var i = 0; i < DIAS_SERVICO.length; i++) {
+    if (DIAS_SERVICO[i][0] === dia) valido = true;
+  }
+  if (!valido) return;
+  DIA_SERVICO = dia;
+  try { localStorage.setItem('navepro_dia_servico', dia); } catch (e) {}
+  if (SERVICO_SEL && diaDoServico(SERVICO_SEL) !== dia) fecharServico();
+  renderizarDiasServico();
+  renderizarListaServicos();
+}
+
+function renderizarListaServicos() {
+  var ul = document.getElementById('lista_servicos');
+  if (!ul) return;
+  ul.innerHTML = '';
+  var doDia = (SERVICOS_CACHE || []).filter(function(s) {
+    return diaDoServico(s) === DIA_SERVICO;
+  });
+  if (!doDia.length) {
+    ul.innerHTML = '<li class="vazio">Nenhuma programa\u00e7\u00e3o para ' +
+      rotuloDiaServico(DIA_SERVICO) + '. Cadastre no computador.</li>';
+    return;
+  }
+  doDia.forEach(function(s) {
+    var li = document.createElement('li');
+    li.className = 'servico-linha';
+    var nome = document.createElement('div');
+    nome.className = 'nome';
+    nome.innerHTML = '<b>' + esc(s.nome || '') + '</b>' +
+      '<div class="sub">' + s.itens + ' item(ns)</div>';
+    var btnItens = miniBtn('Itens', 'cinza', function() { abrirServico(s); });
+    var btn = miniBtn('Executar', 'verde', function() {
+      executarServico(s.id, null, s.nome);
+    });
+    li.appendChild(nome); li.appendChild(btnItens); li.appendChild(btn);
+    ul.appendChild(li);
+  });
+}
+
 function carregarServicos() {
+  renderizarDiasServico();
   apiGet('/api/remoto/servicos').then(function(j) {
-    var ul = document.getElementById('lista_servicos');
-    ul.innerHTML = '';
-    if (!j.servicos || !j.servicos.length) {
-      ul.innerHTML = '<li class="vazio">Nenhuma proje\u00e7\u00e3o cadastrada.</li>';
+    SERVICOS_CACHE = (j && j.servicos) || [];
+    if (!SERVICOS_CACHE.length) {
+      document.getElementById('lista_servicos').innerHTML =
+        '<li class="vazio">Nenhuma programa\u00e7\u00e3o cadastrada.</li>';
       return;
     }
-    j.servicos.forEach(function(s) {
-      var li = document.createElement('li');
-      li.className = 'servico-linha';
-      var nome = document.createElement('div');
-      nome.className = 'nome';
-      nome.innerHTML = '<b>' + esc(s.nome || '') + '</b>' +
-        '<div class="sub">' + s.itens + ' item(ns)</div>';
-      var btnItens = miniBtn('Itens', 'cinza', function() { abrirServico(s); });
-      var btn = miniBtn('Executar', 'verde', function() {
-        executarServico(s.id, null, s.nome);
-      });
-      li.appendChild(nome); li.appendChild(btnItens); li.appendChild(btn);
-      ul.appendChild(li);
-    });
+    renderizarListaServicos();
   });
 }
 
@@ -1294,7 +1389,8 @@ function abrirServico(s) {
   }
   SERVICO_SEL = s;
   document.getElementById('serv_cabecalho').innerHTML =
-    '<b>' + esc(s.nome || '') + '</b>';
+    '<b>' + esc(s.nome || '') + '</b>' +
+    '<div class="sub">' + esc(rotuloDiaServico(diaDoServico(s))) + '</div>';
   document.getElementById('btn_add_item').style.display = 'block';
   fecharFormItem();
   carregarItensServico();
@@ -1305,7 +1401,7 @@ function fecharServico() {
   ITENS_SERVICO = [];
   fecharFormItem();
   document.getElementById('serv_cabecalho').textContent =
-    'Toque em "Itens" numa proje\u00e7\u00e3o acima.';
+    'Toque em "Itens" numa programa\u00e7\u00e3o acima.';
   document.getElementById('lista_itens_servico').innerHTML = '';
   document.getElementById('btn_add_item').style.display = 'none';
 }
@@ -2060,6 +2156,8 @@ PAGINA = """<!DOCTYPE html>
 <section id="aba-servico">
   <div class="card">
     <h3>Ordem de Proje&ccedil;&atilde;o</h3>
+    <div class="dias-servico" id="dias_servico"></div>
+    <div class="serv-subtitulo">Programa&ccedil;&atilde;o:</div>
     <ul id="lista_servicos"><li class="vazio">Carregando...</li></ul>
     <div class="linha" style="margin-top:10px">
       <span class="pill" id="serv_status">pr&oacute;ximo item segue a ordem da lista</span>
@@ -2081,7 +2179,7 @@ PAGINA = """<!DOCTYPE html>
       <button class="btn mini on" id="btn_cartoes"
               onclick="alternarCartoes()">&#128450; Cart&otilde;es</button>
     </div>
-    <div id="serv_cabecalho" class="vazio">Toque em "Itens" numa proje&ccedil;&atilde;o acima.</div>
+    <div id="serv_cabecalho" class="vazio">Toque em "Itens" numa programa&ccedil;&atilde;o acima.</div>
     <ul id="lista_itens_servico" class="cartoes"></ul>
     <button class="btn verde" id="btn_add_item" style="margin-top:10px;display:none"
             onclick="abrirFormItem(null)">&#10133; Adicionar item</button>

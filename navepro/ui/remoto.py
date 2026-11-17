@@ -38,6 +38,7 @@ from navepro.core.servicos import (
     _carregar_servicos_json,
     _faixa_versiculo_item,
     _salvar_servicos_json,
+    dia_do_servico,
 )
 from navepro.core.slides import (
     _buscar_hino_por_termo,
@@ -325,6 +326,7 @@ class ControleRemotoMixin:
                     for a in _listar_anuncios_db()]},
                 'listar_servicos': lambda d: {'ok': True, 'servicos': [
                     {'id': s.get('id'), 'nome': s.get('nome') or '',
+                     'dia': dia_do_servico(s),
                      'itens': len(s.get('itens') or [])}
                     for s in (_carregar_servicos_json().get('servicos') or [])]},
                 'servico_itens': lambda d: self._remoto_servico_itens(d),
@@ -987,7 +989,8 @@ class ControleRemotoMixin:
         itens = serv.get('itens') or []
         return {'ok': True,
                 'servico': {'id': serv.get('id'),
-                            'nome': serv.get('nome') or ''},
+                            'nome': serv.get('nome') or '',
+                            'dia': dia_do_servico(serv)},
                 'itens': [self._resumo_item_servico(it, i)
                           for i, it in enumerate(itens)]}
     @staticmethod

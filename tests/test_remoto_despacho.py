@@ -80,6 +80,20 @@ r = despacho("abrir_config_projecao", {})
 checar("abrir_config_projecao chama o handler",
        r == {"ok": True} and chamadas[-1] == "config_projecao")
 
+# ── 1b. listar_servicos informa o dia da programação ─────────────────
+ns["_carregar_servicos_json"] = lambda: {"servicos": [
+    {"id": 1, "nome": "Culto", "dia": "terca", "itens": [1, 2]},
+    {"id": 2, "nome": "Antigo", "criado_em": "2026-11-17T10:00:00",
+     "itens": []},
+]}
+ns["dia_do_servico"] = lambda s: s.get("dia") or "terca"
+r = despacho("listar_servicos", {})
+checar("listar_servicos devolve o dia de cada programação",
+       r.get("ok") and r["servicos"][0]["dia"] == "terca"
+       and r["servicos"][1]["dia"] == "terca")
+checar("servico_itens também informa o dia",
+       "'dia': dia_do_servico(serv)" in _SRC)
+
 # ── 2. dados não-dict viram {} ───────────────────────────────────────
 chamadas.clear()
 despacho("estado", None)

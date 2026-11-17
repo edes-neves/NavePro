@@ -88,6 +88,20 @@ check("preferência dos cartões sobrevive ao recarregar a página",
 check("o botão reflete o estado ao iniciar",
       "atualizarBotaoCartoes();" in JS)
 
+# ── 4b. Aba Serviço: dias da semana e programações do dia ────────────
+check("aba Serviço tem os botões dos dias da semana",
+      'id="dias_servico"' in PAGINA and "renderizarDiasServico()" in JS)
+check("CSS destaca o dia escolhido",
+      ".dia-btn" in CSS and ".dia-btn.on" in CSS)
+check("JS filtra as programações pelo dia selecionado",
+      "function renderizarListaServicos" in JS
+      and "diaDoServico(s) === DIA_SERVICO" in JS)
+check("dia escolhido sobrevive ao recarregar a página",
+      "localStorage.getItem('navepro_dia_servico')" in JS
+      and "localStorage.setItem('navepro_dia_servico'" in JS)
+check("campo Programação aparece acima da lista",
+      'class="serv-subtitulo">Programa' in PAGINA)
+
 # ── 5. Botões "Buscar": lupa e texto cabem dentro do botão ───────────
 _botoes_busca = re.findall(
     r'<button class="([^"]*)"[^>]*>\s*&#128269;\s*Buscar</button>', PAGINA)

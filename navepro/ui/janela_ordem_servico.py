@@ -226,9 +226,11 @@ class JanelaOrdemServicoMixin:
         """Abre a janela de planejamento de ordem de serviço.
 
         As ordens são salvas em ~/.navepro/servicos.json (nunca importam
-        vídeo/slides). Oferece criar e editar serviços (o nome pode ser
-        renomeado direto na caixa "Serviço", com salvamento automático),
-        excluir serviços (com confirmação) e itens (botão da barra ou botão
+        vídeo/slides). As programações são separadas por dia da semana
+        (Domingo a Sábado); dentro de cada dia pode haver várias. Oferece
+        criar e editar programações (o nome pode ser renomeado direto na
+        caixa "Programação", com salvamento automático), excluir
+        programações (com confirmação) e itens (botão da barra ou botão
         direito na lista) e arrastar e soltar os itens para reordená-los.
         """
         _migrar_servicos_do_banco()
@@ -279,27 +281,79 @@ class JanelaOrdemServicoMixin:
                  font=("Arial", 16, "bold"), fg='#f0c040', bg='#0d1117'
                  ).grid(row=0, column=0, sticky='ew', pady=(0, 10))
 
-        # ── Lista de serviços salvos ──
+        # ── Dias da semana + programações do dia ──
+        _CHAVES_DIA = ("domingo", "segunda", "terca", "quarta",
+                       "quinta", "sexta", "sabado")
+        _ROTULOS_DIA = ("Domingo", "Segunda", "Terça", "Quarta",
+                        "Quinta", "Sexta", "Sábado")
+
+        def _normalizar_dia(valor) -> str:
+            texto = (valor or "").strip().lower()
+            texto = (texto.replace("ç", "c").replace("á", "a")
+                     .replace("ã", "a").replace("é", "e")
+                     .replace("í", "i").replace("ó", "o").replace("ú", "u"))
+            return texto if texto in _CHAVES_DIA else ""
+
+        def _dia_de_hoje() -> str:
+            # datetime.weekday(): segunda=0 ... domingo=6.
+            return _CHAVES_DIA[(datetime.now().weekday() + 1) % 7]
+
+        dia_salvo = _normalizar_dia(dados.get("_dia_selecionado"))
+        dia_selecionado = [dia_salvo or _dia_de_hoje()]
+
         serv_frame = tk.Frame(main, bg='#161b22')
         serv_frame.grid(row=1, column=0, sticky='ew', pady=5, ipady=5)
 
-        tk.Label(serv_frame, text="Projeção:", fg='#f0c040', bg='#161b22',
-                 font=("Arial", 11, "bold")).pack(side='left', padx=8)
+        dias_frame = tk.Frame(serv_frame, bg='#161b22')
+        dias_frame.pack(fill='x')
 
-        servico_var = tk.StringVar()
-        combo_servico = ttk.Combobox(serv_frame, textvariable=servico_var,
-                                      width=40, font=("Arial", 11), state='readonly')
-        # Mantém a StringVar viva enquanto o combobox existir; sem esta
-        # referência o garbage collector apaga a variável Tcl e o serviço
-        # selecionado some da tela (a lista continua carregada).
-        combo_servico._navepro_servico_var = servico_var
-        combo_servico.pack(side='left', padx=5)
+        botoes_dia: dict[str, object] = {}
+
+        def _atualizar_botoes_dia() -> None:
+            for chave, botao in botoes_dia.items():
+                selecionado = chave == dia_selecionado[0]
+                try:
+                    botao.configure(
+                        bg='#6e40c9' if selecionado else '#21262d',
+                        fg='white' if selecionado else '#c9d1d9',
+                        activebackground=('#8b5cf6' if selecionado
+                                          else '#30363d'),
+                        activeforeground='white')
+                except tk.TclError:
+                    pass
+
+        for _chave, _rotulo in zip(_CHAVES_DIA, _ROTULOS_DIA, strict=True):
+            _botao = tk.Button(
+                dias_frame, text=_rotulo, font=("Arial", 10, "bold"),
+                bg='#21262d', fg='#c9d1d9', activebackground='#30363d',
+                activeforeground='white',
+                command=lambda c=_chave: _selecionar_dia(c),
+                cursor='hand2', padx=7, pady=3)
+            _botao.pack(side='left', padx=2)
+            botoes_dia[_chave] = _botao
+
         btn_max = tk.Button(
-            serv_frame, text="⛶ Maximizar", font=("Arial", 10, "bold"),
+            dias_frame, text="⛶ Maximizar", font=("Arial", 10, "bold"),
             bg='#21262d', fg='#f0c040', activebackground='#30363d',
             activeforeground='#f0c040', command=_alternar_maximizar,
             cursor='hand2', padx=10, pady=3)
         btn_max.pack(side='right', padx=8)
+
+        prog_frame = tk.Frame(serv_frame, bg='#161b22')
+        prog_frame.pack(fill='x', pady=(5, 0))
+
+        tk.Label(prog_frame, text="Programação:", fg='#f0c040',
+                 bg='#161b22', font=("Arial", 11, "bold")
+                 ).pack(side='left', padx=8)
+
+        servico_var = tk.StringVar()
+        combo_servico = ttk.Combobox(prog_frame, textvariable=servico_var,
+                                      width=40, font=("Arial", 11), state='readonly')
+        # Mantém a StringVar viva enquanto o combobox existir; sem esta
+        # referência o garbage collector apaga a variável Tcl e a programação
+        # selecionada some da tela (a lista continua carregada).
+        combo_servico._navepro_servico_var = servico_var
+        combo_servico.pack(side='left', padx=5)
 
         servico_selecionado_id = [None]
 
@@ -312,9 +366,26 @@ class JanelaOrdemServicoMixin:
                 return None
             return next((s for s in dados["servicos"] if s.get("id") == sid), None)
 
+        def _dia_do_servico(s: dict) -> str:
+            """Dia da programação (legado: infere pela data de criação)."""
+            dia = _normalizar_dia(s.get("dia"))
+            if dia:
+                return dia
+            criado = (s.get("criado_em") or "").strip()
+            try:
+                data = datetime.fromisoformat(criado).date()
+                return _CHAVES_DIA[(data.weekday() + 1) % 7]
+            except (TypeError, ValueError):
+                # Programação antiga sem data: fica no Domingo para não
+                # desaparecer da janela.
+                return "domingo"
+
         def _ordenar_servicos():
+            dia = dia_selecionado[0]
+            servicos = [s for s in dados["servicos"]
+                        if _dia_do_servico(s) == dia]
             return sorted(
-                dados["servicos"],
+                servicos,
                 key=lambda s: s.get('id') or 0,
                 reverse=True)
 
@@ -325,11 +396,14 @@ class JanelaOrdemServicoMixin:
             ids = [s['id'] for s in ord_servicos]
             combo_servico._servico_ids = ids
             if opcoes and escolher:
-                # Restaura o serviço escolhido na última sessão. Se ele não
-                # existir mais, cai no primeiro (mais recente).
+                # Restaura a programação escolhida na última sessão. Se ela
+                # não existir mais (ou for de outro dia), cai na primeira.
                 salvo = dados.get("_servico_selecionado")
                 combo_servico.current(
                     ids.index(salvo) if salvo in ids else 0)
+            elif not opcoes:
+                combo_servico.set("")
+                servico_selecionado_id[0] = None
 
         def _on_servico_select(event=None):
             sel = combo_servico.get()
@@ -340,22 +414,41 @@ class JanelaOrdemServicoMixin:
             if idx >= 0 and idx < len(ids):
                 sid = ids[idx]
                 servico_selecionado_id[0] = sid
-                # Trocar o serviço na lista cancela uma edição inline em
-                # andamento (o texto digitado não pertence ao novo serviço).
+                # Trocar a programação na lista cancela uma edição inline em
+                # andamento (o texto digitado não pertence à nova).
                 _cancelar_renomear_sem_salvar()
                 # Fixa a escolha no servicos.json para reabrir nesta ordem.
                 if dados.get("_servico_selecionado") != sid:
                     dados["_servico_selecionado"] = sid
                     if not _salvar_servicos_json(dados):
-                        log.debug("Não foi possível guardar o serviço "
-                                  "selecionado em servicos.json.")
+                        log.debug("Não foi possível guardar a programação "
+                                  "selecionada em servicos.json.")
                 _carregar_itens()
 
         combo_servico.bind("<<ComboboxSelected>>", _on_servico_select)
 
-        # ── Renomear o serviço direto na caixa "Serviço" ──
+        def _selecionar_dia(chave: str) -> None:
+            if chave not in _CHAVES_DIA or chave == dia_selecionado[0]:
+                return
+            _cancelar_renomear_sem_salvar()
+            dia_selecionado[0] = chave
+            if dados.get("_dia_selecionado") != chave:
+                dados["_dia_selecionado"] = chave
+                if not _salvar_servicos_json(dados):
+                    log.debug("Não foi possível guardar o dia selecionado "
+                              "em servicos.json.")
+            _atualizar_botoes_dia()
+            _carregar_servicos()
+            if combo_servico['values']:
+                _on_servico_select()
+            else:
+                servico_selecionado_id[0] = None
+                _restaurar_rotulo_servico()
+                _carregar_itens()
+
+        # ── Renomear a programação direto na caixa "Programação" ──
         # Um clique na caixa transforma o seletor (normalmente só leitura) num
-        # campo editável com o nome do serviço. O novo nome é salvo
+        # campo editável com o nome da programação. O novo nome é salvo
         # automaticamente ao clicar em qualquer outro ponto da janela, ao
         # pressionar Enter ou ao sair do campo (Tab). Esc cancela e restaura.
         _renomear = {"id": None, "nome_original": ""}
@@ -365,15 +458,15 @@ class JanelaOrdemServicoMixin:
             return _rotulo_servico(serv) if serv else ""
 
         def _definir_botao_exclusao(ativo: bool) -> None:
-            """Durante a edição, "+ Novo Serviço" vira "Del Serviço" (vermelho)."""
+            """Durante a edição, "+ Nova Projeção" vira "Del Projeção" (vermelho)."""
             try:
                 if ativo:
                     btn_novo.configure(
-                        text="🗑️ Del Serviço", bg='#da3633',
+                        text="🗑️ Del Projeção", bg='#da3633',
                         activebackground='#f85149', activeforeground='white')
                 else:
                     btn_novo.configure(
-                        text="➕ Novo Serviço", bg='#238636',
+                        text="➕ Nova Projeção", bg='#238636',
                         activebackground='#2ea043', activeforeground='white')
             except (tk.TclError, NameError):
                 pass
@@ -1326,18 +1419,18 @@ class JanelaOrdemServicoMixin:
         btn_frame.grid(row=3, column=0, sticky='ew', pady=5)
 
         def _novo_servico():
-            nome = tkinter.simpledialog.askstring("Novo Serviço",
-                "Nome do serviço:", parent=janela) if hasattr(tkinter, 'simpledialog') else None
+            nome = tkinter.simpledialog.askstring("Nova Projeção",
+                "Nome da programação:", parent=janela) if hasattr(tkinter, 'simpledialog') else None
             if not nome:
                 # Fallback se simpledialog não estiver disponível
                 nome_win = tk.Toplevel(janela)
-                nome_win.title("Novo Serviço")
+                nome_win.title("Nova Projeção")
                 nome_win.geometry("350x120")
                 nome_win.configure(bg='#0d1117')
                 nome_win.transient(janela)
                 _centralizar_sobre(nome_win, janela)
                 nome_win.after(50, nome_win.grab_set)
-                tk.Label(nome_win, text="Nome do serviço:", fg='#f0c040', bg='#0d1117',
+                tk.Label(nome_win, text="Nome da programação:", fg='#f0c040', bg='#0d1117',
                          font=("Arial", 11)).pack(pady=5)
                 nome_entry = tk.Entry(nome_win, font=("Arial", 12), bg='#21262d',
                                       fg='#f0c040', insertbackground='#f0c040')
@@ -1358,6 +1451,7 @@ class JanelaOrdemServicoMixin:
             dados["servicos"].append({
                 "id": novo_id,
                 "nome": nome,
+                "dia": dia_selecionado[0],
                 "criado_em": datetime.now().isoformat(timespec="seconds"),
                 "itens": [],
             })
@@ -2698,9 +2792,9 @@ class JanelaOrdemServicoMixin:
                         "Executar", res.get('erro', ''), parent=janela)
 
         btn_novo = tk.Button(
-            btn_frame, text="➕ Novo Serviço", font=("Arial", 11, "bold"),
+            btn_frame, text="➕ Nova Projeção", font=("Arial", 11, "bold"),
             bg='#238636', fg='white', activebackground='#2ea043',
-            command=_acao_botao_novo, cursor='hand2', padx=12, pady=4)
+            command=_acao_botao_novo, cursor='hand2', padx=16, pady=4)
         btn_editar = tk.Button(
             btn_frame, text="✏️ Editar Serviço", font=("Arial", 11, "bold"),
             bg='#1f6feb', fg='white', activebackground='#388bfd',
@@ -2740,7 +2834,7 @@ class JanelaOrdemServicoMixin:
             return False
 
         def _confirmar_renomear_ao_clicar(event=None) -> None:
-            """Salva a edição inline ao clicar fora da caixa "Serviço"."""
+            """Salva a edição inline ao clicar fora da caixa "Programação"."""
             if _renomear["id"] is None:
                 return
             widget = getattr(event, "widget", None)
@@ -2814,7 +2908,12 @@ class JanelaOrdemServicoMixin:
         self._vincular_teclas_slides(janela, _slide_anterior, _slide_proximo,
                                      _parar_projecao)
 
+        _atualizar_botoes_dia()
         _carregar_servicos()
-        # Se há serviços, seleciona o primeiro
+        # Se há programações no dia, seleciona a primeira
         if combo_servico['values']:
             _on_servico_select()
+        else:
+            servico_selecionado_id[0] = None
+            _restaurar_rotulo_servico()
+            _carregar_itens()

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Testes da edição inline e da exclusão de serviços na Ordem de Serviço.
 
-Cobre o comportamento pedido: clicar na caixa "Serviço" deixa o nome
-editável; o texto é salvo sozinho ao sair da caixa; o botão "+ Novo Serviço"
-vira "Del Serviço" (vermelho) durante a edição; e a exclusão só acontece
+Cobre o comportamento pedido: clicar na caixa "Programação" deixa o nome
+editável; o texto é salvo sozinho ao sair da caixa; o botão "+ Nova Projeção"
+vira "Del Projeção" (vermelho) durante a edição; e a exclusão só acontece
 depois da confirmação do operador.
 
 As funções internas de `janela_ordem_servico` são extraídas via AST (como nos
@@ -11,6 +11,7 @@ demais testes headless) e executadas com dublês, sem abrir janela.
 """
 
 import ast
+import datetime as dt
 import os
 import sys
 import types
@@ -93,6 +94,18 @@ def _ns_renomear(dados, renomear, var, selecionado, salvar_ok=True):
     return ns
 
 
+def _ns_dia(dados, dia):
+    ns = {
+        "dados": dados,
+        "dia_selecionado": [dia],
+        "_CHAVES_DIA": ("domingo", "segunda", "terca", "quarta",
+                        "quinta", "sexta", "sabado"),
+        "datetime": dt.datetime,
+    }
+    return _carregar_ns("_normalizar_dia", "_dia_do_servico",
+                        "_ordenar_servicos", **ns)
+
+
 def _ns_excluir(dados, servico, selecionado, salvar_ok=True, resposta=True):
     chamadas = []
     msg = _Messagebox(resposta=resposta)
@@ -163,11 +176,11 @@ def _rodar():
           "combo_servico.configure(state='normal')" in src_iniciar)
     check("restauração volta ao modo somente leitura",
           "combo_servico.configure(state='readonly')" in _SRC)
-    check("botão fica vermelho com o texto Del Serviço durante a edição",
-          'text="🗑️ Del Serviço"' in _SRC
+    check("botão fica vermelho com o texto Del Projeção durante a edição",
+          'text="🗑️ Del Projeção"' in _SRC
           and "bg='#da3633'" in _SRC)
-    check("botão volta a verde e a Novo Serviço ao sair da edição",
-          'text="➕ Novo Serviço"' in _SRC
+    check("botão volta a verde e a Nova Projeção ao sair da edição",
+          'text="➕ Nova Projeção"' in _SRC
           and "bg='#238636'" in _SRC)
     check("exclusão pede confirmação (padrão \"não\")",
           "askyesno(" in _SRC
@@ -275,6 +288,35 @@ def _rodar():
           len(dados["servicos"]) == 1
           and dados["_servico_selecionado"] == 3
           and bool(ns["_msg"].avisos))
+
+    # ── 10) Dias da semana e filtragem das programações ─────────────
+    check("dias da semana vão de Domingo a Sábado",
+          '"domingo", "segunda", "terca", "quarta"' in _SRC
+          and '"Quinta", "Sexta", "Sábado")' in _SRC)
+    check("campo Programação e botão Nova Projeção estão presentes",
+          'text="Programação:"' in _SRC
+          and 'text="➕ Nova Projeção"' in _SRC)
+    check("antigo rótulo Projeção foi removido",
+          'text="Projeção:"' not in _SRC)
+
+    dados_dia = {"servicos": [
+        {"id": 1, "nome": "Culto", "dia": "domingo", "itens": []},
+        {"id": 2, "nome": "Terça", "criado_em": "2026-11-17T19:00:00",
+         "itens": []},
+        {"id": 3, "nome": "Antigo", "itens": []},
+        {"id": 4, "nome": "Terça 2", "dia": "Terça", "itens": []},
+    ]}
+    ns_dia = _ns_dia(dados_dia, "terca")
+    check("dia explícito vale",
+          ns_dia["_dia_do_servico"](dados_dia["servicos"][0]) == "domingo")
+    check("dia legado é inferido pela data de criação",
+          ns_dia["_dia_do_servico"](dados_dia["servicos"][1]) == "terca")
+    check("programação antiga sem data fica no Domingo",
+          ns_dia["_dia_do_servico"](dados_dia["servicos"][2]) == "domingo")
+    check("dia com acento/maiúscula é normalizado",
+          ns_dia["_dia_do_servico"](dados_dia["servicos"][3]) == "terca")
+    check("só as programações do dia selecionado aparecem",
+          [s["id"] for s in ns_dia["_ordenar_servicos"]()] == [4, 2])
 
     return falhas
 

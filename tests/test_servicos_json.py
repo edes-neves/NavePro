@@ -23,6 +23,11 @@ if _AQUI not in sys.path:
 
 from fixture_log import log  # noqa: E402
 
+from navepro.core.servicos import (  # noqa: E402
+    dia_do_servico,
+    normalizar_dia_servico,
+)
+
 _MOD = os.path.join(RAIZ, "navepro", "core", "servicos.py")
 _SRC = open(_MOD, encoding="utf-8").read()
 _TREE = ast.parse(_SRC)
@@ -110,6 +115,17 @@ def _rodar() -> int:
                ns["_carregar_servicos_json"]() == vazio)
         checar("formato inesperado também é preservado em .corrompido",
                os.path.exists(arquivo + ".corrompido"))
+
+        # ── 7. Dia da programação (usado pela janela e pelo controle) ─
+        checar("normaliza dia com acento/maiúscula",
+               normalizar_dia_servico("Terça") == "terca")
+        checar("dia explícito prevalece",
+               dia_do_servico({"dia": "sabado"}) == "sabado")
+        checar("dia legado é inferido pela criação",
+               dia_do_servico({"criado_em": "2026-11-17T10:00:00"})
+               == "terca")
+        checar("programação sem dia/data cai no Domingo",
+               dia_do_servico({}) == "domingo")
 
     return falhas
 

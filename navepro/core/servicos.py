@@ -20,6 +20,41 @@ from navepro.core.paths import SERVICOS_FILE
 
 log = get_logger("servicos")
 
+# Ordem dos dias da semana usada na janela "Ordem de Projeção" e no controle
+# remoto. Domingo começa a semana (índice 0) e Sábado termina (índice 6).
+DIAS_SEMANA = ("domingo", "segunda", "terca", "quarta",
+               "quinta", "sexta", "sabado")
+
+
+def normalizar_dia_servico(valor) -> str:
+    """Devolve a chave do dia (domingo..sabado) ou "" se não reconhecer."""
+    texto = str(valor or "").strip().lower()
+    texto = (texto.replace("ç", "c").replace("á", "a")
+             .replace("ã", "a").replace("é", "e").replace("í", "i")
+             .replace("ó", "o").replace("ú", "u"))
+    return texto if texto in DIAS_SEMANA else ""
+
+
+def dia_do_servico(servico: dict, padrao: str = "domingo") -> str:
+    """Dia da programação; para dados antigos, infere pela criação.
+
+    Programações gravadas antes da separação por dia não têm a chave "dia".
+    Nesse caso usa o dia da semana de "criado_em" (a data em que a
+    programação foi montada). Sem data válida, fica no Domingo para não
+    desaparecer da janela nem do controle remoto.
+    """
+    if not isinstance(servico, dict):
+        return padrao
+    dia = normalizar_dia_servico(servico.get("dia"))
+    if dia:
+        return dia
+    criado = str(servico.get("criado_em") or "").strip()
+    try:
+        data = datetime.datetime.fromisoformat(criado).date()
+    except (TypeError, ValueError):
+        return padrao
+    return DIAS_SEMANA[(data.weekday() + 1) % 7]
+
 
 def _normalizar_servicos(dados: dict) -> dict:
     """Aplica as normalizações de versão na estrutura lida do JSON."""
@@ -75,7 +110,7 @@ def _carregar_servicos_json() -> dict:
     """Lê ~/.navepro/servicos.json e devolve a estrutura de ordens de serviço.
 
     Estrutura:
-      {"servicos": [{"id", "nome", "data_servico", "criado_em", "itens": [
+      {"servicos": [{"id", "nome", "dia", "data_servico", "criado_em", "itens": [
           {"id", "tipo", "referencia_id", "titulo_custom", "letra_snapshot",
            "caminho_arquivo", "youtube_url", "duracao_estimada_segundos"}...]}],
        "_proximo_id_servico": int, "_proximo_id_item": int}
