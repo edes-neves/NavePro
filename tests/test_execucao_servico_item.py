@@ -11,6 +11,7 @@ item clicado.
 import ast
 import os
 import sys
+import threading
 import types
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
@@ -112,6 +113,8 @@ _EXEC_NS = {
     "_buscar_anuncio_por_ref": lambda ref: None,
     "_projetar_anuncio_ordserv": lambda telao, anun: True,
     "_eh_url": lambda caminho: str(caminho).startswith(("http://", "https://")),
+    "threading": threading,
+    "obter_video_youtube": lambda url: os.path.abspath(__file__),
     "db_query": lambda *a, **k: [],
     "_eh_windows": lambda: False,
     "_eh_flatpak": lambda: False,
@@ -186,6 +189,33 @@ _executar(app, serv, escolhido=1)
 r = _executar(app, serv)
 checar("voltar a um item anterior reposiciona o geral",
        r.get("ok") and r.get("id") == 2, repr(r))
+
+# ── 4b. Item YouTube: executa o arquivo baixado, não a URL ──────────
+_PONTEIRO.clear()
+app = _App()
+serv_yt = {"id": "servico-yt", "nome": "YouTube", "itens": [{
+    "id": 1, "tipo": "youtube", "titulo_custom": "Vídeo",
+    "youtube_url": "https://youtu.be/abc123"}]}
+r = _executar(app, serv_yt)
+checar("YouTube: reproduz o arquivo local baixado",
+       r.get("ok") and app.player.playlist == [os.path.abspath(__file__)],
+       repr(app.player.playlist))
+
+_YT_ORIGINAL = _EXEC_NS["obter_video_youtube"]
+
+
+def _falhar_download(_url):
+    raise RuntimeError("rede indisponível")
+
+
+_EXEC_NS["obter_video_youtube"] = _falhar_download
+_PONTEIRO.clear()
+app = _App()
+r = _executar(app, serv_yt)
+checar("YouTube: falha no download devolve erro sem tocar a URL",
+       not r.get("ok") and "baixar" in r.get("erro", "").lower()
+       and app.player.playlist == [], repr(r))
+_EXEC_NS["obter_video_youtube"] = _YT_ORIGINAL
 
 # ── 5. API remota não converte o id do item para int ─────────────────
 _REMOTO_NS = {"_carregar_servicos_json": lambda: {"servicos": [{
