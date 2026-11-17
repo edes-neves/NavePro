@@ -35,6 +35,17 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.4.0" date="2026-11-16">
+      <description>
+        <ul>
+          <li>Build protegido: licenciamento ofuscado com PyArmor no .exe e no AppImage</li>
+          <li>Licença: licenca.key lido/gravado em pasta gravável do usuário (~/.config/NavePro ou %APPDATA%\NavePro)</li>
+          <li>Release automatizado: .exe, AppImage e Flatpak publicados juntos na tag</li>
+          <li>YouTube: vídeo baixado para tocar do computador e removido ao fechar o app</li>
+          <li>Licença: seletor de arquivo oculta pastas e arquivos com ponto</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.8" date="2026-11-13">
       <description>
         <ul>

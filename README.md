@@ -555,6 +555,19 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 
 ## 📜 Histórico recente
 
+### 2.4.0
+
+- **Build protegido**: o licenciamento é ofuscado com **PyArmor** no `.exe` e no
+  AppImage (o Flatpak continua compilado do código-fonte, como exige o Flathub).
+- **Licença**: o `licenca.key` é lido/gravado em uma pasta gravável do usuário
+  (`~/.config/NavePro` no Linux e `%APPDATA%\NavePro` no Windows), com fallback
+  para a pasta do aplicativo e `~/.navepro`.
+- **Release automatizado**: um único workflow gera e anexa `.exe`, AppImage e
+  Flatpak (x86_64/aarch64) à Release da tag.
+- **YouTube**: o vídeo é baixado para um arquivo temporário e reproduzido do
+  computador; os arquivos são apagados ao fechar o NavePro.
+- **Licença**: o seletor de arquivo oculta pastas/arquivos com ponto.
+
 ### 2.3.8
 
 - **Ordem de Serviço — renomear**: clique na caixa **Serviço** e o nome fica

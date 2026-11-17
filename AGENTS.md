@@ -53,18 +53,22 @@ ruff check .
 
 | Artefato | Comando | Obs. |
 |---|---|---|
-| AppImage | `./build.sh 2.3.7` | usa o `.venv`; exige Tk 8.6; gera `NavePro-2.3.7.AppImage` |
-| .exe | `build-windows.bat` (só Windows) | usa o `NavePro.spec` |
-| Flatpak (bundle local) | `./build-flatpak.sh` | manifest: `flatpak/io.github.edes_neves.NavePro.yaml` |
+| Build protegido (Linux) | `./packaging/linux/build_appimage.sh [versão]` | PyArmor + PyInstaller + appimagetool; ofusca `license_manager.py` |
+| Build protegido (.exe) | `python build_release.py --target windows` (só Windows) | PyArmor + `NavePro.spec`; usa `secrets.PYARMOR_LICENSE_B64` no CI |
+| AppImage (sem ofuscar) | `./build.sh 2.3.7` | usa o `.venv`; exige Tk 8.6; gera `NavePro-2.3.7.AppImage` |
+| .exe (sem ofuscar) | `build-windows.bat` (só Windows) | usa o `NavePro.spec` |
+| Flatpak (bundle local) | `./packaging/linux/build_flatpak.sh` | manifest: `flatpak/io.github.edes_neves.NavePro.yaml` (do fonte, sem PyArmor) |
 
 - `NavePro.spec` é a **fonte única** do PyInstaller para Linux e Windows.
   `NAVEPRO_CONSOLE=0/1` controla a janela de console; `NAVEPRO_ICON=img\Icon.ico` o ícone.
-- **Release 2.3.x+ (fluxo atual):** bump de `APP_VERSION` → `./build.sh <versão>`
-  → commit + `git tag v<versão>` → push de `main` + tag. O push da tag dispara o CI,
-  que constrói/anexa `.exe` e `.flatpak` (x86_64 + aarch64) ao release e publica o
-  repositório Flatpak no `gh-pages` (`edes-neves.github.io/NavePro`). O **AppImage**
-  é anexado manualmente: `gh release create v<versão> NavePro-<versão>.AppImage --title ... --notes ...`
-  (ou `gh release upload ... --clobber` se o release já existir).
+  `NAVEPRO_ARMORED=1`/`NAVEPRO_PATHEX`/`NAVEPRO_ENTRY` ativam o modo PyArmor
+  (`build_release.py`); o trial do PyArmor não ofusca o `NavePro.py` grande,
+  então nesse caso só o `license_manager.py` é ofuscado.
+- **Release 2.4.0+ (fluxo atual):** bump de `APP_VERSION` → commit + push de
+  `main` → `git tag -a v<versão>` → push da tag. O `build.yml` gera e anexa
+  `.exe`, AppImage e `.flatpak` (x86_64 + aarch64) ao release e publica o
+  repositório Flatpak no `gh-pages`. `exe.yml` e `flatpak.yml` ficam só para
+  `workflow_dispatch` (não duplicar anexos).
 - Os workflows de release usam `softprops/action-gh-release` com `overwrite_files: true`.
 - **Não mude de versão sem o usuário pedir** (não pule para a próxima release por conta própria).
 
