@@ -22,3 +22,4 @@ requests>=2.31.0         # Licenciamento: consulta da lista negra de revogação
 # ── Build (gerar o AppImage) ──
 # https://github.com/pyinstaller/pyinstaller
 pyinstaller>=6.22.0
+pyarmor>=9.0            # Ofuscação do licenciamento (build protegido)

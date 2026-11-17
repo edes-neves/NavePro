@@ -78,6 +78,13 @@ def _gravar_teste(caminho, mid, inicio_dias=0, ultima_dias=None,
 
 
 def _rodar() -> int:
+    dirs = lm._diretorios_licenca()
+    checar("pasta de config do usuário vem primeiro na busca da licença",
+           dirs[0] == lm._diretorio_config_usuario()
+           and os.path.basename(dirs[0]) == "NavePro", repr(dirs))
+    checar("diretórios de licença não se repetem",
+           len(dirs) == len(set(dirs)), repr(dirs))
+
     mid = lm.obter_id_maquina()
     checar("machine_id tem 16 hexadecimais",
            len(mid) == 16 and all(c in "0123456789ABCDEF" for c in mid), mid)

@@ -43,6 +43,27 @@ import sys
 _CONSOLE = os.environ.get("NAVEPRO_CONSOLE", "0") == "1"
 _icone = os.environ.get("NAVEPRO_ICON", "")
 
+# ── Build protegido (build_release.py) ───────────────────────────────
+# Quando NAVEPRO_ARMORED=1, o script de entrada e os módulos ofuscados pelo
+# PyArmor estão em NAVEPRO_PATHEX (o `obf/` vem primeiro para que
+# `import license_manager` resolva a versão ofuscada). O runtime gerado
+# pelo PyArmor (pacote pyarmor_runtime_000000) precisa entrar como binário
+# e hiddenimport, senão o executável falha ao importar a licença.
+_ARMORED = os.environ.get("NAVEPRO_ARMORED") == "1"
+_ENTRY = os.environ.get("NAVEPRO_ENTRY", "NavePro.py")
+_PATHEX = [p for p in os.environ.get("NAVEPRO_PATHEX", "").split(os.pathsep)
+           if p]
+if _PATHEX:
+    sys.path[0:0] = _PATHEX
+
+_BINARIES = []
+if _ARMORED:
+    from PyInstaller.utils.hooks import collect_all
+
+    _RT_DATAS, _RT_BINARIES, _RT_HIDDEN = collect_all("pyarmor_runtime_000000")
+else:
+    _RT_DATAS, _RT_BINARIES, _RT_HIDDEN = [], [], []
+
 # `icon` só pode ser passado se a variável estiver definida: passar icon=""
 # faz o PyInstaller procurar um arquivo de nome vazio e falhar.
 _EXE_EXTRA = {"icon": _icone} if _icone else {}
@@ -81,13 +102,22 @@ _HIDDEN = [
     "screeninfo",
     "pypdf",
     "defusedxml",
+    # Licenciamento: importados diretamente por license_manager.py. O
+    # PyInstaller costuma detectá-los, mas no build protegido o módulo é
+    # carregado do obf/ e a análise estática não o enxerga.
+    "cryptography",
+    "cryptography.hazmat.primitives.asymmetric.padding",
+    "cryptography.hazmat.primitives.hashes",
+    "cryptography.hazmat.primitives.serialization",
+    "requests",
+    *_RT_HIDDEN,
 ]
 
 a = Analysis(
-    ['NavePro.py'],
-    pathex=[],
-    binaries=[],
-    datas=_DATAS,
+    [_ENTRY],
+    pathex=_PATHEX,
+    binaries=_RT_BINARIES,
+    datas=_DATAS + _RT_DATAS,
     hiddenimports=_HIDDEN,
     hookspath=[],
     hooksconfig={},

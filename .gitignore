@@ -18,6 +18,15 @@
 /build
 /dist
 /tmp
+/obf
+# Specs gerados pelo build protegido. O NavePro.spec é a fonte única e
+# continua versionado (a negação abaixo o libera da regra *.spec).
+*.spec
+!NavePro.spec
+# Pacotes de distribuição
+*.AppImage
+*.flatpak
+.flatpak-builder/
 # Arquivos gerados dentro do AppDir ficam de fora (AppRun, .desktop, ícones são versionados)
 /AppDir
 /NavePro.zip
@@ -51,3 +60,6 @@
 /criar_chaves.py
 *.key
 /licenca.key
+
+# Log de falha do PyArmor (trial)
+pyarmor.bug.log

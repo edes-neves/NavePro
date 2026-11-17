@@ -47,6 +47,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
+from navepro.core.ambiente import _eh_windows
 from navepro.core.log import get_logger
 from navepro.core.paths import DATA_USER_DIR, DIR_BASE
 
@@ -116,14 +117,32 @@ def obter_id_maquina() -> str:
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16].upper()
 
 
+def _diretorio_config_usuario() -> str:
+    """Pasta de configuração gravável do sistema operacional.
+
+    No Linux segue ``$XDG_CONFIG_HOME`` (padrão ``~/.config``) e no Windows
+    usa ``%APPDATA%``. É o local usado para gravar ``licenca.key`` quando o
+    aplicativo roda empacotado (AppImage/Flatpak/.exe), pois a pasta interna
+    do pacote é somente leitura.
+    """
+    if _eh_windows():
+        base = os.environ.get("APPDATA") or os.path.join(
+            os.path.expanduser("~"), "AppData", "Roaming")
+        return os.path.join(base, "NavePro")
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config")
+    return os.path.join(base, "NavePro")
+
+
 def _diretorios_licenca() -> list[str]:
     """Locais procurados para ``licenca.key``, na ordem de preferência.
 
-    O diretório da aplicação é o principal (requisito do projeto). O
-    diretório de dados do usuário entra como fallback para instalações em
-    que a pasta do programa é somente leitura (ex.: Flatpak).
+    A pasta de configuração do usuário vem primeiro: é gravável em qualquer
+    instalação (inclusive AppImage, Flatpak e .exe em pasta protegida). A
+    pasta da aplicação continua aceita para compatibilidade com instalações
+    portáteis; ``~/.navepro`` fecha a lista como legado.
     """
-    diretorios = [DIR_BASE, DATA_USER_DIR]
+    diretorios = [_diretorio_config_usuario(), DIR_BASE, DATA_USER_DIR]
     vistos: list[str] = []
     for diretorio in diretorios:
         if diretorio and diretorio not in vistos:
