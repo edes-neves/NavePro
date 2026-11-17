@@ -51,7 +51,11 @@ from navepro.core.util_tk import (
     _limitar_ao_monitor,
 )
 from navepro.core.widgets_arredondados import TkArredondado
-from navepro.core.youtube import _eh_url_youtube, _obter_info_youtube
+from navepro.core.youtube import (
+    _eh_url_youtube,
+    _obter_info_youtube,
+    obter_video_youtube,
+)
 from navepro.ui.apoio import (
     _colar_texto_campo,
     _escolher_arquivos_usuario,
@@ -65,6 +69,84 @@ tk = TkArredondado(tk)
 
 
 class JanelaOrdemServicoMixin:
+    def _baixar_video_youtube_ui(self, parent, url: str) -> tuple[str | None, str]:
+        """Baixa o vídeo com uma janela de progresso e devolve (caminho, erro).
+
+        O download roda em uma thread para a interface continuar respondendo;
+        a janela só fecha quando o yt-dlp termina (ou falha).
+        """
+        janela = tk.Toplevel(parent)
+        janela.title("📥 Baixando vídeo do YouTube")
+        janela.configure(bg='#0d1117')
+        janela.transient(parent)
+        janela.resizable(False, False)
+        janela.protocol("WM_DELETE_WINDOW", lambda: None)
+        try:
+            janela.grab_set()
+        except tk.TclError:
+            pass
+        try:
+            _centralizar_sobre(janela, parent)
+        except Exception:
+            pass
+
+        main = tk.Frame(janela, bg='#0d1117')
+        main.pack(fill='both', expand=True, padx=24, pady=18)
+        tk.Label(main, text="📥 Baixando vídeo do YouTube...",
+                 bg='#0d1117', fg='#f0c040',
+                 font=("Arial", 12, "bold")).pack(anchor='w')
+        tk.Label(main, text=url, bg='#0d1117', fg='#8b949e',
+                 font=("Arial", 9), wraplength=520,
+                 justify='left').pack(anchor='w', pady=(6, 10))
+        barra = ttk.Progressbar(main, mode='indeterminate', length=520)
+        barra.pack(fill='x')
+        barra.start(12)
+        tk.Label(main, text=("O vídeo será reproduzido do computador. "
+                             "Aguarde o download terminar."),
+                 bg='#0d1117', fg='#c9d1d9',
+                 font=("Arial", 9)).pack(anchor='w', pady=(8, 0))
+
+        resultado: dict[str, str] = {}
+        concluido = threading.Event()
+
+        def _trabalho() -> None:
+            try:
+                resultado["caminho"] = obter_video_youtube(url)
+            except Exception as exc:
+                resultado["erro"] = str(exc)
+                log.exception("Falha ao baixar vídeo do YouTube: %s", exc)
+            finally:
+                concluido.set()
+
+        threading.Thread(target=_trabalho, daemon=True,
+                         name="navepro-baixar-youtube").start()
+
+        def _verificar() -> None:
+            if concluido.is_set():
+                try:
+                    barra.stop()
+                except tk.TclError:
+                    pass
+                try:
+                    janela.destroy()
+                except tk.TclError:
+                    pass
+                return
+            try:
+                janela.after(100, _verificar)
+            except tk.TclError:
+                pass
+
+        janela.after(100, _verificar)
+        try:
+            janela.wait_window()
+        finally:
+            try:
+                janela.destroy()
+            except tk.TclError:
+                pass
+        return resultado.get("caminho"), resultado.get("erro", "")
+
     def janela_ordem_servico(self) -> None:
         """Abre a janela de planejamento de ordem de serviço.
 
@@ -2434,6 +2516,18 @@ class JanelaOrdemServicoMixin:
                         dados["_proximo_id_item"] = novo_id
                     tkinter.messagebox.showwarning(
                         "⚠️", "Não foi possível salvar em servicos.json.", parent=add_win)
+                    return
+                if tipo == "youtube" and youtube_url:
+                    _, erro_download = self._baixar_video_youtube_ui(
+                        add_win, youtube_url)
+                    if erro_download:
+                        tkinter.messagebox.showwarning(
+                            "YouTube",
+                            ("O item foi salvo, mas o vídeo não pôde ser "
+                             "baixado agora.\nEle será baixado novamente "
+                             "ao executar.\n\n" + erro_download),
+                            parent=add_win)
+                if getattr(self, "_shutting_down", False):
                     return
                 _carregar_itens()
                 _selecionar_item(str(novo_id), ver=True)

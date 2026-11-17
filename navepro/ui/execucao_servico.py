@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 import tkinter as tk
 import tkinter.messagebox
 import tkinter.simpledialog
@@ -30,6 +31,7 @@ from navepro.core.mediaplayer import _eh_url
 from navepro.core.servicos import _SERVICO_PROXIMO_ITEM, _slides_versiculo_item
 from navepro.core.slides import _montar_slides_letra
 from navepro.core.widgets_arredondados import TkArredondado
+from navepro.core.youtube import obter_video_youtube
 
 log = get_logger("execucao_servico")
 
@@ -112,7 +114,8 @@ class ExecucaoServicoMixin:
                 pass
 
         iniciado = False
-        # Item "YouTube": a URL informada no editor vira a mídia do item.
+        # Item "YouTube": baixa a URL para um arquivo temporário e reproduz
+        # o arquivo local (o vídeo não é transmitido pela rede no telão).
         _url_youtube = ((item.get('youtube_url') or '').strip()
                         if tipo == 'youtube' else '')
         # Resolve o caminho de mídia do item: 1ª o arquivo escolhido
@@ -122,7 +125,21 @@ class ExecucaoServicoMixin:
         caminho_media = None
         _caminho_direto = (item.get('caminho_arquivo') or '').strip()
         if _url_youtube:
-            caminho_media = _url_youtube
+            try:
+                if (threading.current_thread() is threading.main_thread()
+                        and hasattr(self, "_baixar_video_youtube_ui")):
+                    caminho_media, erro_download = \
+                        self._baixar_video_youtube_ui(
+                            getattr(self, "root", None), _url_youtube)
+                    if erro_download:
+                        raise RuntimeError(erro_download)
+                else:
+                    caminho_media = obter_video_youtube(_url_youtube)
+            except Exception as exc:
+                log.exception("Falha ao obter o vídeo do YouTube: %s", exc)
+                return {'ok': False, 'codigo': 'falha',
+                        'erro': ('Não foi possível baixar o vídeo do '
+                                 f'YouTube: {exc}')}
         elif tipo in ('video', 'audio', 'sermao') and _caminho_direto \
                 and os.path.exists(_caminho_direto):
             caminho_media = _caminho_direto

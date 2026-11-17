@@ -94,6 +94,7 @@ from navepro.core.util_tk import (
     _normalizar_escala_tk,
 )
 from navepro.core.widgets_arredondados import TkArredondado
+from navepro.core.youtube import limpar_videos_youtube
 
 # ────────────────────────────────────────────────────────────────────
 # UI DO PAINEL (janelas extraídas do monolito — navepro/ui/)
@@ -2533,6 +2534,10 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         except Exception as e:
             log.exception(f"Erro no shutdown: {e}")
         finally:
+            try:
+                limpar_videos_youtube()
+            except Exception as exc:
+                log.warning("⚠️ Falha ao limpar vídeos do YouTube: %s", exc)
             try:
                 self.root.destroy()
             except tk.TclError:

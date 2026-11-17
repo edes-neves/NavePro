@@ -255,6 +255,12 @@ _fonte_exec = open(os.path.join(RAIZ, "navepro", "ui", "execucao_servico.py"),
                       encoding="utf-8").read()
 checar("a URL continua sendo a mídia do item (youtube_url lido na execução)",
        "item.get('youtube_url')" in _fonte_app + _fonte_exec)
+checar("ao salvar, o vídeo é baixado para tocar do computador",
+       "_baixar_video_youtube_ui(" in _fonte_os)
+checar("ao executar, usa o arquivo local baixado",
+       "obter_video_youtube(_url_youtube)" in _fonte_exec)
+checar("ao fechar o app, apaga os vídeos temporários",
+       "limpar_videos_youtube()" in _fonte_app)
 
 # ── 8. Item YouTube no controle remoto (_remoto_resolver_item) ────────
 # O editor do celular marca a caixinha "Vídeo do YouTube" sob o tipo Vídeo e
