@@ -38,9 +38,11 @@ from navepro.core.servicos import (
     _carregar_servicos_json,
     _faixa_versiculo_item,
     _salvar_servicos_json,
+    definir_manter_videos_servico,
     definir_marcar_reproduzidos,
     dia_do_servico,
     marcar_item_servico,
+    servico_manter_videos,
 )
 from navepro.core.slides import (
     _buscar_hino_por_termo,
@@ -334,6 +336,7 @@ class ControleRemotoMixin:
                     'servicos': [
                         {'id': s.get('id'), 'nome': s.get('nome') or '',
                          'dia': dia_do_servico(s),
+                         'manter_videos_youtube': servico_manter_videos(s),
                          'itens': len(s.get('itens') or [])}
                         for s in (_carregar_servicos_json().get('servicos')
                                   or [])]},
@@ -351,6 +354,8 @@ class ControleRemotoMixin:
                 'executar_servico': lambda d: self._remoto_executar_servico(d),
                 'servico_item': lambda d: self._remoto_servico_item(d),
                 'servico_auto': lambda d: self._remoto_servico_auto(d),
+                'servico_manter_videos': lambda d:
+                    self._remoto_servico_manter_videos(d),
                 'medidor': lambda d: self._remoto_medidor(d),
                 'relogio': lambda d: self._remoto_relogio(d),
                 'abrir_config_projecao': lambda d:
@@ -1002,6 +1007,19 @@ class ControleRemotoMixin:
             return {'ok': False,
                     'erro': 'Não foi possível salvar em servicos.json.'}
         return {'ok': True, 'marcar_reproduzidos': ativo}
+
+    def _remoto_servico_manter_videos(self, dados: dict) -> dict:
+        """Liga/desliga a preservação dos vídeos de uma programação."""
+        alvo = str(dados.get('id') or '')
+        serv = self._localizar_servico(alvo)
+        if serv is None:
+            return {'ok': False, 'erro': 'Projeção não encontrada.'}
+        ativo = bool(dados.get('ativo'))
+        if not definir_manter_videos_servico(serv.get('id'), ativo):
+            return {'ok': False,
+                    'erro': 'Não foi possível salvar em servicos.json.'}
+        return {'ok': True, 'id': serv.get('id'),
+                'manter_videos_youtube': ativo}
     def _remoto_servico_itens(self, dados: dict) -> dict:
         """Lista os itens de UM serviço para a aba Serviço do celular."""
         serv = self._localizar_servico(str(dados.get('servico') or ''))
@@ -1011,7 +1029,9 @@ class ControleRemotoMixin:
         return {'ok': True,
                 'servico': {'id': serv.get('id'),
                             'nome': serv.get('nome') or '',
-                            'dia': dia_do_servico(serv)},
+                            'dia': dia_do_servico(serv),
+                            'manter_videos_youtube': servico_manter_videos(
+                                serv)},
                 'itens': [self._resumo_item_servico(it, i)
                           for i, it in enumerate(itens)]}
     @staticmethod

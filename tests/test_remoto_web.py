@@ -113,6 +113,10 @@ check("item reproduzido fica tachado no celular",
       and "text-decoration: line-through" in CSS)
 check("API de marcação automática é chamada pela página",
       "/api/remoto/servico_auto" in PAGINA)
+check("aba Serviço permite manter vídeos do YouTube",
+      "definirManterVideos" in JS and "manter-videos" in JS)
+check("rota de manter vídeos existe na página e no servidor",
+      "/api/remoto/servico_manter_videos" in PAGINA)
 
 # ── 5. Botões "Buscar": lupa e texto cabem dentro do botão ───────────
 _botoes_busca = re.findall(

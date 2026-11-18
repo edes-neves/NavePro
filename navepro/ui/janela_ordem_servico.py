@@ -39,8 +39,11 @@ from navepro.core.servicos import (
     _migrar_servicos_do_banco,
     _proximo_id_servico_livre,
     _salvar_servicos_json,
+    definir_manter_videos_servico,
     definir_marcar_reproduzidos,
+    esquecer_manter_videos_servico,
     marcar_item_servico,
+    servico_manter_videos,
 )
 from navepro.core.slides import (
     _buscar_hino_por_termo,
@@ -358,6 +361,18 @@ class JanelaOrdemServicoMixin:
         combo_servico._navepro_servico_var = servico_var
         combo_servico.pack(side='left', padx=5)
 
+        manter_videos_var = tk.BooleanVar(value=False)
+        chk_manter = tk.Checkbutton(
+            serv_frame, text="Manter vídeos do YouTube desta programação",
+            variable=manter_videos_var,
+            command=lambda: _alternar_manter_videos(),
+            bg='#161b22', fg='#c9d1d9', activebackground='#161b22',
+            activeforeground='#f0c040', selectcolor='#6e40c9',
+            disabledforeground='#6b7280',
+            highlightthickness=0, bd=0, font=("Arial", 10, "bold"))
+        chk_manter._navepro_var = manter_videos_var
+        chk_manter.pack(anchor='w', padx=8, pady=(4, 0))
+
         marcar_reproduzidos_var = tk.BooleanVar(
             value=bool(dados.get("_marcar_reproduzidos", False)))
 
@@ -388,6 +403,31 @@ class JanelaOrdemServicoMixin:
             if not sid:
                 return None
             return next((s for s in dados["servicos"] if s.get("id") == sid), None)
+
+        def _atualizar_manter_videos() -> None:
+            serv = _servico_atual()
+            ativo = bool(servico_manter_videos(serv)) if serv else False
+            try:
+                manter_videos_var.set(ativo)
+                chk_manter.configure(state='normal' if serv else 'disabled')
+            except tk.TclError:
+                pass
+
+        def _alternar_manter_videos() -> None:
+            serv = _servico_atual()
+            if serv is None:
+                _atualizar_manter_videos()
+                return
+            ativo = bool(manter_videos_var.get())
+            anterior = servico_manter_videos(serv)
+            if not definir_manter_videos_servico(serv.get("id"), ativo):
+                try:
+                    manter_videos_var.set(anterior)
+                except tk.TclError:
+                    pass
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar a opção de manter os "
+                    "vídeos do YouTube em servicos.json.", parent=janela)
 
         def _dia_do_servico(s: dict) -> str:
             """Dia da programação (legado: infere pela data de criação)."""
@@ -447,6 +487,7 @@ class JanelaOrdemServicoMixin:
                         log.debug("Não foi possível guardar a programação "
                                   "selecionada em servicos.json.")
                 _carregar_itens()
+                _atualizar_manter_videos()
 
         combo_servico.bind("<<ComboboxSelected>>", _on_servico_select)
 
@@ -500,6 +541,7 @@ class JanelaOrdemServicoMixin:
                 combo_servico.set(_rotulo_atual_servico())
             except tk.TclError:
                 pass
+            _atualizar_manter_videos()
 
         def _selecionar_nome_servico() -> None:
             if _renomear["id"] is None:
@@ -1667,6 +1709,7 @@ class JanelaOrdemServicoMixin:
             _SERVICO_PROXIMO_ITEM.pop(nome, None)
             if _SERVICO_ITEM_REPRODUZINDO.get("servico_id") == sid:
                 _SERVICO_ITEM_REPRODUZINDO.clear()
+            esquecer_manter_videos_servico(sid)
             _item_escolhido["id"] = None
             servico_selecionado_id[0] = None
             _carregar_servicos()

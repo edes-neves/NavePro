@@ -28,6 +28,8 @@ A API usada (tudo com o header `X-Token`):
   POST /api/remoto/servico_item→ {operacao: add|editar|apagar|mover|marcar,
                                    servico, ...}
   POST /api/remoto/servico_auto→ {ativo} liga/desliga marcar reproduzidos
+  POST /api/remoto/servico_manter_videos → {id, ativo} mantém os vídeos
+                                   do YouTube da programação ao fechar
   POST /api/remoto/medidor     → {qual, acao, seg?, titulo?}
   POST /api/remoto/tamanho     → {qual, acao}
   GET  /api/remoto/relogio     → configuração e estado do relógio
@@ -136,6 +138,7 @@ _REMOTO_CSS = """
   .check { display: flex; align-items: center; gap: 8px;
            font-size: 14px; margin: 8px 0; }
   .check input { width: auto; margin: 0; }
+  input[type=checkbox] { accent-color: #6e40c9; }
   input[type=range] { padding: 0; border: 0; background: none; margin: 0 0 8px; }
   /* Aba Bíblia em grade: livros no topo, capítulos e versículos embaixo.
      No celular tudo empilha; a partir de 640px os capítulos ficam à
@@ -213,6 +216,9 @@ _REMOTO_CSS = """
   li.servico-linha .nome { flex: 1 1 100%; white-space: normal;
                            overflow: visible; text-overflow: clip; }
   li.servico-linha .btn { flex: 1 1 0; padding: 11px 12px; }
+  li.servico-linha .manter-videos {
+    flex: 1 1 100%; margin: 0; font-size: 13px; padding: 2px 0;
+  }
   li.item-servico { flex-direction: column; align-items: stretch;
                     gap: 9px; padding: 14px 6px; }
   li.item-servico .nome { flex: none; white-space: normal;
@@ -1365,6 +1371,26 @@ function renderizarDiasServico() {
   });
 }
 
+function definirManterVideos(id, ativo) {
+  apiPost('/api/remoto/servico_manter_videos', {id: id, ativo: !!ativo})
+    .then(function(j) {
+      if (!j || !j.ok) {
+        aviso('N\u00e3o foi poss\u00edvel salvar a op\u00e7\u00e3o');
+        carregarServicos();
+        return;
+      }
+      var mantido = !!j.manter_videos_youtube;
+      (SERVICOS_CACHE || []).forEach(function(s) {
+        if (String(s.id) === String(id)) s.manter_videos_youtube = mantido;
+      });
+      if (SERVICO_SEL && String(SERVICO_SEL.id) === String(id)) {
+        SERVICO_SEL.manter_videos_youtube = mantido;
+      }
+      aviso(mantido ? 'V\u00eddeos do YouTube ser\u00e3o mantidos'
+                    : 'V\u00eddeos do YouTube ser\u00e3o apagados', '#238636');
+    }).catch(function() { carregarServicos(); });
+}
+
 function selecionarDiaServico(dia) {
   var valido = false;
   for (var i = 0; i < DIAS_SERVICO.length; i++) {
@@ -1397,11 +1423,23 @@ function renderizarListaServicos() {
     nome.className = 'nome';
     nome.innerHTML = '<b>' + esc(s.nome || '') + '</b>' +
       '<div class="sub">' + s.itens + ' item(ns)</div>';
+    var labelManter = document.createElement('label');
+    labelManter.className = 'check manter-videos';
+    var chkManter = document.createElement('input');
+    chkManter.type = 'checkbox';
+    chkManter.checked = !!s.manter_videos_youtube;
+    chkManter.onchange = function() {
+      definirManterVideos(s.id, chkManter.checked);
+    };
+    labelManter.appendChild(chkManter);
+    labelManter.appendChild(
+      document.createTextNode('Manter v\u00eddeos do YouTube'));
     var btnItens = miniBtn('Itens', 'cinza', function() { abrirServico(s); });
     var btn = miniBtn('Executar', 'verde', function() {
       executarServico(s.id, null, s.nome);
     });
-    li.appendChild(nome); li.appendChild(btnItens); li.appendChild(btn);
+    li.appendChild(nome); li.appendChild(labelManter);
+    li.appendChild(btnItens); li.appendChild(btn);
     ul.appendChild(li);
   });
 }
@@ -2010,6 +2048,13 @@ function iniciar() {
   setInterval(function() {
     if (SERVICO_SEL) carregarItensServico();
   }, 5000);
+  // Mantém as opções "Manter vídeos do YouTube" sincronizadas com o PC,
+  // sem precisar recarregar a página no celular.
+  setInterval(function() {
+    if (document.getElementById('aba-servico').classList.contains('on')) {
+      carregarServicos();
+    }
+  }, 10000);
 }
 
 iniciar();

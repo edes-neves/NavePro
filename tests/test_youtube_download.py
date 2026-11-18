@@ -41,8 +41,12 @@ def _rodar() -> int:
         "baixar": yt.baixar_video_youtube,
         "baixar_deno": yt._baixar_deno,
         "garantir_ytdlp": yt._garantir_ytdlp,
+        "indice": yt._arquivo_indice_youtube,
+        "preservada": yt._pasta_preservada_youtube,
     }
     pasta = tempfile.mkdtemp(prefix="navepro-yt-teste-")
+    pasta_indice = tempfile.mkdtemp(prefix="navepro-yt-indice-")
+    pasta_preservada = tempfile.mkdtemp(prefix="navepro-yt-preservados-")
     try:
         def _sem_rede(*_args, **_kwargs):
             raise RuntimeError("sem rede (teste)")
@@ -51,6 +55,10 @@ def _rodar() -> int:
         yt._baixar_deno = _sem_rede
         yt._garantir_ytdlp = lambda ao_progresso=None: "/fake/yt-dlp"
         yt.localizar_executavel = _fake_localizar
+        yt._arquivo_indice_youtube = lambda: os.path.join(
+            pasta_indice, "youtube_cache.json")
+        yt._pasta_preservada_youtube = lambda: pasta_preservada
+        yt._CACHE_CARREGADO = False
         yt._VIDEOS_BAIXADOS.clear()
 
         # ── Onde os vídeos ficam ─────────────────────────────────────
@@ -326,9 +334,56 @@ def _rodar() -> int:
         # ── Limpeza ao fechar o app ──────────────────────────────────
         yt.baixar_video_youtube = baixar_espiao
         yt.obter_video_youtube(URL)
-        yt.limpar_videos_youtube()
+        yt.limpar_videos_youtube(preservar=set())
         checar("limpar apaga a pasta e o cache da sessão",
                not os.path.exists(pasta) and not yt._VIDEOS_BAIXADOS)
+
+        # ── Vídeos marcados para manter na programação ──────────────
+        yt._VIDEOS_BAIXADOS.clear()
+        yt._CACHE_CARREGADO = False
+        url_keep = "https://youtu.be/keep123"
+        url_drop = "https://youtu.be/drop456"
+
+        def baixar_preservavel(url, ao_progresso=None):
+            os.makedirs(pasta, exist_ok=True)
+            nome = "video_" + url.rsplit("/", 1)[-1] + ".mp4"
+            caminho = os.path.join(pasta, nome)
+            with open(caminho, "wb") as f:
+                f.write(b"video")
+            return caminho
+
+        yt.baixar_video_youtube = baixar_preservavel
+        caminho_keep = yt.obter_video_youtube(url_keep)
+        caminho_drop = yt.obter_video_youtube(url_drop)
+        yt.limpar_videos_youtube(preservar={url_keep})
+        destino_keep = os.path.join(pasta_preservada,
+                                    os.path.basename(caminho_keep))
+        checar("vídeo da programação marcada é movido para a pasta fixa",
+               os.path.isfile(destino_keep)
+               and not os.path.exists(caminho_drop)
+               and not os.path.exists(pasta))
+        checar("índice persistente guarda o vídeo mantido",
+               yt._VIDEOS_BAIXADOS.get(url_keep) == destino_keep
+               and os.path.isfile(yt._arquivo_indice_youtube()))
+
+        # Nova sessão: o índice persistente evita baixar de novo.
+        yt._VIDEOS_BAIXADOS.clear()
+        yt._CACHE_CARREGADO = False
+        chamadas_download = []
+
+        def baixar_nao_deveria(url, ao_progresso=None):
+            chamadas_download.append(url)
+            return caminho_drop
+
+        yt.baixar_video_youtube = baixar_nao_deveria
+        caminho_reuso = yt.obter_video_youtube(url_keep)
+        checar("vídeo mantido é reaproveitado na próxima sessão",
+               caminho_reuso == destino_keep and not chamadas_download)
+
+        yt.limpar_videos_youtube(preservar=set())
+        checar("desmarcar apaga também os vídeos mantidos",
+               not os.path.exists(destino_keep)
+               and not yt._VIDEOS_BAIXADOS)
     finally:
         yt.localizar_executavel = original["localizar_executavel"]
         yt.subprocess.run = original["subprocess_run"]
@@ -338,10 +393,15 @@ def _rodar() -> int:
         yt.baixar_video_youtube = original["baixar"]
         yt._baixar_deno = original["baixar_deno"]
         yt._garantir_ytdlp = original["garantir_ytdlp"]
+        yt._arquivo_indice_youtube = original["indice"]
+        yt._pasta_preservada_youtube = original["preservada"]
         yt._VIDEOS_BAIXADOS.clear()
+        yt._CACHE_CARREGADO = False
         yt._AJUDA_YTDLP.clear()
         yt._CACHE_OPCOES_JS.clear()
         shutil.rmtree(pasta, ignore_errors=True)
+        shutil.rmtree(pasta_indice, ignore_errors=True)
+        shutil.rmtree(pasta_preservada, ignore_errors=True)
 
     return falhas
 

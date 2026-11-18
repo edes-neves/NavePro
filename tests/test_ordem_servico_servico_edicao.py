@@ -134,6 +134,8 @@ def _ns_excluir(dados, servico, selecionado, salvar_ok=True, resposta=True):
             dados["servicos"], key=lambda s: s.get("id") or 0, reverse=True),
         "_SERVICO_PROXIMO_ITEM": proximo,
         "_SERVICO_ITEM_REPRODUZINDO": {},
+        "esquecer_manter_videos_servico":
+            lambda sid: chamadas.append(("esquecer", sid)),
         "_item_escolhido": escolhido,
         "servico_selecionado_id": selecionado,
         "_carregar_servicos": _carregar_servicos,
@@ -313,6 +315,9 @@ def _rodar():
           "marcar_reproduzido=marcar" in _SRC
           and "ao_terminar=_ao_terminar_item" in _SRC
           and "anterior_reproduzido_id" in _SRC)
+    check("programação pode manter os vídeos do YouTube",
+          'text="Manter vídeos do YouTube desta programação"' in _SRC
+          and "definir_manter_videos_servico(" in _SRC)
 
     dados_dia = {"servicos": [
         {"id": 1, "nome": "Culto", "dia": "domingo", "itens": []},

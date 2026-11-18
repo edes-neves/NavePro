@@ -57,6 +57,8 @@ self_fake = types.SimpleNamespace(
 
 ns = {"log": log, "Any": __import__("typing").Any,
       "_listar_anuncios_db": lambda: [],
+      "servico_manter_videos":
+          lambda s, preservados=None: bool(s.get("manter_videos_youtube")),
       "_carregar_servicos_json": lambda: {"servicos": []}}
 exec(compile(_extrair("_remoto_despacho"), "<_remoto_despacho>", "exec"),
      ns)  # noqa: S102
@@ -82,7 +84,8 @@ checar("abrir_config_projecao chama o handler",
 
 # ── 1b. listar_servicos informa o dia da programação ─────────────────
 ns["_carregar_servicos_json"] = lambda: {"servicos": [
-    {"id": 1, "nome": "Culto", "dia": "terca", "itens": [1, 2]},
+    {"id": 1, "nome": "Culto", "dia": "terca",
+     "manter_videos_youtube": True, "itens": [1, 2]},
     {"id": 2, "nome": "Antigo", "criado_em": "2026-11-17T10:00:00",
      "itens": []},
 ]}
@@ -93,6 +96,10 @@ checar("listar_servicos devolve o dia de cada programação",
        and r["servicos"][1]["dia"] == "terca")
 checar("listar_servicos informa a marcação automática",
        r.get("marcar_reproduzidos") is False)
+checar("listar_servicos informa manter vídeos por programação",
+       r["servicos"][0]["manter_videos_youtube"] is True)
+checar("manter vídeos tem ação própria no despacho",
+       "'servico_manter_videos': lambda" in _SRC)
 checar("marcação automática tem ação própria no despacho",
        "'servico_auto': lambda" in _SRC)
 checar("servico_itens também informa o dia",

@@ -40,6 +40,9 @@ _DOMINIOS_YOUTUBE = ("youtube.com", "youtube-nocookie.com")
 # fica em uma pasta temporária e é apagado quando o NavePro é fechado.
 _VIDEOS_BAIXADOS: dict[str, str] = {}
 _VIDEOS_LOCK = threading.Lock()
+# O índice URL -> arquivo é persistido em ~/.navepro/youtube_cache.json para
+# os vídeos que o usuário mandou manter sobreviverem ao fechamento do app.
+_CACHE_CARREGADO = False
 
 # Runtimes JavaScript aceitos pelo yt-dlp para resolver o desafio do YouTube.
 # O Deno vem primeiro por ser o recomendado e habilitado por padrão.
@@ -584,6 +587,85 @@ def _pasta_videos_youtube() -> str:
     return os.path.join(tempfile.gettempdir(), "navepro_youtube")
 
 
+def _arquivo_indice_youtube() -> str:
+    """JSON persistente com URL -> arquivo baixado (cache entre sessões)."""
+    return os.path.join(DATA_USER_DIR, "youtube_cache.json")
+
+
+def _pasta_preservada_youtube() -> str:
+    """Pasta persistente dos vídeos marcados para não apagar."""
+    return os.path.join(DATA_USER_DIR, "youtube_preservados")
+
+
+def _carregar_indice_youtube() -> None:
+    """Carrega uma vez o índice persistente para a memória da sessão."""
+    global _CACHE_CARREGADO
+    with _VIDEOS_LOCK:
+        if _CACHE_CARREGADO:
+            return
+        dados: dict = {}
+        try:
+            with open(_arquivo_indice_youtube(), encoding="utf-8") as f:
+                lido = json.load(f)
+            if isinstance(lido, dict):
+                dados = lido
+        except (OSError, ValueError):
+            dados = {}
+        for url, caminho in dados.items():
+            if (isinstance(url, str) and isinstance(caminho, str)
+                    and os.path.isfile(caminho)):
+                _VIDEOS_BAIXADOS.setdefault(url, caminho)
+        _CACHE_CARREGADO = True
+
+
+def _salvar_indice_youtube() -> None:
+    """Grava o índice URL -> arquivo de forma atômica (serializado)."""
+    caminho = _arquivo_indice_youtube()
+    with _VIDEOS_LOCK:
+        try:
+            os.makedirs(os.path.dirname(caminho), exist_ok=True)
+            tmp = caminho + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_VIDEOS_BAIXADOS, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, caminho)
+        except OSError as exc:
+            log.warning("⚠️ Não foi possível salvar o cache do YouTube: %s",
+                        exc)
+
+
+def _urls_preservadas_servicos() -> set[str]:
+    """URLs do YouTube das programações marcadas para manter os vídeos."""
+    try:
+        from navepro.core.servicos import (
+            _carregar_preservar_youtube,
+            _carregar_servicos_json,
+            servico_manter_videos,
+        )
+
+        dados = _carregar_servicos_json()
+        preservados = _carregar_preservar_youtube()
+    except Exception as exc:
+        log.warning("⚠️ Não foi possível ler as programações para preservar "
+                    "vídeos do YouTube: %s", exc)
+        return set()
+    urls: set[str] = set()
+    for serv in dados.get("servicos") or []:
+        if not isinstance(serv, dict) or not servico_manter_videos(
+                serv, preservados):
+            continue
+        for item in serv.get("itens") or []:
+            if not isinstance(item, dict):
+                continue
+            if (item.get("tipo") or "").strip().lower() != "youtube":
+                continue
+            url = _normalizar_url_youtube(item.get("youtube_url") or "")
+            if url:
+                urls.add(url)
+    return urls
+
+
 def _remover_arquivos_parciais(pasta: str, base: str) -> None:
     """Apaga restos de um download que falhou (``base.ext``/``base.part``)."""
     padrao = os.path.join(glob.escape(pasta), glob.escape(base) + ".*")
@@ -975,6 +1057,7 @@ def video_youtube_baixado(url: str) -> str | None:
     diálogo de progresso. Devolve ``None`` quando o arquivo não existe mais.
     """
     url = _normalizar_url_youtube(url)
+    _carregar_indice_youtube()
     with _VIDEOS_LOCK:
         caminho = _VIDEOS_BAIXADOS.get(url)
     if caminho and os.path.isfile(caminho):
@@ -993,18 +1076,75 @@ def obter_video_youtube(url: str, ao_progresso=None) -> str:
     caminho = baixar_video_youtube(url, ao_progresso=ao_progresso)
     with _VIDEOS_LOCK:
         _VIDEOS_BAIXADOS[url] = caminho
+    _salvar_indice_youtube()
     return caminho
 
 
-def limpar_videos_youtube() -> None:
-    """Apaga os vídeos temporários do YouTube e limpa o cache da sessão."""
-    pasta = _pasta_videos_youtube()
+def limpar_videos_youtube(preservar: set[str] | None = None) -> None:
+    """Apaga os vídeos temporários, preservando os marcados pelo usuário.
+
+    `preservar` é o conjunto de URLs que devem continuar disponíveis; sem
+    ele, a lista é lida das programações salvas com a opção "Manter vídeos
+    do YouTube". Os arquivos preservados saem da pasta temporária e vão para
+    ``~/.navepro/youtube_preservados``, com o índice persistente.
+    """
+    if preservar is None:
+        preservar = _urls_preservadas_servicos()
+    preservar = {_normalizar_url_youtube(u) for u in preservar if u}
+    _carregar_indice_youtube()
+    pasta_temp = _pasta_videos_youtube()
+    pasta_preservada = _pasta_preservada_youtube()
+    mantidos: dict[str, str] = {}
+    remover: list[str] = []
+    falhou_mover = False
     with _VIDEOS_LOCK:
+        for url, caminho in list(_VIDEOS_BAIXADOS.items()):
+            if url in preservar and os.path.isfile(caminho):
+                if not os.path.abspath(caminho).startswith(
+                        os.path.abspath(pasta_preservada) + os.sep):
+                    os.makedirs(pasta_preservada, exist_ok=True)
+                    destino = os.path.join(
+                        pasta_preservada, os.path.basename(caminho))
+                    try:
+                        shutil.move(caminho, destino)
+                        caminho = destino
+                    except OSError as exc:
+                        log.warning(
+                            "⚠️ Não foi possível mover o vídeo %s para a "
+                            "pasta de vídeos mantidos: %s", caminho, exc)
+                        falhou_mover = True
+                mantidos[url] = caminho
+            elif os.path.isfile(caminho):
+                remover.append(caminho)
         _VIDEOS_BAIXADOS.clear()
-    if not os.path.isdir(pasta):
-        return
-    try:
-        shutil.rmtree(pasta)
+        _VIDEOS_BAIXADOS.update(mantidos)
+    for caminho in remover:
+        try:
+            os.remove(caminho)
+        except OSError:
+            pass
+    # Remove restos não referenciados das duas pastas (downloads antigos,
+    # programações desmarcadas ou excluídas).
+    referenciados = {os.path.abspath(c)
+                     for c in _VIDEOS_BAIXADOS.values()}
+    for pasta in (pasta_temp, pasta_preservada):
+        for caminho in glob.glob(os.path.join(glob.escape(pasta), "*")):
+            if os.path.isdir(caminho):
+                continue
+            if os.path.abspath(caminho) in referenciados:
+                continue
+            try:
+                os.remove(caminho)
+            except OSError:
+                pass
+    if not falhou_mover:
+        try:
+            shutil.rmtree(pasta_temp, ignore_errors=True)
+        except OSError:
+            pass
+    _salvar_indice_youtube()
+    if _VIDEOS_BAIXADOS:
+        log.info("🧹 Vídeos temporários removidos; %d vídeo(s) do YouTube "
+                 "mantido(s).", len(_VIDEOS_BAIXADOS))
+    else:
         log.info("🧹 Vídeos temporários do YouTube removidos.")
-    except OSError as exc:
-        log.warning("⚠️ Não foi possível remover os vídeos temporários: %s", exc)

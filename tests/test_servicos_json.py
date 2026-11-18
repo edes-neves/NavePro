@@ -154,6 +154,25 @@ def _rodar() -> int:
             servicos_mod._carregar_servicos_json = original_carregar
             servicos_mod._salvar_servicos_json = original_salvar
 
+        # A opção de manter vídeos fica em arquivo próprio (não é sobrescrita
+        # por uma janela aberta que salve servicos.json depois).
+        original_preservar = servicos_mod.PRESERVAR_YOUTUBE_FILE
+        try:
+            with tempfile.TemporaryDirectory() as tmp_pres:
+                servicos_mod.PRESERVAR_YOUTUBE_FILE = os.path.join(
+                    tmp_pres, "youtube_preservar.json")
+                checar("opção de manter vídeos é salva por programação",
+                       servicos_mod.definir_manter_videos_servico(1, True)
+                       and servicos_mod.servico_manter_videos({"id": 1})
+                       and not servicos_mod.servico_manter_videos(
+                           {"id": 2}))
+                checar("desmarcar sobrepõe o campo antigo do serviço",
+                       servicos_mod.definir_manter_videos_servico(1, False)
+                       and not servicos_mod.servico_manter_videos(
+                           {"id": 1, "manter_videos_youtube": True}))
+        finally:
+            servicos_mod.PRESERVAR_YOUTUBE_FILE = original_preservar
+
     return falhas
 
 

@@ -42,6 +42,7 @@ _ACOES_POST_REMOTO: dict = {
     '/api/remoto/servico': 'executar_servico',
     '/api/remoto/servico_item': 'servico_item',
     '/api/remoto/servico_auto': 'servico_auto',
+    '/api/remoto/servico_manter_videos': 'servico_manter_videos',
     '/api/remoto/medidor': 'medidor',
     '/api/remoto/tamanho': 'tamanho',
     '/api/remoto/relogio': 'relogio',

@@ -20,6 +20,12 @@ from navepro.core.paths import SERVICOS_FILE
 
 log = get_logger("servicos")
 
+# Preferência local (por programação) de manter os vídeos do YouTube. Fica
+# fora do servicos.json para que uma janela aberta há mais tempo, ao salvar
+# outros dados, não sobrescreva a escolha feita no celular/em outra janela.
+PRESERVAR_YOUTUBE_FILE = os.path.join(
+    os.path.dirname(SERVICOS_FILE), "youtube_preservar.json")
+
 # Ordem dos dias da semana usada na janela "Ordem de Projeção" e no controle
 # remoto. Domingo começa a semana (índice 0) e Sábado termina (índice 6).
 DIAS_SEMANA = ("domingo", "segunda", "terca", "quarta",
@@ -110,7 +116,8 @@ def _carregar_servicos_json() -> dict:
     """Lê ~/.navepro/servicos.json e devolve a estrutura de ordens de serviço.
 
     Estrutura:
-      {"servicos": [{"id", "nome", "dia", "data_servico", "criado_em", "itens": [
+      {"servicos": [{"id", "nome", "dia", "manter_videos_youtube",
+                     "data_servico", "criado_em", "itens": [
           {"id", "tipo", "referencia_id", "titulo_custom", "letra_snapshot",
            "caminho_arquivo", "youtube_url", "duracao_estimada_segundos"}...]}],
        "_proximo_id_servico": int, "_proximo_id_item": int}
@@ -183,6 +190,65 @@ def definir_marcar_reproduzidos(ativo: bool) -> bool:
     dados = _carregar_servicos_json()
     dados["_marcar_reproduzidos"] = bool(ativo)
     return _salvar_servicos_json(dados)
+
+
+def _carregar_preservar_youtube() -> dict[str, bool]:
+    """Lê o mapa id da programação -> manter vídeos do YouTube."""
+    try:
+        with open(PRESERVAR_YOUTUBE_FILE, encoding="utf-8") as f:
+            dados = json.load(f)
+        if isinstance(dados, dict):
+            return {str(k): bool(v) for k, v in dados.items()}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _salvar_preservar_youtube(dados: dict[str, bool]) -> bool:
+    try:
+        os.makedirs(os.path.dirname(PRESERVAR_YOUTUBE_FILE), exist_ok=True)
+        tmp = PRESERVAR_YOUTUBE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, PRESERVAR_YOUTUBE_FILE)
+        return True
+    except OSError as e:
+        log.exception(f"⚠️ Erro ao salvar a opção de manter vídeos: {e}")
+        return False
+
+
+def servico_manter_videos(servico: dict,
+                          preservados: dict[str, bool] | None = None) -> bool:
+    """True se a programação deve manter os vídeos do YouTube.
+
+    O mapa separado tem prioridade; o campo antigo em servicos.json é aceito
+    como fallback para quem já marcou a opção antes desta separação.
+    """
+    dados = (preservados if preservados is not None
+             else _carregar_preservar_youtube())
+    sid = str(servico.get("id") or "")
+    if sid in dados:
+        return bool(dados[sid])
+    return bool(servico.get("manter_videos_youtube"))
+
+
+def definir_manter_videos_servico(servico_id, ativo: bool) -> bool:
+    """Liga/desliga a preservação dos vídeos do YouTube de uma programação."""
+    dados = _carregar_preservar_youtube()
+    dados[str(servico_id or "")] = bool(ativo)
+    return _salvar_preservar_youtube(dados)
+
+
+def esquecer_manter_videos_servico(servico_id) -> bool:
+    """Remove a preferência de uma programação excluída (evita ID reutilizado)."""
+    dados = _carregar_preservar_youtube()
+    sid = str(servico_id or "")
+    if sid not in dados:
+        return True
+    dados.pop(sid, None)
+    return _salvar_preservar_youtube(dados)
 
 
 def _migrar_servicos_do_banco() -> bool:
