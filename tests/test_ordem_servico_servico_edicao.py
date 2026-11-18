@@ -301,6 +301,10 @@ def _rodar():
           and 'text="➕ Nova Projeção"' in _SRC)
     check("antigo rótulo Projeção foi removido",
           'text="Projeção:"' not in _SRC)
+    ns_rotulo = _carregar_ns("_rotulo_servico")
+    check("programação aparece só com o nome, sem número automático",
+          ns_rotulo["_rotulo_servico"](
+              {"id": 7, "nome": "Culto da Manhã"}) == "Culto da Manhã")
 
     # ── 11) Itens reproduzidos: caixinha, tachado e opção no topo ────
     check("cada item tem a caixa de reproduzido na primeira coluna",

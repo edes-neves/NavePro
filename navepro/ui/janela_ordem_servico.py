@@ -396,7 +396,7 @@ class JanelaOrdemServicoMixin:
         servico_selecionado_id = [None]
 
         def _rotulo_servico(s: dict) -> str:
-            return f"{s.get('id')} - {s.get('nome', '')}"
+            return str(s.get("nome") or "").strip()
 
         def _servico_atual() -> dict | None:
             sid = servico_selecionado_id[0]
