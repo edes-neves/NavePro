@@ -2,9 +2,10 @@
 # Windows (NavePro.exe) e Linux (AppImage) — para que uma mudança feita de um
 # lado não quebre o outro sem ninguém perceber na mão.
 #
-# Os testes são headless (fakes de Tk, código extraído via ast) e usam só a
-# biblioteca padrão: não pedem display nem servidor. O job `lint` roda o ruff
-# (config em pyproject.toml) numa única plataforma — é o único que instala.
+# Os testes são headless (fakes de Tk, código extraído via ast): não pedem
+# display nem servidor, mas importam módulos que usam Pillow, requests e
+# cryptography. O job `lint` roda o ruff (config em pyproject.toml) numa única
+# plataforma.
 
 name: Testes
 
@@ -44,6 +45,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+
+      - name: Instala as dependências de runtime
+        run: python -m pip install --quiet -r requirements.txt
 
       - name: Roda as suítes
         shell: bash

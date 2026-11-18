@@ -45,9 +45,10 @@ def _rodar() -> int:
         if not cond:
             falhas += 1
 
+    base = os.path.abspath("/tmp/base")
     checar("membro seguro dentro da pasta é aceito",
-           tr._membro_local_seguro("/tmp/base", "apresentacoes/a.pptx")
-           == os.path.join("/tmp/base", "apresentacoes", "a.pptx"))
+           tr._membro_local_seguro(base, "apresentacoes/a.pptx")
+           == os.path.join(base, "apresentacoes", "a.pptx"))
     checar("membro com .. é recusado",
            tr._membro_local_seguro(
                "/tmp/base", "apresentacoes/../../etc/passwd") is None)
