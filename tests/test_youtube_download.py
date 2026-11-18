@@ -43,11 +43,16 @@ def _rodar() -> int:
         "garantir_ytdlp": yt._garantir_ytdlp,
         "indice": yt._arquivo_indice_youtube,
         "preservada": yt._pasta_preservada_youtube,
+        "cookies": yt._arquivo_cookies_youtube,
     }
     pasta = tempfile.mkdtemp(prefix="navepro-yt-teste-")
     pasta_indice = tempfile.mkdtemp(prefix="navepro-yt-indice-")
     pasta_preservada = tempfile.mkdtemp(prefix="navepro-yt-preservados-")
+    pasta_cookies = tempfile.mkdtemp(prefix="navepro-yt-cookies-")
     try:
+        # A suíte não pode depender de cookies reais em ~/.navepro.
+        yt._arquivo_cookies_youtube = lambda: os.path.join(
+            pasta_cookies, "youtube_cookies.txt")
         def _sem_rede(*_args, **_kwargs):
             raise RuntimeError("sem rede (teste)")
 
@@ -83,6 +88,22 @@ def _rodar() -> int:
         checar("junta vídeo+áudio em mp4 quando há ffmpeg",
                "--merge-output-format" in cmd and "mp4" in cmd)
         checar("a URL é o último argumento", cmd[-1] == URL)
+        checar("sem cookies exportados não passa --cookies",
+               "--cookies" not in cmd)
+
+        caminho_cookies = yt._arquivo_cookies_youtube()
+        with open(caminho_cookies, "w", encoding="utf-8") as f:
+            f.write("# Netscape HTTP Cookie File\n")
+        cmd_cookies = yt._comando_baixar_youtube(
+            "/fake/yt-dlp", URL, pasta, "video_teste")
+        checar("cookies exportados são usados no download",
+               cmd_cookies[cmd_cookies.index("--cookies") + 1]
+               == caminho_cookies)
+        cmd_info = yt._comando_info_youtube("/fake/yt-dlp", URL)
+        checar("cookies exportados também são usados nos metadados",
+               cmd_info[cmd_info.index("--cookies") + 1]
+               == caminho_cookies)
+        os.remove(caminho_cookies)
 
         yt._eh_flatpak = lambda: True
         cmd_flatpak = yt._comando_baixar_youtube(
@@ -188,6 +209,54 @@ def _rodar() -> int:
                any("--extractor-args" in c and
                    any(a.startswith("youtube:player_client=") for a in c)
                    for c in tentativas[1:]))
+
+        # ── Anti-bot: tenta outro cliente antes de desistir ─────────
+        yt._AJUDA_YTDLP.clear()
+        yt._CACHE_OPCOES_JS.clear()
+        tentativas_bot = []
+
+        def run_bot_depois_ok(comando, **kwargs):
+            if "--help" in comando:
+                return types.SimpleNamespace(
+                    returncode=0, stdout="", stderr="")
+            tentativas_bot.append(comando)
+            if len(tentativas_bot) == 1:
+                return types.SimpleNamespace(
+                    returncode=1, stdout="",
+                    stderr="ERROR: [youtube] abc: Sign in to confirm "
+                           "you’re not a bot. Use --cookies-from-browser.")
+            template = comando[comando.index("-o") + 1]
+            caminho_ok = template.replace("%(ext)s", "mp4")
+            with open(caminho_ok, "wb") as fh:
+                fh.write(b"video")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        yt.subprocess.run = run_bot_depois_ok
+        caminho_bot = yt.baixar_video_youtube(URL)
+        checar("verificação anti-bot é repetida com outro cliente",
+               len(tentativas_bot) == 2 and os.path.isfile(caminho_bot),
+               str(len(tentativas_bot)))
+        checar("a primeira alternativa anti-bot é o cliente android",
+               any("youtube:player_client=android" in c
+                   for c in tentativas_bot[1:]))
+
+        # ── Anti-bot em todos os clientes: ensina a exportar cookies ─
+        yt.subprocess.run = lambda comando, **kw: (
+            types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            if "--help" in comando else
+            types.SimpleNamespace(
+                returncode=1, stdout="",
+                stderr="ERROR: [youtube] abc: Sign in to confirm you’re "
+                       "not a bot. Use --cookies for authentication."))
+        try:
+            yt.baixar_video_youtube(URL)
+        except RuntimeError as exc:
+            checar("erro anti-bot orienta exportar os cookies do navegador",
+                   "anti-bot" in str(exc) and "youtube_cookies.txt" in str(exc),
+                   str(exc))
+        else:
+            checar("erro anti-bot orienta exportar os cookies do navegador",
+                   False)
 
         # ── 403 sem runtime JS: mensagem ensina a instalar ───────────
         yt._AJUDA_YTDLP.clear()
@@ -395,6 +464,7 @@ def _rodar() -> int:
         yt._garantir_ytdlp = original["garantir_ytdlp"]
         yt._arquivo_indice_youtube = original["indice"]
         yt._pasta_preservada_youtube = original["preservada"]
+        yt._arquivo_cookies_youtube = original["cookies"]
         yt._VIDEOS_BAIXADOS.clear()
         yt._CACHE_CARREGADO = False
         yt._AJUDA_YTDLP.clear()
@@ -402,6 +472,7 @@ def _rodar() -> int:
         shutil.rmtree(pasta, ignore_errors=True)
         shutil.rmtree(pasta_indice, ignore_errors=True)
         shutil.rmtree(pasta_preservada, ignore_errors=True)
+        shutil.rmtree(pasta_cookies, ignore_errors=True)
 
     return falhas
 

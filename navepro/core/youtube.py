@@ -487,11 +487,25 @@ def _opcoes_js_youtube(executavel: str) -> list[str]:
     return opcoes
 
 
+def _opcoes_cookies_youtube(executavel: str) -> list[str]:
+    """Usa os cookies exportados, quando existirem, sem exigir configuração."""
+    if not _eh_ytdlp(executavel):
+        return []
+    caminho = _arquivo_cookies_youtube()
+    try:
+        if not os.path.isfile(caminho) or os.path.getsize(caminho) == 0:
+            return []
+    except OSError:
+        return []
+    return ["--cookies", caminho]
+
+
 def _comando_info_youtube(executavel: str, url: str) -> list[str]:
     """Monta o comando que consulta os metadados do vídeo."""
     return [
         *_prefixo_ytdlp(executavel),
         *_opcoes_js_youtube(executavel),
+        *_opcoes_cookies_youtube(executavel),
         "--no-playlist", "--skip-download", "--no-warnings",
         "--dump-single-json", url,
     ]
@@ -597,6 +611,19 @@ def _pasta_preservada_youtube() -> str:
     return os.path.join(DATA_USER_DIR, "youtube_preservados")
 
 
+def _arquivo_cookies_youtube() -> str:
+    """Cookies do navegador (formato Netscape) usados pelo yt-dlp.
+
+    O YouTube passou a exigir login/verificação anti-bot para muitos IPs,
+    mesmo em downloads anônimos. Quem já tem uma conta logada pode exportar
+    os cookies para este arquivo e o NavePro passa a usá-los em todas as
+    consultas e downloads. A variável ``NAVEPRO_YOUTUBE_COOKIES`` permite
+    apontar para outro caminho (útil no Flatpak ou para testes).
+    """
+    return (os.environ.get("NAVEPRO_YOUTUBE_COOKIES")
+            or os.path.join(DATA_USER_DIR, "youtube_cookies.txt"))
+
+
 def _carregar_indice_youtube() -> None:
     """Carrega uma vez o índice persistente para a memória da sessão."""
     global _CACHE_CARREGADO
@@ -688,9 +715,10 @@ def _comando_baixar_youtube(executavel: str, url: str, pasta: str,
 
     O nome de saída é único por download; depois o arquivo é localizado pelo
     prefixo (a extensão pode ser mp4, mkv ou webm, conforme o formato).
-    `cliente_youtube` força o cliente do extrator (ex.: ``tv,web_safari``) e
-    só é usado nas novas tentativas depois de um 403. `com_progresso` emite
-    linhas ``NAVEPRO ...``/``NPINFO ...`` em vez de suprimir a barra.
+    `cliente_youtube` força o cliente do extrator (ex.: ``android``) e só é
+    usado nas novas tentativas depois de um 403 ou de uma verificação
+    anti-bot. `com_progresso` emite linhas ``NAVEPRO ...``/``NPINFO ...`` em
+    vez de suprimir a barra.
     """
     prefixo = _prefixo_ytdlp(executavel)
     eh_ytdlp = _eh_ytdlp(executavel)
@@ -740,6 +768,7 @@ def _comando_baixar_youtube(executavel: str, url: str, pasta: str,
     return [
         *prefixo,
         *_opcoes_js_youtube(executavel),
+        *_opcoes_cookies_youtube(executavel),
         *opcoes_cliente,
         *opcoes_velocidade,
         *opcoes_progresso,
@@ -754,16 +783,40 @@ def _comando_baixar_youtube(executavel: str, url: str, pasta: str,
     ]
 
 
+def _erro_bot_youtube(texto: str) -> bool:
+    """O YouTube pediu login/verificação anti-bot em vez de entregar o vídeo."""
+    texto = (texto or "").lower()
+    return ("not a bot" in texto
+            or "confirm you’re" in texto
+            or "confirm you're" in texto
+            or "sign in to confirm" in texto)
+
+
 def _precisa_retentar(resultado: subprocess.CompletedProcess) -> bool:
     """Erros que podem sumir ao trocar o cliente do extrator do YouTube."""
     texto = (resultado.stderr or resultado.stdout or "").lower()
     return ("403" in texto or "forbidden" in texto
-            or "requested format is not available" in texto)
+            or "requested format is not available" in texto
+            or "page needs to be reloaded" in texto
+            or _erro_bot_youtube(texto))
 
 
 def _dica_erro_youtube(resultado: subprocess.CompletedProcess,
                        executavel: str) -> str:
     texto = (resultado.stderr or resultado.stdout or "").lower()
+    if _erro_bot_youtube(texto):
+        caminho = _arquivo_cookies_youtube()
+        if os.path.isfile(caminho):
+            return (
+                f"\n\nO YouTube pediu confirmação anti-bot e os cookies em "
+                f"'{caminho}' não resolveram. Exporte-os novamente do "
+                "navegador logado no YouTube (formato Netscape) e tente de "
+                "novo.")
+        return (
+            "\n\nO YouTube pediu confirmação anti-bot (comum após vários "
+            "downloads anônimos). Exporte os cookies do navegador logado no "
+            f"YouTube para '{caminho}' (formato Netscape, por exemplo com a "
+            "extensão 'Get cookies.txt LOCALLY') e baixe novamente.")
     if "403" in texto or "forbidden" in texto:
         return _dica_erro_403(executavel)
     if "requested format is not available" in texto:
@@ -988,14 +1041,15 @@ def baixar_video_youtube(url: str, timeout: float | None = 1800,
     base = "video_" + uuid.uuid4().hex
 
     # Primeira tentativa com o cliente padrão do yt-dlp. Se o YouTube
-    # responder 403, tenta clientes alternativos: o yt-dlp de algumas
-    # distros (ex.: Ubuntu 26.04, 2026.03.17) ainda usa o "android_vr",
-    # cujos formatos passaram a ser recusados pelo YouTube; o yt-dlp
-    # oficial removeu esse cliente. O "tv,web_safari" é a alternativa
-    # atual. O yt-dlp antigo do Ubuntu 24.04 funciona no primeiro try.
+    # responder 403 ou pedir verificação anti-bot, tenta clientes
+    # alternativos. O "android" costuma escapar do challenge que o cliente
+    # web recebe em IPs marcados; "default,-android_vr" resolve o yt-dlp de
+    # algumas distros (ex.: Ubuntu 26.04, 2026.03.17) cujo "android_vr" foi
+    # recusado; "tv,web_safari" é outra alternativa web. O yt-dlp antigo do
+    # Ubuntu 24.04 funciona no primeiro try.
     clientes = [""]
     if _eh_ytdlp(executavel):
-        clientes += ["default,-android_vr", "tv,web_safari"]
+        clientes += ["android", "default,-android_vr", "tv,web_safari"]
 
     resultado = None
     primeiro_resultado = None
@@ -1020,9 +1074,12 @@ def baixar_video_youtube(url: str, timeout: float | None = 1800,
             primeiro_resultado = resultado
         if not _precisa_retentar(resultado) or indice + 1 >= len(clientes):
             break
-        log.info("↩️ YouTube recusou o cliente padrão; "
-                 "tentando novamente com o cliente %s.",
-                 clientes[indice + 1])
+        if _erro_bot_youtube(resultado.stderr or resultado.stdout or ""):
+            log.info("🤖 YouTube pediu verificação anti-bot; tentando "
+                     "novamente com o cliente %s.", clientes[indice + 1])
+        else:
+            log.info("↩️ YouTube recusou o cliente padrão; tentando "
+                     "novamente com o cliente %s.", clientes[indice + 1])
         if ao_progresso is not None:
             ao_progresso(0.0, "Tentando novamente com outro cliente...")
 
