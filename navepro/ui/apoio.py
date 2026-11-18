@@ -251,9 +251,9 @@ def _criar_faixa_secao(parent, topo: bool = True):
     """Faixa cinza no topo/base de uma seção do painel do operador.
 
     No tema ESCURO a faixa assume a cor do cartão e fica invisível (o visual
-    escuro permanece idêntico). No tema CLARO a faixa fica num cinza carvão,
-    delimitando as seções. A cor é aplicada em ``_aplicar_tema_widget`` a partir
-    do atributo ``_navepro_faixa_secao``.
+    escuro permanece idêntico). No tema CLARO a faixa vira uma linha azul fina
+    (1 px), delimitando as seções. A cor/altura são aplicadas em
+    ``_aplicar_tema_widget`` a partir do atributo ``_navepro_faixa_secao``.
     """
     faixa = tk.Frame(parent, bg='#161b22', height=6)
     faixa._navepro_faixa_secao = True

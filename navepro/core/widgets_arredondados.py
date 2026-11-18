@@ -17,6 +17,13 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import font as tkfont
 
+from navepro.core.tema import (
+    _cor_item_canvas,
+    aplicar_tema_janela,
+    tema_ativo,
+)
+from navepro.core.util_tk import _centralizar_sobre
+
 _COR_TEXTO_PADRAO = "#c9d1d9"
 _COR_TEXTO_DESABILITADO = "#8b949e"
 _BG_PADRAO = "#0d1117"
@@ -572,6 +579,177 @@ class CampoArredondado(tk.Frame):
         raise AttributeError(name)
 
 
+_OPCOES_COR_CANVAS: tuple[str, ...] = (
+    "fill", "outline", "activefill", "activeoutline",
+    "disabledfill", "disabledoutline",
+    "foreground", "background", "selectbackground", "selectforeground",
+)
+
+
+class CanvasTematico(tk.Canvas):
+    """Canvas que converte as cores dos itens para o tema ativo.
+
+    Itens de Canvas (retângulos, textos etc.) não são opções de widget e por
+    isso passavam ilesos pela recoloração de tema — a janela da Bíblia em
+    grade ficava clara com o conteúdo ainda escuro. Esta subclasse guarda as
+    cores escuras originais de cada item e aplica ``_cor_item_canvas`` nelas,
+    tanto no desenho quanto na troca de tema.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self._navepro_cores_origem: dict[str, dict[str, str]] = {}
+        super().__init__(*args, **kwargs)
+
+    def _navepro_mapear(self, opcoes: dict) -> dict:
+        if (getattr(self, "_navepro_tema_canvas_ignorar", False)
+                or tema_ativo() != "claro"):
+            return opcoes
+        for opcao in _OPCOES_COR_CANVAS:
+            if opcao in opcoes:
+                opcoes[opcao] = _cor_item_canvas(opcoes[opcao])
+        return opcoes
+
+    def _navepro_guardar(self, chave, opcoes: dict) -> None:
+        if getattr(self, "_navepro_tema_canvas_ignorar", False):
+            return
+        origem = self._navepro_cores_origem.setdefault(str(chave), {})
+        for opcao in _OPCOES_COR_CANVAS:
+            if opcao in opcoes and opcoes[opcao]:
+                origem[opcao] = str(opcoes[opcao])
+
+    def _navepro_criar(self, criar, *args, **kwargs):
+        originais = {
+            opcao: str(kwargs[opcao])
+            for opcao in _OPCOES_COR_CANVAS
+            if kwargs.get(opcao)
+        }
+        self._navepro_mapear(kwargs)
+        item = criar(*args, **kwargs)
+        if originais:
+            self._navepro_cores_origem[str(item)] = originais
+        return item
+
+    def create_arc(self, *args, **kwargs):
+        return self._navepro_criar(super().create_arc, *args, **kwargs)
+
+    def create_bitmap(self, *args, **kwargs):
+        return self._navepro_criar(super().create_bitmap, *args, **kwargs)
+
+    def create_line(self, *args, **kwargs):
+        return self._navepro_criar(super().create_line, *args, **kwargs)
+
+    def create_oval(self, *args, **kwargs):
+        return self._navepro_criar(super().create_oval, *args, **kwargs)
+
+    def create_polygon(self, *args, **kwargs):
+        return self._navepro_criar(super().create_polygon, *args, **kwargs)
+
+    def create_rectangle(self, *args, **kwargs):
+        return self._navepro_criar(super().create_rectangle, *args, **kwargs)
+
+    def create_text(self, *args, **kwargs):
+        return self._navepro_criar(super().create_text, *args, **kwargs)
+
+    def itemconfigure(self, tagOrId, cnf=None, **kwargs):
+        if cnf is None and not kwargs:
+            return super().itemconfigure(tagOrId)
+        if isinstance(cnf, str):
+            return super().itemconfigure(tagOrId, cnf, **kwargs)
+        opcoes = dict(cnf) if isinstance(cnf, dict) else {}
+        opcoes.update(kwargs)
+        self._navepro_guardar(tagOrId, opcoes)
+        self._navepro_mapear(opcoes)
+        if cnf is None:
+            return super().itemconfigure(tagOrId, **opcoes)
+        return super().itemconfigure(tagOrId, opcoes)
+
+    itemconfig = itemconfigure
+
+    def _navepro_aplicar_tema_canvas(self, tema: str) -> None:
+        """Recolore os itens existentes (usado ao alternar o tema)."""
+        if getattr(self, "_navepro_tema_canvas_ignorar", False):
+            return
+        claro = tema == "claro"
+        for chave, origem in list(self._navepro_cores_origem.items()):
+            cfg = {
+                opcao: (_cor_item_canvas(valor, "claro") if claro else valor)
+                for opcao, valor in origem.items()
+            }
+            if not cfg:
+                continue
+            try:
+                super().itemconfigure(chave, **cfg)
+            except tk.TclError:
+                self._navepro_cores_origem.pop(chave, None)
+
+
+class ToplevelTematico(tk.Toplevel):
+    """Toplevel que recebe o tema claro antes de ser pintado.
+
+    As janelas são construídas com as cores escuras fixas e só eram
+    recoloridas pela varredura periódica — por isso piscavam escuras ao
+    abrir. O callback ``after(0)`` roda depois que a janela terminou de ser
+    montada, mas antes do Tk mapeá-la/pintá-la, então o usuário não vê a
+    versão escura.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._navepro_tema_inicial_pendente = tema_ativo() == "claro"
+        if self._navepro_tema_inicial_pendente:
+            # Fica oculta até o construtor terminar: alguns abridores chamam
+            # update_idletasks() no meio da montagem, o que mapearia a janela
+            # ainda escura. O after(0) roda depois do construtor, mas antes do
+            # próximo desenho.
+            try:
+                self.withdraw()
+                self.after(0, self._navepro_aplicar_tema_inicial)
+            except tk.TclError:
+                self._navepro_tema_inicial_pendente = False
+
+    def _navepro_aplicar_tema_inicial(self) -> None:
+        if not self._navepro_tema_inicial_pendente:
+            return
+        self._navepro_tema_inicial_pendente = False
+        try:
+            if self.winfo_exists():
+                aplicar_tema_janela(self)
+        except tk.TclError:
+            pass
+        # A janela estava oculta durante a montagem: centraliza de novo com
+        # o tamanho final (o primeiro _centralizar_sobre rodou cedo demais).
+        info = getattr(self, '_navepro_centralizar', None)
+        if info:
+            _centralizar_sobre(self, info[0], area=info[1])
+        try:
+            super().deiconify()
+        except tk.TclError:
+            pass
+
+    def geometry(self, newGeometry=None):
+        if newGeometry is not None:
+            try:
+                tamanho = str(newGeometry).split('+', 1)[0].split('-', 1)[0]
+                if 'x' in tamanho:
+                    largura, altura = tamanho.split('x', 1)
+                    self._navepro_geometria_pedida = (
+                        int(largura), int(altura))
+            except (TypeError, ValueError):
+                pass
+        return super().geometry(newGeometry)
+
+    wm_geometry = geometry
+
+    def deiconify(self):
+        # Quem chama deiconify() antes do after(0) (ex.: diálogo de download)
+        # também recebe a janela já clara, nunca a versão escura.
+        if getattr(self, "_navepro_tema_inicial_pendente", False):
+            self._navepro_aplicar_tema_inicial()
+        return super().deiconify()
+
+    wm_deiconify = deiconify
+
+
 class TkArredondado:
     """Fachada do módulo ``tkinter`` que troca ``Button``/``Entry`` por
     versões arredondadas, repassando todo o resto para o módulo real."""
@@ -580,6 +758,8 @@ class TkArredondado:
         self._modulo = modulo
         self.Button = BotaoArredondado
         self.Entry = CampoArredondado
+        self.Canvas = CanvasTematico
+        self.Toplevel = ToplevelTematico
 
     def __getattr__(self, name):
         return getattr(self._modulo, name)

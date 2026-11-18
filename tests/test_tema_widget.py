@@ -178,15 +178,17 @@ class _FakeFaixa:
 _faixa = _FakeFaixa()
 _host.tema = "claro"
 _APLICAR(_host, _faixa)
-check("faixa de seção fica azul (da temperatura) no tema claro",
-      _faixa.cfg.get("bg") == _cor_clara("#58a6ff"), str(_faixa.cfg))
+check("faixa de seção fica azul e fininha no tema claro",
+      _faixa.cfg.get("bg") == _cor_clara("#58a6ff")
+      and _faixa.cfg.get("height") == 1, str(_faixa.cfg))
 
 _faixa2 = _FakeFaixa()
 _host.tema = "escuro"
 _APLICAR(_host, _faixa2)
 check(
-    "faixa de seção fica invisível (cor do cartão) no tema escuro",
-    _faixa2.cfg.get("bg") == "#161b22",
+    "faixa de seção fica invisível (cor do cartão, altura original) no escuro",
+    _faixa2.cfg.get("bg") == "#161b22"
+    and _faixa2.cfg.get("height") == 6,
     str(_faixa2.cfg),
 )
 
@@ -263,6 +265,36 @@ check("garantir: Cidade #8b949e no claro",
       _h2.entry_cidade.cfg.get("bg") == _cor_clara('#eaeef2'), str(_h2.entry_cidade.cfg))
 check("garantir: busca #8b949e no claro",
       _h2.entry_busca.cfg.get("bg") == _cor_clara('#21262d'), str(_h2.entry_busca.cfg))
+
+# --- Canvas com desenho próprio recebe o tema à parte ---
+class _FakeCanvas:
+    def __init__(self):
+        self.temas = []
+
+    def winfo_exists(self):
+        return 1
+
+    def winfo_class(self):
+        return "Canvas"
+
+    def keys(self):
+        return []
+
+    def configure(self, **_kw):
+        pass
+
+    def _navepro_aplicar_tema_canvas(self, tema):
+        self.temas.append(tema)
+
+
+_canvas = _FakeCanvas()
+_host.tema = "claro"
+_APLICAR(_host, _canvas)
+check("Canvas recebe o tema claro", _canvas.temas == ["claro"], str(_canvas.temas))
+_host.tema = "escuro"
+_APLICAR(_host, _canvas)
+check("Canvas recebe o tema escuro", _canvas.temas == ["claro", "escuro"],
+      str(_canvas.temas))
 
 # --- Subárvore com tema próprio (ex.: Sorteio) fica fora do passe ---
 _CORPO_ARVORE = textwrap.dedent(

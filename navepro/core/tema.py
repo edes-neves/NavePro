@@ -13,6 +13,46 @@ existente. As cores de projeção/relógio do TELÃO NÃO são tocadas.
 # destaquem.
 COR_AREA_CONTROLES_CLARA: str = '#c2cad3'
 
+# Tema ativo no processo. Os widgets que desenham por conta própria (itens de
+# Canvas, por exemplo) consultam este valor para converter as cores escuras
+# em tempo de desenho, sem precisar de uma nova passagem pela árvore.
+_TEMA_ATIVO: str = 'escuro'
+
+
+def definir_tema_ativo(tema: str | None) -> None:
+    """Registra o tema atual para os desenhos que não são opções de widget."""
+    global _TEMA_ATIVO
+    _TEMA_ATIVO = 'claro' if tema == 'claro' else 'escuro'
+
+
+def tema_ativo() -> str:
+    """Tema registrado no momento (``claro`` ou ``escuro``)."""
+    return _TEMA_ATIVO
+
+
+# Função da interface que aplica o tema a uma janela recém-criada. Fica aqui
+# (e não em tema_painel) para que o Toplevel da fachada ``tk`` possa avisar a
+# interface sem criar import circular.
+_APLICADOR_JANELA = None
+
+
+def definir_aplicador_janela(funcao) -> None:
+    """Registra quem aplica o tema às janelas novas (uso interno)."""
+    global _APLICADOR_JANELA
+    _APLICADOR_JANELA = funcao
+
+
+def aplicar_tema_janela(janela) -> bool:
+    """Aplica o tema à janela enquanto ela ainda não foi pintada."""
+    funcao = _APLICADOR_JANELA
+    if funcao is None:
+        return False
+    try:
+        funcao(janela)
+    except Exception:
+        return False
+    return True
+
 # Mapa: cor ESCURA atual -> cor equivalente no tema CLARO.
 MAPA_COR_CLARA: dict[str, str] = {
     # Superfícies: mesma hierarquia do tema ESCURO (janela < cartões <
@@ -24,7 +64,10 @@ MAPA_COR_CLARA: dict[str, str] = {
     '#1c2128': '#b5c0ca',   # linha alternada (par) da lista
     '#21262d': '#bcc6d0',   # entradas/botões neutros/lista (mais claro)
     '#30363d': '#93a0ac',   # bordas/separadores/hover (mais escuro que a base)
+    '#484f58': '#7d8a96',   # hover de botões neutros
     '#eaeef2': '#bcc6d0',   # campos Cidade/UF (fundo claro fixo no escuro)
+    '#2d1114': '#ffebe9',   # faixa do modo demonstração
+    '#5c4304': '#f6e3a1',   # caixa de texto da prévia de anúncio
     # Roxos (accent)
     '#6e40c9': '#8250df',
     '#8b5cf6': '#8250df',
@@ -35,6 +78,11 @@ MAPA_COR_CLARA: dict[str, str] = {
     '#238636': '#1a7f37',
     '#2ea043': '#2ea043',
     '#3fb950': '#2ea043',
+    '#2f6f47': '#1a7f37',
+    '#3f8f57': '#2ea043',
+    # Âmbares (pausa/atenção)
+    '#9e6a03': '#9a6700',
+    '#c77b04': '#bf8700',
     # Azuis (info)
     '#1f6feb': '#0969da',
     '#388bfd': '#388bfd',
@@ -45,6 +93,7 @@ MAPA_COR_CLARA: dict[str, str] = {
     # Textos fixos
     '#c9d1d9': '#1f2328',   # texto normal
     '#8b949e': '#4b5563',   # texto secundário/muted
+    '#f0f6fc': '#1f2328',   # texto claro da prévia de anúncio
 }
 
 _MAPA_COR_CLARA_UP: dict[str, str] = {
@@ -57,6 +106,7 @@ _CORES_FORTES_CLARO: frozenset = frozenset({
     '#1a7f37', '#2ea043', '#238636',                                    # verdes
     '#0969da', '#388bfd', '#1f6feb', '#58a6ff',                        # azuis
     '#cf222e', '#da3633', '#f85149',                                   # vermelhos
+    '#9a6700', '#bf8700',                                              # âmbares
 })
 
 # Fundos claros (texto branco fica ilegível em cima). As superfícies do tema
@@ -66,6 +116,7 @@ _CORES_FORTES_CLARO: frozenset = frozenset({
 _FUNDOS_CLAROS: frozenset = frozenset({
     '#ffffff', '#f6f8fa', '#eaeef2', '#8b949e', '#6e7681',
     '#aeb9c4', '#b5c0ca', '#bcc6d0', '#93a0ac', '#c2cad3',
+    '#7d8a96', '#ffebe9', '#f6e3a1',
 })
 
 # Opções de cor do Tk que o tema pode recolorir por widget
@@ -107,3 +158,17 @@ def _cor_clara(cor: str | None, bg_final: str | None = None) -> str:
             return '#1f2328'
         return '#ffffff'
     return cor
+
+
+def _cor_item_canvas(cor: str | None, tema: str | None = None) -> str | None:
+    """Converte a cor de um item de Canvas para o tema pedido.
+
+    No tema escuro a cor original é devolvida intacta; no claro passa pelo
+    mesmo mapa das cores dos widgets. Valores vazios (``None``/``""``)
+    continuam vazios, pois ``Canvas.create_*`` os usa como "sem cor".
+    """
+    if not cor:
+        return cor
+    if (tema or _TEMA_ATIVO) != 'claro':
+        return cor
+    return _cor_clara(cor)

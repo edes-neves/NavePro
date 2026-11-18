@@ -38,8 +38,15 @@ def _centralizar_sobre(janela, pai=None, area=None) -> None:
         w = janela.winfo_width()
         h = janela.winfo_height()
         if w <= 1 or h <= 1:
-            w = max(w, janela.winfo_reqwidth())
-            h = max(h, janela.winfo_reqheight())
+            # Toplevel oculta (tema claro) ainda não tem tamanho real; usa o
+            # tamanho pedido explicitamente por geometry("LxA") antes de cair
+            # no tamanho requisitado pelos filhos.
+            pedido = getattr(janela, '_navepro_geometria_pedida', None)
+            if pedido:
+                w, h = pedido
+            else:
+                w = max(w, janela.winfo_reqwidth())
+                h = max(h, janela.winfo_reqheight())
         if area is not None:
             px, py, pw, ph = (int(v) for v in area)
         elif pai is not None:
@@ -62,6 +69,12 @@ def _centralizar_sobre(janela, pai=None, area=None) -> None:
         x = px + max(0, (pw - w) // 2)
         y = py + max(0, (ph - h) // 2)
         janela.geometry(f"+{x}+{y}")
+        # Guarda como centralizar de novo depois que todos os widgets forem
+        # criados (a janela oculta no tema claro só tem o tamanho final então).
+        try:
+            janela._navepro_centralizar = (pai, area)
+        except Exception:
+            pass
     except (tk.TclError, TypeError, ValueError):
         pass
 

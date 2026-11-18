@@ -27,6 +27,7 @@ from license_manager import (
 from navepro.core.links import abrir_url_externa
 from navepro.core.log import get_logger
 from navepro.core.util_tk import _centralizar_sobre
+from navepro.core.widgets_arredondados import ToplevelTematico
 
 log = get_logger("licenca")
 
@@ -34,7 +35,7 @@ log = get_logger("licenca")
 class LicencaMixin:
     def abrir_licenca(self) -> None:
         """Abre a janela de ativação: status, ID da máquina e importação."""
-        janela = tk.Toplevel(self.root)
+        janela = ToplevelTematico(self.root)
         janela.title("🔑 Ativar Licença / Ver ID")
         janela.configure(bg='#0d1117')
         janela.resizable(False, False)

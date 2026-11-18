@@ -186,6 +186,21 @@ _centralizar_sobre(d, _FakePai())
 check("sem área continua centralizando sobre o pai",
       d.geo == "+260+220", d.geo)
 
+# Janela oculta no tema claro: winfo_width() ainda é 1, mas o tamanho pedido
+# por geometry("LxA") precisa ser usado na centralização (senão ela abre
+# deslocada para a direita/baixo).
+class _FakeOculta(_FakeDialogo):
+    _navepro_geometria_pedida = (680, 980)
+
+
+d = _FakeOculta(1, 1)
+_centralizar_sobre(d, area=(0, 0, 1920, 1080))
+check("janela oculta usa o tamanho pedido ao centralizar",
+      d.geo == "+620+50", d.geo)
+check("centralização guarda os dados para refazer depois que montar",
+      getattr(d, '_navepro_centralizar', None) == (None, (0, 0, 1920, 1080)),
+      str(getattr(d, '_navepro_centralizar', None)))
+
 
 # ── 2) Janela principal ──
 check(

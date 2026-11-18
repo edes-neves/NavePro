@@ -21,6 +21,8 @@ from navepro.core.tema import (
     _OPCOES_TEXTO,
     COR_AREA_CONTROLES_CLARA,
     _cor_clara,
+    definir_aplicador_janela,
+    definir_tema_ativo,
 )
 from navepro.core.widgets_arredondados import TkArredondado
 
@@ -28,6 +30,30 @@ log = get_logger("tema_painel")
 
 # Botões e campos desenham cantos arredondados (fachada do tkinter).
 tk = TkArredondado(tk)
+
+
+def _toplevels_do_tema(base) -> list:
+    """Lista os Toplevels descendentes de `base`, inclusive os aninhados.
+
+    Janelas abertas a partir de outra janela (ex.: editor de anúncio, prévia
+    do slide) não são filhas diretas do root; sem esta varredura recursiva
+    elas ficavam escuras no tema claro.
+    """
+    encontrados = []
+    try:
+        filhos = base.winfo_children()
+    except tk.TclError:
+        return encontrados
+    for filho in filhos:
+        if getattr(filho, '_navepro_tema_proprio', False):
+            continue
+        try:
+            if filho.winfo_class() == 'Toplevel':
+                encontrados.append(filho)
+        except tk.TclError:
+            continue
+        encontrados.extend(_toplevels_do_tema(filho))
+    return encontrados
 
 
 class TemaPainelMixin:
@@ -46,8 +72,11 @@ class TemaPainelMixin:
         self._aplicar_tema()
     def _aplicar_tema(self) -> None:
         """Aplica o tema ativo (claro/escuro) a toda a interface."""
+        definir_tema_ativo(self.tema)
+        definir_aplicador_janela(self._aplicar_tema_janela_nova)
         self._aplicar_tema_ttk()
         self._aplicar_tema_menu()
+        self._aplicar_tema_listas()
         try:
             # No claro, a captura das cores escuras de origem precisa rodar
             # ANTES de qualquer pintura: alguns pais (CampoArredondado)
@@ -124,6 +153,26 @@ class TemaPainelMixin:
                     "Vertical.TScrollbar",
                     background=_cor_clara('#21262d'), troughcolor=_cor_clara('#161b22'),
                     arrowcolor='#1f2328')
+                style.configure(
+                    "Medidor.TNotebook",
+                    background=_cor_clara('#0d1117'), borderwidth=0,
+                    tabmargins=[4, 4, 4, 0])
+                style.configure(
+                    "Medidor.TNotebook.Tab",
+                    background=_cor_clara('#21262d'), foreground='#1f2328',
+                    padding=[12, 7], font=("Arial", 11, "bold"))
+                style.map("Medidor.TNotebook.Tab",
+                          background=[('selected', '#8250df')],
+                          foreground=[('selected', '#ffffff')])
+                style.configure(
+                    "Medidor.TCombobox",
+                    fieldbackground=_cor_clara('#21262d'),
+                    background=_cor_clara('#21262d'), foreground='#1f2328',
+                    arrowcolor='#1f2328', font=("Arial", 10))
+                style.map(
+                    "Medidor.TCombobox",
+                    fieldbackground=[('readonly', _cor_clara('#21262d'))],
+                    foreground=[('readonly', '#1f2328')])
             else:
                 style.configure(
                     "Treeview",
@@ -140,6 +189,24 @@ class TemaPainelMixin:
                     "Vertical.TScrollbar",
                     background="#21262d", troughcolor="#161b22",
                     arrowcolor="#f0c040")
+                style.configure(
+                    "Medidor.TNotebook", background='#0d1117',
+                    borderwidth=0, tabmargins=[4, 4, 4, 0])
+                style.configure(
+                    "Medidor.TNotebook.Tab", background='#21262d',
+                    foreground='#c9d1d9', padding=[12, 7],
+                    font=("Arial", 11, "bold"))
+                style.map("Medidor.TNotebook.Tab",
+                          background=[('selected', '#6e40c9')],
+                          foreground=[('selected', '#ffffff')])
+                style.configure(
+                    "Medidor.TCombobox", fieldbackground='#21262d',
+                    background='#21262d', foreground='#c9d1d9',
+                    arrowcolor='#f0c040', font=("Arial", 10))
+                style.map(
+                    "Medidor.TCombobox",
+                    fieldbackground=[('readonly', '#21262d')],
+                    foreground=[('readonly', '#c9d1d9')])
         except (Exception, tk.TclError):
             pass
     def _aplicar_tema_menu(self) -> None:
@@ -166,6 +233,38 @@ class TemaPainelMixin:
                 menu.configure(**(menubar_cfg if i == 0 else menu_cfg))
             except (Exception, tk.TclError):
                 pass
+    def _aplicar_tema_listas(self) -> None:
+        """Recolore a lista suspensa dos Combobox (widget Tk, não ttk)."""
+        claro = self.tema == 'claro'
+        try:
+            self.root.option_add(
+                '*TCombobox*Listbox.background',
+                _cor_clara('#21262d') if claro else '#21262d')
+            self.root.option_add(
+                '*TCombobox*Listbox.foreground',
+                '#1f2328' if claro else '#c9d1d9')
+        except tk.TclError:
+            pass
+    def _aplicar_tema_janela_nova(self, janela) -> None:
+        """Recolore uma janela recém-montada antes do primeiro desenho.
+
+        Chamada pelo ``ToplevelTematico`` via ``after(0)``: nesse momento a
+        janela já tem todos os widgets, mas o Tk ainda não a mapeou, então
+        não existe a piscada escura.
+        """
+        if self.tema != 'claro':
+            return
+        try:
+            if not janela.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        if getattr(janela, '_navepro_tema_proprio', False):
+            return
+        self._aplicar_tema_ttk()
+        self._aplicar_tema_listas()
+        self._recolorir_arvore(janela, capturar=True)
+        self._recolorir_arvore(janela)
     def _recolorir_arvore(self, base, capturar: bool = False) -> None:
         """Aplica a recoloração de tema a `base` e a todos os seus filhos.
 
@@ -203,10 +302,8 @@ class TemaPainelMixin:
                 vistas = self._toplevels_tema_vistas = set()
             atuais = set()
             novas = []
-            for filho in self.root.winfo_children():
+            for filho in _toplevels_do_tema(self.root):
                 try:
-                    if filho.winfo_class() != 'Toplevel':
-                        continue
                     chave = str(filho)
                     atuais.add(chave)
                     if chave not in vistas:
@@ -250,15 +347,25 @@ class TemaPainelMixin:
             # o cinza claro da lista não "escorregar" a cada visita.
             if getattr(widget, '_navepro_tema_ignorar', False):
                 return
+            # Canvas com desenho próprio (Bíblia em grade, prévia de anúncio):
+            # os itens não são opções de widget, então são tratados à parte.
+            aplicar_canvas = getattr(
+                widget, '_navepro_aplicar_tema_canvas', None)
+            if callable(aplicar_canvas) and not capturar:
+                try:
+                    aplicar_canvas(self.tema)
+                except tk.TclError:
+                    pass
             # Faixas que delimitam as seções do painel: azul da temperatura no
             # claro; igual ao cartão no escuro, isto é, invisível.
             if getattr(widget, '_navepro_faixa_secao', False):
                 if not capturar:
                     try:
-                        widget.configure(
-                            bg=(_cor_clara('#58a6ff')
-                                if self.tema == 'claro' else '#161b22')
-                        )
+                        if self.tema == 'claro':
+                            widget.configure(
+                                bg=_cor_clara('#58a6ff'), height=1)
+                        else:
+                            widget.configure(bg='#161b22', height=6)
                     except tk.TclError:
                         pass
                 return
