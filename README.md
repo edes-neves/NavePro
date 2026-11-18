@@ -555,6 +555,19 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 
 ## 📜 Histórico recente
 
+### 2.4.2
+
+- **YouTube — verificação anti-bot**: quando o YouTube pede “confirme que você
+  não é um robô”, o NavePro tenta novamente com o cliente `android` e, se
+  necessário, usa os cookies exportados em `~/.navepro/youtube_cookies.txt`.
+  A mensagem de erro agora explica como exportar os cookies do navegador.
+- **YouTube — progresso e vídeos mantidos**: a barra considera vídeo + áudio
+  separadamente (sem chegar a 100% antes do fim) e os vídeos marcados para
+  manter são preservados entre sessões em `~/.navepro/youtube_preservados`.
+- **Tema claro**: janelas sem piscar, centralizadas e com faixas de seção finas.
+- **Ordem de Serviço**: o campo **Programação:** mostra apenas o nome digitado,
+  sem o número automático à frente.
+
 ### 2.4.1
 
 - **YouTube — Ubuntu 26.04**: corrige o erro `403`/`Requested format is not

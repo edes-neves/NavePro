@@ -35,6 +35,16 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.4.2" date="2026-11-18">
+      <description>
+        <ul>
+          <li>YouTube: quando o site pede verificação anti-bot, tenta novamente com outro cliente e usa cookies exportados em ~/.navepro/youtube_cookies.txt</li>
+          <li>YouTube: barra de progresso por fase (vídeo + áudio) e vídeos marcados para manter preservados entre sessões</li>
+          <li>Tema claro: janelas sem piscar, centralizadas e com faixas de seção finas</li>
+          <li>Ordem de Serviço: o campo Programação mostra apenas o nome digitado, sem número automático</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.4.1" date="2026-11-17">
       <description>
         <ul>
