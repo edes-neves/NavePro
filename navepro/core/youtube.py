@@ -72,6 +72,8 @@ _YTDLP_VALIDADE_DIAS = 120
 _MARCA_TOTAL = "NPINFO "
 _RE_PROGRESSO = re.compile(
     r"^NAVEPRO (\S+)\|(\S+)\|(\S+)\|(\S+)\|(\S+)\s*$")
+_RE_INFO_FORMATOS = re.compile(
+    r"downloading\s+.*?format\(s\):\s*(.+)$", re.IGNORECASE)
 
 
 def _normalizar_url_youtube(url: str) -> str:
@@ -765,10 +767,14 @@ def _executar_ytdlp_stream(comando: list[str], timeout: float | None,
                      name="navepro-ytdlp-saida").start()
 
     limite = time.monotonic() + timeout if timeout else None
-    base_bytes = 0.0
-    ultimo_total = 0.0
-    ultimo_baixado = 0.0
-    total_esperado = 0.0
+    # O yt-dlp baixa vídeo e áudio em arquivos separados quando o formato é
+    # mesclado (137+140, por exemplo). Dividimos a barra pelo número de
+    # arquivos/fases: o vídeo preenche até 50% e o áudio de 50% a 100%. Sem
+    # isso, o tamanho estimado (filesize_approx) podia ser menor que o real e
+    # a barra chegava a 100% antes do áudio terminar.
+    fases = 1
+    fase_idx = 0
+    iniciou_download = False
     ultimo_pct = -1.0
     log_linhas: list[str] = []
 
@@ -790,8 +796,12 @@ def _executar_ytdlp_stream(comando: list[str], timeout: float | None,
         if not linha:
             continue
         if linha.startswith(_MARCA_TOTAL):
-            total_esperado = _float_ou_zero(
-                linha[len(_MARCA_TOTAL):].strip())
+            continue
+        formatos = _RE_INFO_FORMATOS.search(linha)
+        if formatos:
+            lista = formatos.group(1)
+            fases = max(1, lista.count("+") + lista.count(",") + 1)
+            log_linhas.append(linha)
             continue
         encontrado = _RE_PROGRESSO.match(linha)
         if encontrado:
@@ -799,19 +809,19 @@ def _executar_ytdlp_stream(comando: list[str], timeout: float | None,
                 encontrado.groups()
             baixado = _float_ou_zero(baixado_s)
             total = _float_ou_zero(total_s)
-            if baixado < ultimo_baixado and ultimo_total > 0:
-                base_bytes += ultimo_total
-            ultimo_baixado = baixado
-            ultimo_total = total
-            if total_esperado > 0:
-                pct = (base_bytes + baixado) * 100.0 / total_esperado
-            elif total > 0:
-                pct = baixado * 100.0 / total
+            if total > 0:
+                fracao = max(0.0, min(1.0, baixado / total))
             else:
-                pct = _float_ou_zero(pct_str)
+                fracao = _float_ou_zero(pct_str)
+                if fracao > 1.0:
+                    fracao /= 100.0
+                fracao = max(0.0, min(1.0, fracao))
+            pct = (fase_idx + fracao) / max(1, fases) * 100.0
             pct = max(0.0, min(100.0, pct))
             # Evita encher a fila da interface em downloads muito rápidos.
-            if pct - ultimo_pct < 1.0 and pct < 100.0:
+            # Uma queda de porcentagem (nova fase) é emitida na hora.
+            if (pct >= ultimo_pct and pct - ultimo_pct < 1.0
+                    and pct < 100.0):
                 continue
             ultimo_pct = pct
             partes = []
@@ -825,10 +835,11 @@ def _executar_ytdlp_stream(comando: list[str], timeout: float | None,
             ao_progresso(pct, " · ".join(partes) or "Baixando...")
             continue
         if linha.startswith("[download] Destination:"):
-            if ultimo_total > 0 and ultimo_baixado >= ultimo_total * 0.99:
-                base_bytes += ultimo_total
-            ultimo_baixado = 0.0
-            ultimo_total = 0.0
+            if iniciou_download:
+                fase_idx += 1
+                fases = max(fases, fase_idx + 1)
+            else:
+                iniciou_download = True
             continue
         if "[Merger]" in linha or "[ffmpeg]" in linha \
                 or "Merging formats" in linha:

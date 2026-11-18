@@ -264,12 +264,16 @@ def _rodar() -> int:
                 pass
 
         linhas = [
-            "NPINFO 300\n",
+            "[info] abc: Downloading 1 format(s): 137+140\n",
+            # Estimativa menor que o áudio real (500): antes a barra batia
+            # 100% no meio do áudio. O progresso agora é por fase.
+            "NPINFO 250\n",
+            "[download] Destination: /tmp/video.f137.mp4\n",
             "NAVEPRO NA|100|200|10|1000\n",
             "NAVEPRO NA|200|200|0|1000\n",
-            "[download] Destination: /tmp/video.mp4\n",
-            "NAVEPRO NA|50|100|5|1000\n",
-            "NAVEPRO NA|100|100|0|1000\n",
+            "[download] Destination: /tmp/video.f140.m4a\n",
+            "NAVEPRO NA|100|500|5|1000\n",
+            "NAVEPRO NA|500|500|0|1000\n",
             '[Merger] Merging formats into "/tmp/video.mp4"\n',
         ]
         vistos = []
@@ -283,6 +287,10 @@ def _rodar() -> int:
         checar("progresso nunca anda para trás",
                all(b >= a for a, b in zip(percentuais, percentuais[1:],
                                           strict=False)))
+        checar("não mostra 100% antes do último arquivo terminar",
+               len(percentuais) >= 4
+               and all(pct < 100.0 for pct in percentuais[:3]),
+               str(percentuais))
         checar("ao juntar os formatos avisa que está finalizando",
                any("Finalizando" in txt for _, txt in vistos))
         checar("o log do processo não guarda as linhas de progresso",
