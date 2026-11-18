@@ -51,3 +51,4 @@ jobs:
         with:
           files: dist/NavePro.exe
           overwrite_files: true
+          generate_release_notes: true
