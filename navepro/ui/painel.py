@@ -468,6 +468,9 @@ class PainelMixin:
             state='disabled' if self.tema_modo == 'auto' else 'normal')
         self._menu_visualizar = menu_visualizar
         self._indice_tema_claro = menu_visualizar.index('end')
+        menu_visualizar.add_separator()
+        menu_visualizar.add_command(label="Ver Atalhos do Sistema",
+                                    command=self.abrir_dicas_atalhos)
         menubar.add_cascade(label="Visualizar", menu=menu_visualizar)
 
         # ── Ajuda > Sobre ──

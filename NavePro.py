@@ -103,6 +103,7 @@ from navepro.core.youtube import limpar_videos_youtube
 from navepro.ui.apoio import (
     _escolher_arquivos_usuario,
 )
+from navepro.ui.atalhos import AtalhosMixin
 from navepro.ui.atualizacao import AtualizacaoMixin
 from navepro.ui.biblia_grade import JanelaBibliaGradeMixin
 from navepro.ui.config_relogio import ConfigRelogioMixin
@@ -259,7 +260,7 @@ log = get_logger("app")
 # ────────────────────────────────────────────────────────────────────
 
 
-class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, ExecucaoServicoMixin, AtualizacaoMixin, JanelaHinosMixin, JanelaBibliaGradeMixin, JanelaBibliaMixin, JanelaAnunciosMixin, JanelaOrdemServicoMixin, JanelaTransferenciaMixin, GerenciadorMidiasMixin, ConfigRelogioMixin, PainelMixin, LicencaMixin):
+class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, ExecucaoServicoMixin, AtualizacaoMixin, JanelaHinosMixin, JanelaBibliaGradeMixin, JanelaBibliaMixin, JanelaAnunciosMixin, JanelaOrdemServicoMixin, JanelaTransferenciaMixin, GerenciadorMidiasMixin, ConfigRelogioMixin, PainelMixin, LicencaMixin, AtalhosMixin):
     """Interface gráfica principal do sistema de projeção."""
 
     def __init__(self) -> None:
@@ -514,6 +515,9 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         # Inicia servidor HTTP (thread separada) e carrega temperatura
         # em paralelo, sem travar a interface
         self.root.after(100, self._inicializar_em_segundo_plano)
+        # Dicas de atalhos na abertura: o usuário pode desativar (a escolha
+        # fica no config e a janela continua acessível pelo menu Visualizar).
+        self.root.after(700, self._mostrar_dicas_atalhos_iniciais)
 
         self.root.bind('<space>', self._on_space)
         # No Wayland o telão (janela Tk própria) não consegue roubar o foco
@@ -531,6 +535,9 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         self.root.bind("<F11>", lambda e: self._alternar_maximizar())
         # Atalho Ctrl+T para alternar o tema (claro/escuro)
         self.root.bind("<Control-t>", lambda e: self._alternar_tema())
+        # Atalhos globais (Ctrl+B, Ctrl+L, ...). Ficam no root para não
+        # colidirem com os atalhos próprios das janelas auxiliares.
+        self._registrar_atalhos()
         # Detecta duplo clique na barra de título (maximizar/restaurar)
         self.root.bind("<Double-Button-1>", self._on_title_double_click)
 
