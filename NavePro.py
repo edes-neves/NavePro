@@ -88,6 +88,7 @@ from navepro.core.servidor_http import ServidorAsyncHTTP
 from navepro.core.slides import (
     _montar_slides_anuncio,
 )
+from navepro.core.tema_sistema import resolver_tema
 from navepro.core.util_tk import (
     _centralizar_sobre,
     _habilitar_maximizar_janela,
@@ -347,9 +348,14 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             self.root.state('zoomed')
 
         self.config_data: dict[str, Any] = self.carregar_config()
-        self.tema: str = self.config_data.get("tema", "escuro")
-        if self.tema not in ("escuro", "claro"):
-            self.tema = "escuro"
+        # Modo de tema salvo: "auto" (segue o sistema), "claro" ou "escuro".
+        # Instalações novas abrem no modo automático; escolhas já salvas por
+        # versões anteriores continuam valendo.
+        self.tema_modo: str = self.config_data.get("tema", "auto")
+        if self.tema_modo not in ("auto", "claro", "escuro"):
+            self.tema_modo = "auto"
+        self.tema: str = resolver_tema(self.tema_modo)
+        log.info("🎨 Tema: modo=%s efetivo=%s", self.tema_modo, self.tema)
         # Monitor do telão: se o operador definiu "monitor" no config, o valor
         # vira o PC alvo do vídeo (1-based na ordem de get_monitors_config).
         # Sem config, o player usa a MESMA regra do TelaoWindow (_escolher_

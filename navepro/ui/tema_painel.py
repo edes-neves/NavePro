@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import tkinter as tk
 import tkinter.messagebox
 import tkinter.simpledialog
@@ -24,9 +25,14 @@ from navepro.core.tema import (
     definir_aplicador_janela,
     definir_tema_ativo,
 )
+from navepro.core.tema_sistema import detectar_tema_sistema, resolver_tema
 from navepro.core.widgets_arredondados import TkArredondado
 
 log = get_logger("tema_painel")
+
+# De quanto em quanto tempo o modo automático confere se o tema do sistema
+# mudou (ex.: operador trocou claro/escuro nas configurações do desktop).
+INTERVALO_TEMA_AUTO_MS = 10_000
 
 # Botões e campos desenham cantos arredondados (fachada do tkinter).
 tk = TkArredondado(tk)
@@ -57,19 +63,126 @@ def _toplevels_do_tema(base) -> list:
 
 
 class TemaPainelMixin:
-    def _alternar_tema(self) -> None:
-        """Alterna entre tema escuro (padrão) e claro, persistindo a escolha."""
-        novo = 'claro' if self.tema != 'claro' else 'escuro'
-        self.tema = novo
-        self.config_data['tema'] = novo
+    def _salvar_tema(self) -> None:
+        """Persiste o modo de tema escolhido (auto/claro/escuro)."""
+        self.config_data['tema'] = self.tema_modo
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             log.exception(f"Erro ao salvar tema: {e}")
-        if getattr(self, '_var_tema_claro', None) is not None:
-            self._var_tema_claro.set(novo == 'claro')
-        self._aplicar_tema()
+
+    def _sincronizar_vars_tema(self) -> None:
+        """Atualiza os checkbuttons de tema do menu Visualizar."""
+        var_auto = getattr(self, '_var_tema_auto', None)
+        if var_auto is not None:
+            var_auto.set(self.tema_modo == 'auto')
+        var_claro = getattr(self, '_var_tema_claro', None)
+        if var_claro is not None:
+            var_claro.set(self.tema == 'claro')
+        # No modo automático quem escolhe o tema é o sistema: "Tema Claro"
+        # fica desabilitado para o usuário não sair do automático sem querer.
+        menu = getattr(self, '_menu_visualizar', None)
+        indice = getattr(self, '_indice_tema_claro', None)
+        if menu is not None and indice is not None:
+            try:
+                menu.entryconfigure(
+                    indice,
+                    state=('disabled' if self.tema_modo == 'auto'
+                           else 'normal'))
+            except tk.TclError:
+                pass
+
+    def _definir_tema(self, modo: str) -> None:
+        """Aplica e persiste um modo de tema (``auto``/``claro``/``escuro``)."""
+        if modo not in ('auto', 'claro', 'escuro'):
+            modo = 'auto'
+        self.tema_modo = modo
+        novo = resolver_tema(modo)
+        self._salvar_tema()
+        if novo != self.tema:
+            self.tema = novo
+            self._aplicar_tema()
+        if self.tema_modo == 'auto':
+            self._agendar_verificacao_tema_auto()
+        else:
+            self._cancelar_verificacao_tema_auto()
+        self._sincronizar_vars_tema()
+
+    def _cancelar_verificacao_tema_auto(self) -> None:
+        """Cancela a checagem periódica do tema do sistema, se houver."""
+        timer = getattr(self, '_tema_auto_timer', None)
+        self._tema_auto_timer = None
+        if timer is None:
+            return
+        try:
+            self.root.after_cancel(timer)
+        except Exception:
+            pass
+
+    def _agendar_verificacao_tema_auto(self) -> None:
+        """Agenda (uma vez) a próxima checagem do tema do sistema."""
+        if self.tema_modo != 'auto':
+            return
+        if getattr(self, '_tema_auto_timer', None) is not None:
+            return
+        root = getattr(self, 'root', None)
+        if root is None:
+            return
+        try:
+            self._tema_auto_timer = root.after(
+                INTERVALO_TEMA_AUTO_MS, self._verificar_tema_auto)
+        except Exception:
+            self._tema_auto_timer = None
+
+    def _verificar_tema_auto(self) -> None:
+        """Confere, fora da thread da interface, se o sistema mudou de tema."""
+        self._tema_auto_timer = None
+        if getattr(self, '_shutting_down', False):
+            return
+        if self.tema_modo != 'auto':
+            return
+        root = getattr(self, 'root', None)
+        if root is None:
+            return
+
+        def _detectar() -> None:
+            tema = detectar_tema_sistema()
+            try:
+                root.after(0, lambda: self._aplicar_tema_detectado(tema))
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=_detectar, daemon=True, name="navepro-tema-sistema").start()
+
+    def _aplicar_tema_detectado(self, novo: str) -> None:
+        """Aplica o tema detectado em segundo plano e reagenda a checagem."""
+        if getattr(self, '_shutting_down', False):
+            return
+        if self.tema_modo != 'auto':
+            return
+        if novo in ('claro', 'escuro') and novo != self.tema:
+            log.info("🎨 Tema automático: sistema mudou para %s", novo)
+            self.tema = novo
+            self._sincronizar_vars_tema()
+            self._aplicar_tema()
+            return
+        self._agendar_verificacao_tema_auto()
+
+    def _alternar_tema(self) -> None:
+        """Alterna manualmente entre escuro e claro, saindo do modo auto."""
+        novo = 'escuro' if self.tema == 'claro' else 'claro'
+        self._definir_tema(novo)
+
+    def _alternar_tema_automatico(self) -> None:
+        """Liga/desliga o tema automático (segue o sistema operacional)."""
+        if self.tema_modo == 'auto':
+            # Ao desligar, mantém o tema efetivo como escolha manual.
+            self._definir_tema(self.tema)
+        else:
+            self._definir_tema('auto')
+
     def _aplicar_tema(self) -> None:
         """Aplica o tema ativo (claro/escuro) a toda a interface."""
         definir_tema_ativo(self.tema)
@@ -101,6 +214,9 @@ class TemaPainelMixin:
                 sync_sorteio()
             except Exception as e:
                 log.debug("Falha ao sincronizar o tema do sorteio: %s", e)
+        # No modo automático, acompanha mudanças do tema do sistema mesmo com
+        # o app já aberto (a checagem em si roda fora da thread da interface).
+        self._agendar_verificacao_tema_auto()
     def _garantir_campos_tema(self) -> None:
         """Reafirma, por tema, a cor de fundo dos campos Cidade/UF/busca.
 

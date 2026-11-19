@@ -453,11 +453,21 @@ class PainelMixin:
                                     command=self._alternar_maximizar,
                                     accelerator="F11")
         menu_visualizar.add_separator()
+        self._var_tema_auto = tk.BooleanVar(value=(self.tema_modo == 'auto'))
+        menu_visualizar.add_checkbutton(label="Tema Automático",
+                                        variable=self._var_tema_auto,
+                                        command=self._alternar_tema_automatico)
         self._var_tema_claro = tk.BooleanVar(value=(self.tema == 'claro'))
-        menu_visualizar.add_checkbutton(label="Tema Claro",
-                                        variable=self._var_tema_claro,
-                                        command=self._alternar_tema,
-                                        accelerator="Ctrl+T")
+        menu_visualizar.add_checkbutton(
+            label="Tema Claro",
+            variable=self._var_tema_claro,
+            command=self._alternar_tema,
+            accelerator="Ctrl+T",
+            # No modo automático quem decide é o sistema; só libera a
+            # escolha manual quando o automático estiver desligado.
+            state='disabled' if self.tema_modo == 'auto' else 'normal')
+        self._menu_visualizar = menu_visualizar
+        self._indice_tema_claro = menu_visualizar.index('end')
         menubar.add_cascade(label="Visualizar", menu=menu_visualizar)
 
         # ── Ajuda > Sobre ──
