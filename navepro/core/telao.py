@@ -6,6 +6,7 @@ Extraído de NavePro.py sem alterar o comportamento (ver AGENTS.md).
 import datetime
 import json
 import os
+import re
 import tkinter as tk
 import tkinter.font as tkfont
 
@@ -37,6 +38,16 @@ from navepro.core.paths import _aplicar_icone_janela
 from navepro.core.util_tk import _normalizar_escala_tk
 
 log = get_logger("telao")
+
+# Quando não há internet ou o serviço de temperatura falha, o telão mostra uma
+# mensagem de texto no lugar do número. A Digital-7 é de sete segmentos: ótima
+# para "25°C", ilegível para frases. Nesses casos usamos uma fonte de texto.
+_FONTES_TEXTO_RELOGIO = (
+    "Adventist Sans", "DejaVu Sans", "Liberation Sans", "Noto Sans",
+    "Helvetica", "TkDefaultFont",
+)
+_TEMPERATURA_NUMERICA = re.compile(
+    r"^\s*[-+]?\d+(?:[.,]\d+)?\s*°?\s*[CF]?\s*$", re.IGNORECASE)
 
 
 def _texto_biblia_com_caixa(texto: str, modo: str) -> str:
@@ -318,8 +329,15 @@ class TelaoWindow:
             self.canvas.coords(self.overlay_text, self._cx, self._cy_hora)
             self.canvas.coords(self.temp_text, self._cx, self._cy_temp)
             self.canvas.itemconfig(self.overlay_text, font=self._font_hora)
-            self.canvas.itemconfig(self.temp_text, font=self._font_temp)
+            # Redimensionou: refaz a fonte da temperatura para o texto atual
+            # (mensagem de erro continua em fonte de texto, não volta à
+            # Digital-7 do slot numérico).
+            self._font_temp_exib = None
             self._font_temp_exib_texto = None
+            self.canvas.itemconfig(
+                self.temp_text,
+                font=self._fonte_temp_para_texto(
+                    getattr(self, '_current_temp', '') or ''))
     def _reafirmar_geometria(self, event: object = None) -> None:
         """Mantém o telão cobrindo o monitor apenas no modo tela cheia.
         No modo janela não força nada: deixa o usuário minimizar, maximizar,
@@ -379,25 +397,75 @@ class TelaoWindow:
         """Alterna entre tela cheia (sem bordas) e janela redimensionável."""
         self._aplicar_tela_cheia(not getattr(self, '_fullscreen', False))
         return "break"
+    def _familia_texto_relogio(self) -> str:
+        """Fonte legível para mensagens de texto no lugar da temperatura.
+
+        A Digital-7 (sete segmentos) continua valendo para números; frases de
+        indisponibilidade usam a Adventist Sans (a mesma do painel) ou outra
+        fonte de texto disponível no sistema.
+        """
+        try:
+            disp = set(tkfont.families(self.root))
+        except tk.TclError:
+            disp = set()
+        if not disp:
+            return "Adventist Sans"
+        for familia in _FONTES_TEXTO_RELOGIO:
+            if familia in disp:
+                return familia
+        return "TkDefaultFont"
+
+    def _tamanho_texto_para_slot(self, familia: str, tam_digital: int) -> int:
+        """Tamanho (pt) da fonte de texto com a altura de linha do slot.
+
+        O slot da temperatura foi dimensionado pela Digital-7. Medimos essa
+        altura e escolhemos o tamanho da fonte de texto que ocupa o mesmo
+        espaço, sem invadir a hora nem estourar para baixo.
+        """
+        try:
+            altura_px = tkfont.Font(
+                family="Digital-7", size=tam_digital).metrics("linespace")
+        except tk.TclError:
+            return max(12, tam_digital)
+        if altura_px <= 0:
+            return max(12, tam_digital)
+        size = max(12, int(altura_px / 1.35))
+        try:
+            real = tkfont.Font(family=familia, size=size).metrics("linespace")
+        except tk.TclError:
+            return size
+        if real > 0 and abs(real - altura_px) > 2:
+            size = max(12, int(size * altura_px / real))
+        return size
+
     def _fonte_temp_para_texto(self, temperatura: str) -> tuple:
         """Retorna a fonte da temperatura ajustada à largura da tela.
-        Encolhe a fonte somente quando o texto real não couber na largura
-        (ex.: mensagem de erro longa). O resultado é cacheado por texto.
-        Retorna TUPLA ("Digital-7", tamanho, "normal") para o canvas
-        (fontes nomeadas renderizam minúsculas no segundo Tk do processo).
+
+        Números (ex.: '25°C') continuam em Digital-7. Mensagens de erro ou
+        indisponibilidade (sem internet, cidade não encontrada) usam uma fonte
+        de texto, pois a Digital-7 é de sete segmentos e fica ilegível em
+        frases. Encolhe a fonte somente quando o texto real não couber na
+        largura. O resultado é cacheado por texto.
+        Retorna TUPLA para o canvas (fontes nomeadas renderizam minúsculas no
+        segundo Tk do processo).
         """
         if not temperatura:
             return self._font_temp
         if (getattr(self, '_font_temp_exib_texto', None) == temperatura and
                 getattr(self, '_font_temp_exib', None) is not None):
             return self._font_temp_exib
+        familia = "Digital-7"
         size = int(self._font_temp[1])
+        if not _TEMPERATURA_NUMERICA.match(temperatura):
+            familia = self._familia_texto_relogio()
+            size = self._tamanho_texto_para_slot(familia, size)
+        minimo = 40 if familia == "Digital-7" else 12
         largura_max = getattr(self, '_largura_temp_max', None)
         if largura_max:
-            w = tkfont.Font(family="Digital-7", size=size).measure(temperatura)
+            w = tkfont.Font(family=familia, size=size).measure(temperatura)
             if w > largura_max and w > 0:
-                size = max(40, int(size * largura_max / w))
-        fonte = ("Digital-7", size, "normal")
+                size = max(minimo, int(size * largura_max / w))
+        fonte = (familia, size, "normal")
         self._font_temp_exib = fonte
         self._font_temp_exib_texto = temperatura
         return fonte
@@ -696,7 +764,14 @@ class TelaoWindow:
                 self.canvas.coords(self.overlay_text, self._cx, self._cy_hora)
                 self.canvas.coords(self.temp_text, self._cx, self._cy_temp)
                 self.canvas.itemconfig(self.overlay_text, font=self._font_hora)
-                self.canvas.itemconfig(self.temp_text, font=self._font_temp)
+                # Mantém a fonte certa para o texto atual (mensagem de erro
+                # em fonte de texto, número em Digital-7).
+                self._font_temp_exib = None
+                self._font_temp_exib_texto = None
+                self.canvas.itemconfig(
+                    self.temp_text,
+                    font=self._fonte_temp_para_texto(
+                        getattr(self, '_current_temp', '') or ''))
                 self.root.update_idletasks()
         # Aplica a opacidade configurada ao telão (apenas no modo relógio)
         if self.mostrando_relogio:

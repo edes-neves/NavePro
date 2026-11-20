@@ -98,6 +98,12 @@ def obter_temperatura(cidade: str, estado: str) -> str:
             consultas.append(f"{cidade}, {estado_nome}")
         consultas.append(cidade)
 
+        # Distingue "sem rede/servidor fora do ar" de "cidade em outro
+        # estado". Só a segunda condição pode gerar a mensagem de estado.
+        servidor_respondeu = False
+        rede_falhou = False
+        cidade_em_outro_estado = False
+
         for consulta in consultas:
             geo_url = (
                 f"https://geocoding-api.open-meteo.com/v1/search?"
@@ -110,8 +116,10 @@ def obter_temperatura(cidade: str, estado: str) -> str:
             try:
                 with _baixar(geo_url, timeout=8) as response:
                     geo_data = json.loads(response.read().decode())
+                servidor_respondeu = True
             except Exception as e:
                 log.warning(f"⚠️ Geocoding falhou ({consulta!r}): {e}")
+                rede_falhou = True
                 continue
 
             if 'results' not in geo_data or not geo_data['results']:
@@ -127,6 +135,8 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                 if _estado_bate(item.get('admin1', ''), estado, estado_nome):
                     resultado = item
                     break
+                # A cidade existe e o servidor respondeu, mas em outro estado.
+                cidade_em_outro_estado = True
 
             if resultado is None:
                 log.warning(f"⚠️ Geocoding sem resultado válido para {consulta!r}")
@@ -144,8 +154,10 @@ def obter_temperatura(cidade: str, estado: str) -> str:
             try:
                 with _baixar(weather_url, timeout=8) as response:
                     weather_data = json.loads(response.read().decode())
+                servidor_respondeu = True
             except Exception as e:
                 log.warning(f"⚠️ Weather falhou ({cidade!r} {lat},{lon}): {e}")
+                rede_falhou = True
                 continue
 
             if 'current_weather' in weather_data:
@@ -164,6 +176,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
             req = urllib.request.Request(geo_url, headers={'User-Agent': 'HinarioApp/1.0'})
             with _baixar(req, timeout=8) as response:
                 geo_data = json.loads(response.read().decode())
+            servidor_respondeu = True
 
             for item in geo_data:
                 if not _resultado_aceitavel_nominatim(item, cidade, estado, estado_nome):
@@ -176,13 +189,20 @@ def obter_temperatura(cidade: str, estado: str) -> str:
                 )
                 with _baixar(weather_url, timeout=8) as response:
                     weather_data = json.loads(response.read().decode())
+                servidor_respondeu = True
                 if 'current_weather' in weather_data:
                     return f"{weather_data['current_weather']['temperature']}°C"
         except Exception as e:
             log.warning(f"⚠️ Nominatim falhou ({cidade!r}): {e}")
-            pass
+            rede_falhou = True
 
-        if estado:
+        # Sem nenhuma resposta do servidor (ou com falha de rede sem indício
+        # de cidade em outro estado), o problema é a conexão — não o estado
+        # informado pelo usuário.
+        if not servidor_respondeu or (rede_falhou and not cidade_em_outro_estado):
+            return "Verifique a rede!"
+
+        if estado and cidade_em_outro_estado:
             estado_upper = remover_acentos(estado_nome).upper()
             return f"NAO PERTENCE AO ESTADO DE: {estado_upper}."
         return "NAO ENCONTRADA"
