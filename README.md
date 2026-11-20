@@ -429,7 +429,7 @@ NHA/                  # Hinário (OpenLyrics XML) — Novo Hinário Adventista
 HASD/                 # Hinário (OpenLyrics XML)
 tests/                # Suítes de teste headless (ver "Testes")
 img/                  # Ícones do app (Icon.png, Icon.xbm, Icon.ico…)
-.github/workflows/    # CI: testes, geração do .exe e do Flatpak
+.github/workflows/    # CI: testes e release (.exe, AppImage e Flatpak)
 .gitignore            # Arquivos locais/artefatos de build ignorados
 ```
 

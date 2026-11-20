@@ -128,7 +128,7 @@ tests/                     # suítes headless (ver acima)
 flatpak/                   # manifests (local + flathub/) e metainfo
 img/                       # ícones (Icon.png, Icon.xbm, Icon.ico)
 icones/                    # PNGs dos botões (fallback; gerados por gerar_icones.py)
-.github/workflows/         # testes.yml, exe.yml, flatpak.yml
+.github/workflows/         # testes.yml, build.yml (release), exe.yml, flatpak.yml
 ```
 
 ## Dados locais (`~/.navepro/`; no Windows `%USERPROFILE%\.navepro`)
@@ -173,6 +173,12 @@ icones/                    # PNGs dos botões (fallback; gerados por gerar_icone
   reage ao A−/A+. `_localizar_fonte_ttf()` procura DejaVu/Liberation/FreeSans e, se
   nada existir, aceita **qualquer** `.ttf/.otf` do sistema (caso de distros sem
   DejaVu, ex. BigLinux) — evite voltar ao `load_default()` sem `size`.
+- **Temperatura no telão:** números (`25°C`) continuam em Digital-7; mensagens de
+  erro/indisponibilidade (`Verifique a rede!`, cidade fora do estado) usam uma fonte
+  de texto (Adventist Sans, com fallback DejaVu/Liberation/Noto) e se ajustam à
+  largura. Em `obter_temperatura`, "A cidade não pertence ao estado de/da/do ..." só
+  aparece quando o servidor respondeu e a cidade está mesmo em outra UF; falha de
+  rede vira `Verifique a rede!`.
 - **Ícones dos botões (emoji):** o Tk 8.6 **não** desenha emoji sozinho (depende do
   fallback do sistema, que varia demais). Por isso o emoji é renderizado para PNG
   pela Pillow (`navepro/core/icones.py`) e vira imagem do botão; sem fonte de emoji
