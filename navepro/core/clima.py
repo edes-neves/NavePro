@@ -10,9 +10,25 @@ import urllib.request
 from navepro.config import MAPA_ESTADOS
 from navepro.core.log import get_logger
 from navepro.core.ssl_context import _baixar
-from navepro.core.textos import normalizar_texto, remover_acentos
+from navepro.core.textos import normalizar_texto
 
 log = get_logger("clima")
+
+# Preposição correta ao citar o estado na mensagem de cidade fora do estado:
+# "ao estado de Alagoas", "ao estado da Bahia", "ao estado do Acre".
+# Estados sem artigo definido (AL, GO, MT, MS, MG, PE, RO, RR, SC, SP, SE)
+# ficam de fora do mapa e usam "de".
+_ARTIGO_ESTADO: dict[str, str] = {
+    'BA': 'da', 'PB': 'da',
+    'AC': 'do', 'AP': 'do', 'AM': 'do', 'CE': 'do', 'DF': 'do',
+    'ES': 'do', 'MA': 'do', 'PA': 'do', 'PR': 'do', 'PI': 'do',
+    'RJ': 'do', 'RN': 'do', 'RS': 'do', 'TO': 'do',
+}
+
+
+def _preposicao_estado(estado: str) -> str:
+    """Retorna 'de', 'da' ou 'do' conforme o artigo definido do estado."""
+    return _ARTIGO_ESTADO.get((estado or '').strip().upper(), 'de')
 
 
 def _estado_para_nome(estado: str) -> str:
@@ -203,8 +219,9 @@ def obter_temperatura(cidade: str, estado: str) -> str:
             return "Verifique a rede!"
 
         if estado and cidade_em_outro_estado:
-            estado_upper = remover_acentos(estado_nome).upper()
-            return f"NAO PERTENCE AO ESTADO DE: {estado_upper}."
+            preposicao = _preposicao_estado(estado)
+            return (f"A cidade não pertence ao estado {preposicao} "
+                    f"{estado_nome}.")
         return "NAO ENCONTRADA"
 
     except Exception as e:

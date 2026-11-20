@@ -13,6 +13,7 @@ import urllib.error
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
 sys.path.insert(0, RAIZ)
+from navepro.config import MAPA_ESTADOS  # noqa: E402
 from navepro.core import clima  # noqa: E402
 
 
@@ -90,7 +91,51 @@ check('servidor de clima fora -> Verifique a rede!',
 instalar(geo=CIDADE_BA, nominatim=[], weather=CLIMA_OK)
 r = clima.obter_temperatura('Mundo Novo', 'MS')
 check('cidade em outro estado -> mensagem de estado',
-      r == 'NAO PERTENCE AO ESTADO DE: MATO GROSSO DO SUL.', r)
+      r == 'A cidade não pertence ao estado de Mato Grosso do Sul.', r)
+
+# 4b) Artigo definido correto conforme o estado.
+def mensagem_estado(uf, admin1):
+    geo = {'results': [{
+        'name': 'Mundo Novo', 'admin1': admin1,
+        'latitude': -1.0, 'longitude': -2.0,
+    }]}
+    instalar(geo=geo, nominatim=[], weather=CLIMA_OK)
+    return clima.obter_temperatura('Mundo Novo', uf)
+
+
+check('estado sem artigo -> "de Alagoas"',
+      mensagem_estado('AL', 'Bahia') ==
+      'A cidade não pertence ao estado de Alagoas.',
+      mensagem_estado('AL', 'Bahia'))
+check('estado com artigo feminino -> "da Bahia"',
+      mensagem_estado('BA', 'Alagoas') ==
+      'A cidade não pertence ao estado da Bahia.',
+      mensagem_estado('BA', 'Alagoas'))
+check('estado com artigo masculino -> "do Acre"',
+      mensagem_estado('AC', 'Bahia') ==
+      'A cidade não pertence ao estado do Acre.',
+      mensagem_estado('AC', 'Bahia'))
+
+# 4c) As três categorias cobrem todas as UFs (inclusive o DF).
+SEM_ARTIGO = {'AL', 'GO', 'MT', 'MS', 'MG', 'PE', 'RO', 'RR', 'SC', 'SP', 'SE'}
+FEMININO = {'BA', 'PB'}
+MASCULINO = {'AC', 'AP', 'AM', 'CE', 'DF', 'ES', 'MA', 'PA', 'PR', 'PI',
+             'RJ', 'RN', 'RS', 'TO'}
+check('categorias cobrem todas as UFs',
+      SEM_ARTIGO | FEMININO | MASCULINO == set(MAPA_ESTADOS),
+      str(set(MAPA_ESTADOS) - (SEM_ARTIGO | FEMININO | MASCULINO)))
+check('estados sem artigo usam "de"',
+      all(clima._preposicao_estado(uf) == 'de' for uf in SEM_ARTIGO),
+      str([uf for uf in SEM_ARTIGO
+           if clima._preposicao_estado(uf) != 'de']))
+check('estados femininos usam "da"',
+      all(clima._preposicao_estado(uf) == 'da' for uf in FEMININO),
+      str([uf for uf in FEMININO
+           if clima._preposicao_estado(uf) != 'da']))
+check('estados masculinos usam "do"',
+      all(clima._preposicao_estado(uf) == 'do' for uf in MASCULINO),
+      str([uf for uf in MASCULINO
+           if clima._preposicao_estado(uf) != 'do']))
 
 # 5) Rede ok, mas cidade inexistente: não é "outro estado".
 instalar(geo={'results': []}, nominatim=[], weather=CLIMA_OK)
