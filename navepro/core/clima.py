@@ -58,6 +58,25 @@ def _cidade_estado_especial(cidade: str, estado: str) -> bool:
     )
 
 
+def _item_e_municipio(item: dict, cidade: str) -> bool:
+    """Diz se o resultado do Open-Meteo é a cidade, não um distrito/vilarejo.
+
+    O Open-Meteo usa ``PPL`` tanto para municípios quanto para vilarejos com o
+    mesmo nome (ex.: "Mundo Novo" em Japira/PR). O município traz ``admin2``
+    igual ao nome ou uma população; o vilarejo costuma vir sem população e com
+    ``admin2`` do município ao qual pertence.
+    """
+    if normalizar_texto(item.get('name', '')) != normalizar_texto(cidade):
+        return False
+    admin2 = normalizar_texto(item.get('admin2', ''))
+    if admin2 and admin2 == normalizar_texto(cidade):
+        return True
+    try:
+        return int(item.get('population') or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _resultado_aceitavel_nominatim(
     item: dict, cidade: str, estado: str, estado_nome: str
 ) -> bool:
@@ -69,12 +88,8 @@ def _resultado_aceitavel_nominatim(
     cidade_norm = normalizar_texto(cidade)
     display_name = normalizar_texto(item.get('display_name', ''))
 
-    nome_bate = nome == cidade_norm
-    tokens_cidade = set(cidade_norm.split())
-    tokens_nome = set(nome.split())
-    tokens_batem = bool(tokens_cidade and tokens_cidade.issubset(tokens_nome))
-
-    if not (nome_bate or tokens_batem):
+    # Nome exato: "Rua Umuarama"/"Rancho Umuarama" não são a cidade Umuarama.
+    if nome != cidade_norm:
         return False
 
     if _cidade_estado_especial(cidade, estado):
@@ -143,7 +158,9 @@ def obter_temperatura(cidade: str, estado: str) -> str:
 
             resultado = None
             for item in geo_data['results']:
-                if normalizar_texto(item.get('name', '')) != normalizar_texto(cidade):
+                # Ignora distritos/vilarejos homônimos (ex.: "Mundo Novo" em
+                # Japira/PR): só aceita resultado de nível municipal.
+                if not _item_e_municipio(item, cidade):
                     continue
                 if not estado:
                     resultado = item
