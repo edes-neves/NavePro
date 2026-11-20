@@ -555,6 +555,17 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 
 ## 📜 Histórico recente
 
+### 2.4.3
+
+- **Tema automático**: o painel passa a seguir o tema claro/escuro do sistema,
+  conferindo a mudança periodicamente. O modo pode ser fixado em claro ou
+  escuro pelo menu Visualizar.
+- **Atalhos de teclado**: Ctrl+B/L/A/S/G/F/T, F11 e Espaço, além de uma janela
+  de dicas no arranque (reabrível em Visualizar > Ver Atalhos do Sistema).
+- **Temperatura no telão**: mensagens de erro/rede usam fonte de texto legível
+  e se ajustam à largura; falha de rede mostra **Verifique a rede!** e o aviso
+  de cidade em outro estado usa o artigo correto (de/da/do).
+
 ### 2.4.2
 
 - **YouTube — verificação anti-bot**: quando o YouTube pede “confirme que você

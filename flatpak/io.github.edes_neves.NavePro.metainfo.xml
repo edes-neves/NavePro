@@ -35,6 +35,15 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.4.3" date="2026-11-20">
+      <description>
+        <ul>
+          <li>Tema automático: o painel segue o tema claro/escuro do sistema e pode ser fixado em claro ou escuro</li>
+          <li>Atalhos de teclado globais (Ctrl+B/L/A/S/G/F/T, F11 e Espaço) e janela de dicas reabrível pelo menu Visualizar</li>
+          <li>Temperatura no telão: mensagens de erro/rede em fonte de texto e ajuste à largura; falha de rede mostra Verifique a rede!</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.4.2" date="2026-11-18">
       <description>
         <ul>
