@@ -4,6 +4,7 @@ Extraído de NavePro.py sem alterar o comportamento (ver AGENTS.md).
 """
 
 import json
+import re
 import urllib.parse
 import urllib.request
 
@@ -25,6 +26,11 @@ _ARTIGO_ESTADO: dict[str, str] = {
     'RJ': 'do', 'RN': 'do', 'RS': 'do', 'TO': 'do',
 }
 
+# Tipos do Nominatim que representam cidade/município. Ruas, lojas, fazendas
+# e bairros homônimos (ex.: "Belém" em Curitiba) não entram.
+_TIPOS_CIDADE: frozenset = frozenset(
+    {'city', 'town', 'village', 'municipality'})
+
 
 def _preposicao_estado(estado: str) -> str:
     """Retorna 'de', 'da' ou 'do' conforme o artigo definido do estado."""
@@ -37,25 +43,22 @@ def _estado_para_nome(estado: str) -> str:
 
 
 def _estado_bate(texto: str, estado_sigla: str, estado_nome: str) -> bool:
-    """Verifica se o texto menciona o estado."""
+    """Verifica se o texto menciona o estado como palavra/frase inteira."""
     if not estado_sigla:
         return True
     texto_norm = normalizar_texto(texto)
     if not texto_norm:
         return False
-    valores = {
-        normalizar_texto(estado_sigla),
-        normalizar_texto(estado_nome),
-    }
-    return any(v and v in texto_norm for v in valores)
-
-
-def _cidade_estado_especial(cidade: str, estado: str) -> bool:
-    """Verifica se é 'Mundo Novo' que existe em múltiplos estados."""
-    return (
-        normalizar_texto(cidade) == 'mundo novo'
-        and normalizar_texto(estado) in {'ms', 'ba', 'go'}
-    )
+    # Limite de palavra: "PA" não pode casar dentro de "Paraná" e "Pará"
+    # não pode casar dentro de "Paraná" (ou vice-versa).
+    for valor in (estado_sigla, estado_nome):
+        valor_norm = normalizar_texto(valor)
+        if not valor_norm:
+            continue
+        padrao = rf'(?<!\w){re.escape(valor_norm)}(?!\w)'
+        if re.search(padrao, texto_norm):
+            return True
+    return False
 
 
 def _item_e_municipio(item: dict, cidade: str) -> bool:
@@ -92,23 +95,20 @@ def _resultado_aceitavel_nominatim(
     if nome != cidade_norm:
         return False
 
-    if _cidade_estado_especial(cidade, estado):
-        return bool(estado and _estado_bate(display_name, estado, estado_nome))
-
-    classe = normalizar_texto(item.get('class', ''))
-    tipo = normalizar_texto(item.get('type', ''))
-
-    if classe in {'landuse', 'water', 'amenity', 'natural'}:
-        return False
-    if tipo in {'building', 'peak', 'river', 'city_district',
-                 'hamlet', 'suburb', 'neighbourhood', 'isolated_dwelling',
-                 'farm', 'residential', 'locality'}:
-        return False
-
     if estado and not _estado_bate(display_name, estado, estado_nome):
         return False
 
-    return True
+    classe = normalizar_texto(item.get('class', ''))
+    tipo = normalizar_texto(item.get('type', ''))
+    addresstype = normalizar_texto(item.get('addresstype', ''))
+
+    if classe == 'place':
+        return tipo in _TIPOS_CIDADE
+    if classe == 'boundary' and tipo == 'administrative':
+        # Municípios pequenos costumam vir como limite administrativo
+        # (addresstype village/town/city/municipality).
+        return addresstype in _TIPOS_CIDADE
+    return False
 
 
 def obter_temperatura(cidade: str, estado: str) -> str:
@@ -204,7 +204,7 @@ def obter_temperatura(cidade: str, estado: str) -> str:
             geo_url = (
                 f"https://nominatim.openstreetmap.org/search?"
                 f"q={urllib.parse.quote(f'{cidade}, {estado_nome}, Brasil')}"
-                f"&format=json&limit=3"
+                f"&format=json&limit=3&addressdetails=1"
             )
             req = urllib.request.Request(geo_url, headers={'User-Agent': 'HinarioApp/1.0'})
             with _baixar(req, timeout=8) as response:

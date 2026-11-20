@@ -217,6 +217,65 @@ instalar(geo={'results': []}, nominatim=BATAIPORA, weather=CLIMA_OK)
 r = clima.obter_temperatura('Bataiporã', 'MS')
 check('Nominatim com nome exato -> temperatura', r == '25°C', r)
 
+# 6g) Siglas parecidas não se confundem: PA não casa dentro de Paraná e
+#     PR/Pará não casam entre si.
+check('PA não casa dentro de Paraná',
+      not clima._estado_bate('Paraná', 'PA', 'Pará'))
+check('PR não casa dentro de Pará',
+      not clima._estado_bate('Pará', 'PR', 'Paraná'))
+check('PA não casa dentro de São Paulo',
+      not clima._estado_bate('São Paulo', 'PA', 'Pará'))
+check('UF/nome corretos continuam casando',
+      clima._estado_bate('Paraná', 'PR', 'Paraná')
+      and clima._estado_bate('Pará', 'PA', 'Pará'))
+
+# 6h) Cidade do Paraná com UF PA: mensagem de estado, não temperatura.
+MARINGA_PR = {'results': [{
+    'name': 'Maringá', 'admin1': 'Paraná', 'admin2': 'Maringá',
+    'population': 409657, 'latitude': -23.42, 'longitude': -51.94,
+    'feature_code': 'PPL',
+}]}
+instalar(geo=MARINGA_PR, nominatim=[], weather=CLIMA_OK)
+r = clima.obter_temperatura('Maringá', 'PA')
+check('cidade do PR com UF PA -> mensagem do Pará',
+      r == 'A cidade não pertence ao estado do Pará.', r)
+
+# 6i) Cidade do Pará com UF PR: mensagem de estado. O Nominatim devolve uma
+#     loja "Belém" em Curitiba/PR, que não pode virar temperatura.
+BELEM_PA = {'results': [{
+    'name': 'Belém', 'admin1': 'Pará', 'admin2': 'Belém',
+    'population': 1499641, 'latitude': -1.45, 'longitude': -48.5,
+    'feature_code': 'PPLA',
+}]}
+LOJA_BELEM_PR = [{
+    'name': 'Belém', 'class': 'shop', 'type': 'supermarket',
+    'display_name': 'Belém, Uberaba, Curitiba, Paraná, Brasil',
+    'lat': '-25.45', 'lon': '-49.25',
+}]
+instalar(geo=BELEM_PA, nominatim=LOJA_BELEM_PR, weather=CLIMA_OK)
+r = clima.obter_temperatura('Belém', 'PR')
+check('cidade do PA com UF PR -> mensagem do Paraná',
+      r == 'A cidade não pertence ao estado do Paraná.', r)
+
+# 6j) Caminho feliz das duas UFs: continua devolvendo temperatura.
+instalar(geo=BELEM_PA, nominatim=[], weather=CLIMA_OK)
+check('Belém/PA continua com temperatura',
+      clima.obter_temperatura('Belém', 'PA') == '25°C')
+instalar(geo=MARINGA_PR, nominatim=[], weather=CLIMA_OK)
+check('Maringá/PR continua com temperatura',
+      clima.obter_temperatura('Maringá', 'PR') == '25°C')
+
+# 6k) Nominatim de município pequeno (limite administrativo) continua válido.
+BORA_SP = [{
+    'name': 'Borá', 'class': 'boundary', 'type': 'administrative',
+    'addresstype': 'village',
+    'display_name': 'Borá, São Paulo, Região Sudeste, Brasil',
+    'lat': '-22.27', 'lon': '-50.54',
+}]
+instalar(geo={'results': []}, nominatim=BORA_SP, weather=CLIMA_OK)
+r = clima.obter_temperatura('Borá', 'SP')
+check('limite administrativo de município -> temperatura', r == '25°C', r)
+
 # 7) Resposta de clima sem "current_weather" continua com o erro original.
 instalar(geo=CIDADE_MS, nominatim=[], weather={})
 r = clima.obter_temperatura('Dourados', 'MS')

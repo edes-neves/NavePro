@@ -583,8 +583,22 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             self.root.after_cancel(self._focus_timer)
             self._focus_timer = None
 
+    def _foco_atual(self) -> object | None:
+        """Widget com o foco atual (ou None se a janela não estiver ativa)."""
+        try:
+            return self.root.focus_get()
+        except (KeyError, tk.TclError):
+            return None
+
     def _clear_focus_timeout(self) -> None:
-        """Remove o foco de campos para permitir atalhos globais."""
+        """Remove o foco da busca para permitir atalhos globais.
+
+        Só age quando a busca é o campo ativo: Cidade/UF e outros campos
+        mantêm o foco, senão o timer roubava o cursor no meio da digitação.
+        """
+        if self._foco_atual() is not self.entry_busca:
+            self._focus_timer = None
+            return
         # Busca com termo digitado: o operador ainda está compondo o nome.
         # Não rouba o foco no meio da digitação — reagenda a checagem
         # enquanto houver termo; ao limpar o campo, o foco volta a ser
@@ -597,18 +611,39 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         self.root.focus_set()
         self._focus_timer = None
 
-    def _on_space(self, event: object = None) -> str:
-        """Espaço = Play/Pause (exceto quando digitando no campo de busca).
+    def _foco_em_campo_texto(self) -> bool:
+        """True se o foco está num campo de digitação (Entry/Text/etc.)."""
+        foco = self._foco_atual()
+        if foco is None:
+            return False
+        try:
+            classe = str(foco.winfo_class()).lower()
+        except (AttributeError, KeyError, tk.TclError):
+            return False
+        return classe in ("entry", "tentry", "text", "spinbox",
+                          "tspinbox", "tcombobox")
+
+    def _on_space(self, event: object = None) -> str | None:
+        """Espaço = Play/Pause, exceto digitando em qualquer campo de texto.
 
         Durante uma projeção em slides, o espaço avança o slide (comportamento
         padrão do passador de slides); fora disso, segue exatamente como antes.
         """
         player = getattr(self, 'player', None)
-        if player is not None:
-            telao = getattr(player, 'telao', None)
-            if telao is not None and getattr(telao, '_em_slides', False):
+        telao = getattr(player, 'telao', None) if player is not None else None
+        em_slides = telao is not None and getattr(telao, '_em_slides', False)
+        if self._foco_em_campo_texto():
+            # Cidade, UF, busca etc.: o espaço pertence ao texto. Sem esta
+            # guarda, apertar espaço no campo reativava a última mídia tocada.
+            # Na busca, o espaço continua avançando o slide (como antes), pois
+            # é o campo usado para localizar o que se projeta.
+            if em_slides and self._foco_atual() is self.entry_busca:
                 telao.slide_proximo()
                 return "break"
+            return None
+        if em_slides:
+            telao.slide_proximo()
+            return "break"
         # Termo digitado na busca = operador compondo o nome: o espaço é do
         # texto, NUNCA Play/Pause — mesmo que o foco já tenha saído do campo
         # (ex.: pausa longa na digitação). A reprodução só acontece no Enter
@@ -616,11 +651,6 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
         conteudo_busca = self.entry_busca.get().strip()
         if conteudo_busca and conteudo_busca != self.placeholder_busca:
             return "break"
-        focused = self.root.focus_get()
-        if focused == self.entry_busca:
-            conteudo = self.entry_busca.get().strip()
-            if conteudo and conteudo != self.placeholder_busca:
-                return "break"  # Deixa o Entry consumir o espaço
         self.player.play_pause()
         return "break"
 
