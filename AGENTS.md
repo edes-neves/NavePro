@@ -70,6 +70,10 @@ ruff check .
   repositório Flatpak no `gh-pages`. `exe.yml` e `flatpak.yml` ficam só para
   `workflow_dispatch` (não duplicar anexos).
 - Os workflows de release usam `softprops/action-gh-release` com `overwrite_files: true`.
+  O corpo da Release vem da seção `### <versão>` do "Histórico recente" do
+  `README.md`, extraída por `packaging/linux/notas_release.py` (o
+  `generate_release_notes` do GitHub só lista Pull Requests e deixava a página
+  só com o link do changelog).
 - **Não mude de versão sem o usuário pedir** (não pule para a próxima release por conta própria).
 
 ## Estrutura

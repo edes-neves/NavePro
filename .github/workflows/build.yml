@@ -189,10 +189,22 @@ jobs:
     needs: [windows, appimage, flatpak]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Baixar todos os artifacts
         uses: actions/download-artifact@v8
         with:
           path: artifacts
+
+      - name: Preparar notas da release
+        run: |
+          VERSAO="${GITHUB_REF_NAME#v}"
+          ANTERIOR=$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)
+          python3 packaging/linux/notas_release.py "$VERSAO" --anterior "$ANTERIOR" > release-notes.md
+          cat release-notes.md
 
       - name: Anexar à Release da tag
         uses: softprops/action-gh-release@v2
@@ -201,8 +213,8 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.AppImage
             artifacts/**/*.flatpak
+          body_path: release-notes.md
           overwrite_files: true
-          generate_release_notes: true
 
   publish-repo:
     name: Publicar repositório Flatpak (gh-pages)

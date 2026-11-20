@@ -35,6 +35,14 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.4.4" date="2026-11-20">
+      <description>
+        <ul>
+          <li>Espaço em Cidade/UF/busca não reativa mais a última mídia da Ordem de Projeção; o timer de foco não rouba o cursor de Cidade/UF</li>
+          <li>Clima: PR e PA não se confundem e cidades/ruas/lojas/distritos homônimos não geram temperatura</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.4.3" date="2026-11-20">
       <description>
         <ul>

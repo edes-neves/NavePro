@@ -555,6 +555,15 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 
 ## 📜 Histórico recente
 
+### 2.4.4
+
+- **Espaço em campos de texto**: apertar espaço em Cidade, UF ou na busca não
+  reativa mais a última música/vídeo da Ordem de Projeção. O timer de foco
+  também não rouba mais o cursor de Cidade/UF no meio da digitação.
+- **Clima — estados parecidos**: PR e PA não se confundem mais. Cidades,
+  ruas/lojas e distritos homônimos não geram temperatura; o aviso de cidade
+  fora do estado aparece corretamente.
+
 ### 2.4.3
 
 - **Tema automático**: o painel passa a seguir o tema claro/escuro do sistema,
