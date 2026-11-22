@@ -42,7 +42,6 @@ from navepro.core.servicos import (
     definir_manter_videos_servico,
     definir_marcar_reproduzidos,
     esquecer_manter_videos_servico,
-    marcar_item_servico,
     servico_manter_videos,
 )
 from navepro.core.slides import (
@@ -71,6 +70,20 @@ from navepro.ui.apoio import (
 )
 
 log = get_logger("janela_ordem_servico")
+
+# Consultas de duração (ffprobe/yt-dlp) rodam em segundo plano. Limitar a
+# concorrência evita abrir um subprocesso por item de uma vez só (a lista
+# pode ter dezenas de mídias) e mantém a interface responsiva.
+_DURACAO_MAX_WORKERS = 2
+
+# Cliques seguidos na caixinha "reproduzido" são agrupados antes de gravar
+# o servicos.json (evita um read+fsync por clique sem perder a marcação).
+_MARCACAO_SALVAR_MS = 500
+
+# Contagem regressiva: rápida enquanto há player tocando; em repouso a
+# checagem é mais espaçada (só para detectar quando a reprodução começa).
+_CONTAGEM_ATIVA_MS = 500
+_CONTAGEM_REPOUSO_MS = 1000
 
 # Botões e campos desenham cantos arredondados (fachada do tkinter).
 tk = TkArredondado(tk)
@@ -671,30 +684,44 @@ class JanelaOrdemServicoMixin:
             except tk.TclError:
                 pass
 
-        def _atualizar_selecao_visual() -> None:
-            for iid, dados_card in _cards.items():
-                selecionado = iid in _selecionados
-                check_var = dados_card.get("check_var")
-                marcado = (bool(check_var.get())
-                           if check_var is not None else False)
-                fundo = COR_SELECAO if selecionado else (
-                    COR_CARD if cartoes_ativo["on"] else COR_FUNDO_LISTA)
-                try:
-                    for frame in dados_card["frames"]:
-                        frame.configure(bg=fundo)
-                    for widget, cor_normal in dados_card["fundos"]:
-                        if selecionado:
-                            cor = '#ffffff'
-                        elif marcado:
-                            cor = COR_TEXTO_FRACO
-                        else:
-                            cor = cor_normal
-                        widget.configure(bg=fundo, fg=cor)
-                    chk = dados_card.get("check")
-                    if chk is not None:
-                        chk.configure(bg=fundo, activebackground=fundo)
-                except tk.TclError:
-                    pass
+        def _estilo_do_card(iid: str) -> None:
+            """Aplica fundo/cores de UM cartão (seleção e ``reproduzido``)."""
+            dados_card = _cards.get(iid)
+            if dados_card is None:
+                return
+            selecionado = iid in _selecionados
+            check_var = dados_card.get("check_var")
+            marcado = (bool(check_var.get())
+                       if check_var is not None else False)
+            fundo = COR_SELECAO if selecionado else (
+                COR_CARD if cartoes_ativo["on"] else COR_FUNDO_LISTA)
+            try:
+                for frame in dados_card["frames"]:
+                    frame.configure(bg=fundo)
+                for widget, cor_normal in dados_card["fundos"]:
+                    if selecionado:
+                        cor = '#ffffff'
+                    elif marcado:
+                        cor = COR_TEXTO_FRACO
+                    else:
+                        cor = cor_normal
+                    widget.configure(bg=fundo, fg=cor)
+                chk = dados_card.get("check")
+                if chk is not None:
+                    chk.configure(bg=fundo, activebackground=fundo)
+            except tk.TclError:
+                pass
+
+        def _atualizar_selecao_visual(iids=None) -> None:
+            """Atualiza os cartões de ``iids`` (None = todos).
+
+            Evita varrer a lista inteira quando o clique só mudou um ou
+            dois cartões (caso comum em seleção com Ctrl/Shift e ao marcar
+            um item como reproduzido).
+            """
+            alvos = _cards.keys() if iids is None else tuple(iids)
+            for iid in alvos:
+                _estilo_do_card(iid)
 
         def _fonte_com_risco(fonte, riscado: bool):
             if not riscado:
@@ -720,7 +747,99 @@ class JanelaOrdemServicoMixin:
                 except tk.TclError:
                     pass
             if atualizar_selecao:
-                _atualizar_selecao_visual()
+                _atualizar_selecao_visual((iid,))
+
+        _marcacoes_pendentes: dict[tuple[object, str], tuple[bool, bool]] = {}
+        _marcacao_timer: dict[str, str | None] = {"id": None}
+
+        def _cancelar_salvamento_marcacoes() -> None:
+            timer = _marcacao_timer["id"]
+            _marcacao_timer["id"] = None
+            if timer is None:
+                return
+            try:
+                janela.after_cancel(timer)
+            except tk.TclError:
+                pass
+
+        def _agendar_salvamento_marcacoes() -> None:
+            _cancelar_salvamento_marcacoes()
+            try:
+                _marcacao_timer["id"] = janela.after(
+                    _MARCACAO_SALVAR_MS, _salvar_marcacoes_pendentes)
+            except tk.TclError:
+                _marcacao_timer["id"] = None
+
+        def _salvar_marcacoes_pendentes(avisar: bool = True) -> None:
+            """Grava as marcações agrupadas, relendo o JSON antes de salvar.
+
+            Reler evita sobrescrever uma marcação feita enquanto a janela
+            estava aberta. Se o item mudou por outra via (controle remoto ou
+            execução), a marcação mais recente prevalece e a pendente é
+            descartada.
+            """
+            _cancelar_salvamento_marcacoes()
+            if not _marcacoes_pendentes:
+                return
+            pendentes = dict(_marcacoes_pendentes)
+            _marcacoes_pendentes.clear()
+
+            dados_disco = _carregar_servicos_json()
+            aplicadas: list[tuple[object, str, bool]] = []
+            for (sid, iid), (marcado, anterior) in pendentes.items():
+                serv = next((s for s in (dados_disco.get("servicos") or [])
+                             if str(s.get("id")) == str(sid)), None)
+                if serv is None:
+                    continue
+                item = next((x for x in (serv.get("itens") or [])
+                             if str(x.get("id")) == str(iid)), None)
+                if item is None:
+                    continue
+                atual = bool(item.get("reproduzido"))
+                if atual == bool(marcado):
+                    continue
+                if atual != bool(anterior):
+                    continue
+                item["reproduzido"] = bool(marcado)
+                aplicadas.append((sid, iid, bool(anterior)))
+
+            if not aplicadas:
+                return
+            if _salvar_servicos_json(dados_disco):
+                return
+
+            log.debug("Não foi possível guardar as marcações de reproduzido "
+                      "em servicos.json.")
+            for sid, iid, anterior in aplicadas:
+                serv = next((s for s in (dados.get("servicos") or [])
+                             if str(s.get("id")) == str(sid)), None)
+                item = next((x for x in ((serv or {}).get("itens") or [])
+                             if str(x.get("id")) == iid), None)
+                if item is not None:
+                    item["reproduzido"] = anterior
+                atual_serv = _servico_atual()
+                if str((atual_serv or {}).get("id")) != str(sid):
+                    continue
+                dados_card = _cards.get(iid)
+                if dados_card is None:
+                    continue
+                check_var = dados_card.get("check_var")
+                if check_var is not None:
+                    try:
+                        check_var.set(anterior)
+                    except tk.TclError:
+                        pass
+                _aplicar_estilo_reproduzido(iid)
+            if not avisar:
+                return
+            try:
+                existe = bool(janela.winfo_exists())
+            except tk.TclError:
+                existe = False
+            if existe:
+                tkinter.messagebox.showwarning(
+                    "⚠️", "Não foi possível salvar a marcação dos itens.",
+                    parent=janela)
 
         def _alternar_reproduzido(iid: str) -> None:
             serv = _servico_atual()
@@ -734,19 +853,13 @@ class JanelaOrdemServicoMixin:
             check_var = dados_card.get("check_var")
             marcado = (bool(check_var.get())
                        if check_var is not None else False)
-            anterior = bool(item.get("reproduzido"))
+            chave = (serv.get("id"), iid)
+            pendente = _marcacoes_pendentes.get(chave)
+            anterior = (pendente[1] if pendente is not None
+                        else bool(item.get("reproduzido")))
             item["reproduzido"] = marcado
-            if not marcar_item_servico(serv.get("id"), iid, marcado):
-                item["reproduzido"] = anterior
-                if check_var is not None:
-                    try:
-                        check_var.set(anterior)
-                    except tk.TclError:
-                        pass
-                tkinter.messagebox.showwarning(
-                    "⚠️", "Não foi possível salvar a marcação do item.",
-                    parent=janela)
-                return
+            _marcacoes_pendentes[chave] = (marcado, anterior)
+            _agendar_salvamento_marcacoes()
             _aplicar_estilo_reproduzido(iid)
 
         def _sincronizar_marca_item(item_id) -> None:
@@ -770,11 +883,14 @@ class JanelaOrdemServicoMixin:
             _aplicar_estilo_reproduzido(iid)
 
         def _definir_selecao(novos) -> None:
+            anteriores = set(_selecionados)
             _selecionados.clear()
             _selecionados.update(i for i in novos if i in _cards)
             if _foco["id"] not in _selecionados:
                 _foco["id"] = next(iter(_selecionados), None)
-            _atualizar_selecao_visual()
+            mudaram = anteriores ^ _selecionados
+            if mudaram:
+                _atualizar_selecao_visual(mudaram)
 
         def _ids_selecionados() -> list[str]:
             return [iid for iid in _ordem if iid in _selecionados]
@@ -825,7 +941,10 @@ class JanelaOrdemServicoMixin:
             """Ajusta largura/wraplength só quando o valor muda de fato."""
             _layout["timer"] = None
             try:
-                largura = max(1, lista_canvas.winfo_width())
+                largura = lista_canvas.winfo_width()
+                if largura <= 1:
+                    # Ainda não mapeado: o <Configure> real fará o layout.
+                    return
                 wrap = max(180, largura - 255)
                 if largura != _layout["largura"]:
                     lista_canvas.itemconfigure(_canvas_window, width=largura)
@@ -929,8 +1048,65 @@ class JanelaOrdemServicoMixin:
             ext = os.path.splitext(caminho or "")[1].lower()
             return ext in EXTENSOES_VIDEO or ext in EXTENSOES_AUDIO
 
-        def _caminho_item(it: dict) -> str | None:
-            """Resolve o arquivo/URL de mídia de um item da Ordem de Serviço."""
+        def _precarregar_referencias(itens) -> tuple[dict[str, str],
+                                                      dict[str, dict]]:
+            """Carrega numa passada os caminhos de mídia e anúncios dos itens.
+
+            Antes cada cartão consultava o banco separadamente (e os anúncios
+            reliam a tabela inteira por item). Aqui as referências da lista
+            são reunidas e resolvidas antes da montagem dos cartões.
+            """
+            ids_midia: list[object] = []
+            ids_anuncio: set[str] = set()
+            for it in itens or []:
+                tipo = (it.get("tipo") or "").strip().lower()
+                ref = it.get("referencia_id")
+                if ref is None:
+                    continue
+                if tipo in ("video", "audio"):
+                    # Só tipos que o SQLite aceita como parâmetro; um JSON
+                    # malformado não pode derrubar a montagem da lista.
+                    if isinstance(ref, (int, float, str, bytes)):
+                        ids_midia.append(ref)
+                elif tipo == "anuncio":
+                    ids_anuncio.add(str(ref))
+
+            caminhos_midia: dict[str, str] = {}
+            unicos = list(dict.fromkeys(ids_midia))
+            for inicio in range(0, len(unicos), 500):
+                lote = unicos[inicio:inicio + 500]
+                marcadores = ", ".join("?" for _ in lote)
+                try:
+                    rows = db_query(
+                        "SELECT id, caminho_arquivo FROM midia "
+                        f"WHERE id IN ({marcadores}) AND ativo = 1",
+                        tuple(lote))
+                except Exception:
+                    continue
+                for row in rows or []:
+                    caminho = (row.get("caminho_arquivo") or "").strip()
+                    if caminho:
+                        caminhos_midia[str(row.get("id"))] = caminho
+
+            anuncios: dict[str, dict] = {}
+            if ids_anuncio:
+                try:
+                    rows = _listar_anuncios_db()
+                except Exception:
+                    rows = []
+                for anuncio in rows or []:
+                    chave = str(anuncio.get("id"))
+                    if chave in ids_anuncio:
+                        anuncios[chave] = anuncio
+            return caminhos_midia, anuncios
+
+        def _caminho_item(it: dict, referencias=None) -> str | None:
+            """Resolve o arquivo/URL de mídia de um item da Ordem de Serviço.
+
+            ``referencias`` (opcional) é o par devolvido por
+            ``_precarregar_referencias``; sem ele, consulta o banco item a
+            item como antes.
+            """
             tipo = (it.get("tipo") or "").strip().lower()
             if tipo == "youtube":
                 url = (it.get("youtube_url") or "").strip()
@@ -941,21 +1117,29 @@ class JanelaOrdemServicoMixin:
                     return caminho
             ref = it.get("referencia_id")
             if tipo in ("video", "audio") and ref is not None:
-                try:
-                    rows = db_query(
-                        "SELECT caminho_arquivo FROM midia "
-                        "WHERE id = ? AND ativo = 1", (ref,))
-                except Exception:
-                    rows = None
-                if rows:
-                    caminho = (rows[0].get("caminho_arquivo") or "").strip()
-                    if caminho:
-                        return caminho
+                if referencias is not None:
+                    encontrado = (referencias[0].get(str(ref)) or "").strip()
+                    if encontrado:
+                        caminho = encontrado
+                else:
+                    try:
+                        rows = db_query(
+                            "SELECT caminho_arquivo FROM midia "
+                            "WHERE id = ? AND ativo = 1", (ref,))
+                    except Exception:
+                        rows = None
+                    if rows:
+                        caminho = (rows[0].get("caminho_arquivo") or "").strip()
+                if caminho:
+                    return caminho
             if tipo == "anuncio" and ref is not None:
-                try:
-                    anuncio = _buscar_anuncio_por_ref(ref) or {}
-                except Exception:
-                    anuncio = {}
+                if referencias is not None:
+                    anuncio = referencias[1].get(str(ref)) or {}
+                else:
+                    try:
+                        anuncio = _buscar_anuncio_por_ref(ref) or {}
+                    except Exception:
+                        anuncio = {}
                 caminho = (anuncio.get("arquivo_midia") or "").strip()
                 if caminho and _extensao_midia(caminho):
                     return caminho
@@ -971,9 +1155,10 @@ class JanelaOrdemServicoMixin:
                 return f"{titulo}\n{url}"
             return url or titulo
 
-        def _texto_duracao_item(it: dict, caminho: str | None = None) -> str:
+        def _texto_duracao_item(it: dict, caminho: str | None = None,
+                                referencias=None) -> str:
             if caminho is None:
-                caminho = _caminho_item(it)
+                caminho = _caminho_item(it, referencias)
             if caminho and caminho in _duracao_cache:
                 duracao = _duracao_cache[caminho]
                 if duracao:
@@ -1018,9 +1203,10 @@ class JanelaOrdemServicoMixin:
             _persistir_duracoes({caminho: duracao})
 
         # Fila de durações: os cartões apenas enfileiram; a consulta começa
-        # no idle (depois do primeiro desenho) e os resultados são aplicados
-        # em lote, numa única passada de UI.
+        # no idle (depois do primeiro desenho), roda com concorrência limitada
+        # e os resultados são aplicados em lote, numa única passada de UI.
         _duracao_fila: dict[str, bool] = {}
+        _duracao_jobs: dict[str, bool] = {}
         _duracao_resultados: queue.SimpleQueue = queue.SimpleQueue()
         _duracao_timers: dict[str, str | None] = {"inicio": None,
                                                   "poll": None}
@@ -1034,12 +1220,13 @@ class JanelaOrdemServicoMixin:
             except tk.TclError:
                 _duracao_timers["inicio"] = None
 
-        def _iniciar_duracoes() -> None:
-            _duracao_timers["inicio"] = None
-            fila = list(_duracao_fila.items())
-            _duracao_fila.clear()
+        def _despachar_duracoes() -> None:
+            """Inicia no máximo ``_DURACAO_MAX_WORKERS`` consultas por vez."""
             player = getattr(self, "player", None)
-            for caminho, eh_youtube in fila:
+            while (_duracao_jobs
+                   and len(_duracao_pendente) < _DURACAO_MAX_WORKERS):
+                caminho = next(iter(_duracao_jobs))
+                eh_youtube = _duracao_jobs.pop(caminho)
                 if (caminho in _duracao_cache
                         or caminho in _duracao_pendente):
                     continue
@@ -1051,7 +1238,19 @@ class JanelaOrdemServicoMixin:
                     target=_trabalho_duracao,
                     args=(caminho, eh_youtube, player), daemon=True,
                     name="navepro-duracao-item").start()
-            _agendar_poll_duracoes()
+            if _duracao_pendente:
+                _agendar_poll_duracoes()
+
+        def _iniciar_duracoes() -> None:
+            _duracao_timers["inicio"] = None
+            for caminho, eh_youtube in list(_duracao_fila.items()):
+                _duracao_fila.pop(caminho, None)
+                if (caminho in _duracao_cache
+                        or caminho in _duracao_pendente
+                        or caminho in _duracao_jobs):
+                    continue
+                _duracao_jobs[caminho] = eh_youtube
+            _despachar_duracoes()
 
         def _trabalho_duracao(caminho: str, eh_youtube: bool,
                               player) -> None:
@@ -1105,7 +1304,9 @@ class JanelaOrdemServicoMixin:
                     for iid, texto in alteracoes.items():
                         _definir_duracao_card(iid, texto)
                     _persistir_duracoes(resultados)
-            if _duracao_pendente:
+            if _duracao_jobs:
+                _despachar_duracoes()
+            elif _duracao_pendente:
                 _agendar_poll_duracoes()
 
         def _pedir_duracao(caminho: str) -> None:
@@ -1116,7 +1317,8 @@ class JanelaOrdemServicoMixin:
             """
             if (not caminho or caminho in _duracao_cache
                     or caminho in _duracao_pendente
-                    or caminho in _duracao_fila):
+                    or caminho in _duracao_fila
+                    or caminho in _duracao_jobs):
                 return
             eh_youtube = _eh_url_youtube(caminho)
             if not eh_youtube and not os.path.isfile(caminho):
@@ -1177,30 +1379,53 @@ class JanelaOrdemServicoMixin:
 
         # ── Arrastar e soltar para reordenar os cartões ──
         _drag_state: dict[str, object] = {
-            "origem": None, "press_y": None, "dragging": False, "pos": None}
+            "origem": None, "press_y": None, "dragging": False, "pos": None,
+            "geometria": None}
 
-        def _calcular_posicao(y: int):
-            """Devolve (posição de inserção, y da linha) para o y informado."""
-            if not _ordem:
-                return None
-            pos = len(_ordem)
-            linha_y = None
-            for idx, iid in enumerate(_ordem):
+        def _geometria_dos_cards() -> list[tuple[str, int, int]]:
+            """Posições/alturas dos cartões no início do arraste.
+
+            Guardar uma vez evita dois ``winfo_*`` (ida ao X) por cartão a
+            cada evento de movimento do mouse.
+            """
+            geometria: list[tuple[str, int, int]] = []
+            for iid in _ordem:
                 dados = _cards.get(iid)
                 if dados is None:
                     continue
-                frame = dados["frame"]
+                frame = dados.get("frame")
+                if frame is None:
+                    continue
                 try:
-                    topo = frame.winfo_y()
-                    altura = frame.winfo_height()
+                    geometria.append(
+                        (iid, frame.winfo_y(), frame.winfo_height()))
                 except tk.TclError:
                     continue
-                if y < topo + altura / 2:
-                    return idx, topo
-                linha_y = topo + altura
-            if linha_y is None:
+            return geometria
+
+        def _calcular_posicao(y: int, geometria=None):
+            """Devolve (posição de inserção, y da linha) para o y informado.
+
+            ``geometria`` vem de ``_geometria_dos_cards`` e permite achar a
+            posição por busca binária durante o arraste.
+            """
+            if geometria is None:
+                geometria = _geometria_dos_cards()
+            if not geometria:
                 return None
-            return pos, linha_y
+            esq, dir_ = 0, len(geometria)
+            while esq < dir_:
+                meio = (esq + dir_) // 2
+                _iid, topo, altura = geometria[meio]
+                if y < topo + altura / 2:
+                    dir_ = meio
+                else:
+                    esq = meio + 1
+            if esq < len(geometria):
+                _iid, topo, _altura = geometria[esq]
+                return esq, topo
+            _iid, topo, altura = geometria[-1]
+            return len(geometria), topo + altura
 
         def _on_card_button_press(event, iid):
             # Clique nos cartões não chega ao bind da janela (o handler
@@ -1228,7 +1453,7 @@ class JanelaOrdemServicoMixin:
                 _definir_selecao({iid})
                 _ancora["id"] = iid
             _drag_state.update(origem=iid, press_y=event.y_root,
-                               dragging=False, pos=None)
+                               dragging=False, pos=None, geometria=None)
             return "break"
 
         def _on_card_motion(event):
@@ -1240,6 +1465,7 @@ class JanelaOrdemServicoMixin:
                 if press_y is None or abs(event.y_root - press_y) < 6:
                     return None
                 _drag_state["dragging"] = True
+                _drag_state["geometria"] = _geometria_dos_cards()
                 try:
                     lista_canvas.configure(cursor="fleur")
                 except tk.TclError:
@@ -1248,7 +1474,7 @@ class JanelaOrdemServicoMixin:
                 y = event.y_root - cards_host.winfo_rooty()
             except tk.TclError:
                 return None
-            alvo = _calcular_posicao(y)
+            alvo = _calcular_posicao(y, _drag_state.get("geometria"))
             if alvo is None:
                 _drag_state["pos"] = None
                 _esconder_indicador()
@@ -1290,7 +1516,7 @@ class JanelaOrdemServicoMixin:
             pos = _drag_state.get("pos")
             arrastou = bool(_drag_state.get("dragging"))
             _drag_state.update(origem=None, press_y=None,
-                               dragging=False, pos=None)
+                               dragging=False, pos=None, geometria=None)
             _esconder_indicador()
             try:
                 lista_canvas.configure(cursor="")
@@ -1430,19 +1656,20 @@ class JanelaOrdemServicoMixin:
         janela.bind("<Escape>", _fechar_menu_contexto)
 
         def _criar_card(it: dict, indice: int,
-                        pos: int | None = None) -> None:
+                        pos: int | None = None, referencias=None) -> None:
             """Monta um cartão (ou linha) para um item da ordem de serviço.
 
             ``pos`` insere o cartão numa posição existente (edição) em vez
-            de anexá-lo ao fim da lista.
+            de anexá-lo ao fim da lista. ``referencias`` (opcional) evita
+            consultar o banco de novo durante uma montagem completa.
             """
             tipo = (it.get("tipo") or "slide").strip().lower() or "slide"
             tipo_emoji = {"hino": "📖", "versiculo": "✝️", "video": "🎬",
                           "audio": "🎵", "slide": "📄", "anuncio": "📢",
                           "sermao": "🎤", "youtube": "▶️"}.get(tipo, "📁")
             iid = str(it.get("id"))
-            caminho = _caminho_item(it)
-            texto_duracao = _texto_duracao_item(it, caminho)
+            caminho = _caminho_item(it, referencias)
+            texto_duracao = _texto_duracao_item(it, caminho, referencias)
             texto_titulo = _texto_titulo_item(it, indice)
             if "\n" in texto_titulo:
                 titulo, url = texto_titulo.split("\n", 1)
@@ -1617,8 +1844,10 @@ class JanelaOrdemServicoMixin:
                 if not serv:
                     _definir_selecao(set())
                 else:
-                    for i, it in enumerate(list(serv.get("itens") or [])):
-                        _criar_card(it, i + 1)
+                    itens = list(serv.get("itens") or [])
+                    referencias = _precarregar_referencias(itens)
+                    for i, it in enumerate(itens):
+                        _criar_card(it, i + 1, referencias=referencias)
                     _selecionados.intersection_update(_cards)
                     if _ancora["id"] not in _cards:
                         _ancora["id"] = None
@@ -1679,7 +1908,7 @@ class JanelaOrdemServicoMixin:
                 _foco["id"] = iid
             if ancora:
                 _ancora["id"] = iid
-            _atualizar_selecao_visual()
+            _atualizar_selecao_visual((iid,))
             _cancelar_layout_agendado()
             _atualizar_layout_canvas()
 
@@ -1802,18 +2031,28 @@ class JanelaOrdemServicoMixin:
             _timers["contagem"] = None
             if not janela.winfo_exists():
                 return
+            player = getattr(self, "player", None)
+            tocando = bool(player is not None
+                           and getattr(player, "is_playing", False))
+            if tocando or _contagem["iid"] is not None:
+                try:
+                    _atualizar_contagem()
+                except Exception as exc:
+                    log.debug("Falha ao atualizar a contagem da Ordem "
+                              "de Serviço: %s", exc)
+                atraso = _CONTAGEM_ATIVA_MS
+            else:
+                atraso = _CONTAGEM_REPOUSO_MS
             try:
-                _atualizar_contagem()
-            except Exception as exc:
-                log.debug("Falha ao atualizar a contagem da Ordem de Serviço: %s", exc)
-            try:
-                _timers["contagem"] = janela.after(500, _tick_contagem)
+                _timers["contagem"] = janela.after(atraso, _tick_contagem)
             except tk.TclError:
                 pass
 
         def _ao_destruir_janela(event):
             if event.widget is not janela:
                 return
+            # Não perde um clique que ainda não chegou ao timer de gravação.
+            _salvar_marcacoes_pendentes(avisar=False)
             for chave in ("contagem",):
                 timer = _timers.get(chave)
                 if timer is not None:
@@ -3202,6 +3441,9 @@ class JanelaOrdemServicoMixin:
             serv = _servico_atual()
             if not serv:
                 return
+            # Persiste os cliques pendentes antes de executar: a execução
+            # pode marcar o mesmo item e deve ver o estado mais recente.
+            _salvar_marcacoes_pendentes()
             escolhido = _item_escolhido["id"]
             # Consome a escolha do operador (uma única vez). A partir daqui a
             # seleção da lista é ignorada: o botão só avança item a item e, ao
