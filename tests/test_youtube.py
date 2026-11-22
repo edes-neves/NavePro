@@ -14,6 +14,7 @@ import datetime
 import os
 import re
 import sys
+import threading
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(_AQUI)
@@ -242,6 +243,14 @@ checar("o metadado não sobrescreve o título digitado pelo operador",
 checar("falha do yt-dlp não bloqueia o salvamento da URL",
        "Não foi possível obter o título" not in _fonte_os
        and 'if not titulo and info and info.get("titulo")' in _fonte_os)
+checar("link colado no campo consulta o título quase de imediato",
+       '"<<Paste>>"' in _fonte_os
+       and "_YOUTUBE_INFO_COLAR_MS" in _fonte_os
+       and "atraso_ms" in _fonte_os)
+checar("salvar reutiliza a consulta de título já em andamento",
+       "_info_youtube_para_salvar(youtube_url)" in _fonte_os
+       and "evento.wait(" in _fonte_os
+       and "resultado_token" in _fonte_os)
 checar("a URL aparece abaixo do título no editor",
        "after=titulo_entry" in _fonte_os and "youtube_titulo_url_lbl" in _fonte_os)
 checar("a lista busca a duração do YouTube sem baixar o vídeo",
@@ -369,6 +378,66 @@ checar("remoto: URL que não é do YouTube é recusada",
 _ok, _err, _campos = _resolver(None, {"tipo": "slide"})
 checar("remoto: item comum também ganha a chave youtube_url (vazia)",
        _ok and _campos.get("youtube_url") == "")
+
+
+def _extrair_funcao_os(nome, ns):
+    arvore = ast.parse(_fonte_os)
+    janela = next(
+        no for no in ast.walk(arvore)
+        if isinstance(no, ast.FunctionDef) and no.name == "janela_ordem_servico")
+    no = next(
+        sub for sub in ast.walk(janela)
+        if isinstance(sub, ast.FunctionDef) and sub.name == nome)
+    codigo = ast.get_source_segment(_fonte_os, no)
+    exec(compile(ast.parse(codigo), f"<{nome}>", "exec"), ns)  # noqa: S102
+    return ns[nome]
+
+
+_url = "https://youtu.be/abc123"
+_evento = threading.Event()
+_evento.set()
+_chamadas = []
+
+
+def _info_nova(url):
+    _chamadas.append(url)
+    return {"titulo": "Consulta nova"}
+
+
+_fn = _extrair_funcao_os("_info_youtube_para_salvar", {
+    "_yt_info": {
+        "pendente": True, "pendente_url": _url, "evento": _evento,
+        "resultado": {"titulo": "Pronto"}, "resultado_url": _url,
+        "resultado_token": 4, "token": 4},
+    "threading": threading,
+    "_YOUTUBE_INFO_ESPERA_S": 16.0,
+    "_obter_info_youtube": _info_nova,
+})
+checar("salvar usa o resultado da consulta já em andamento",
+       _fn(_url) == {"titulo": "Pronto"} and not _chamadas)
+
+_chamadas.clear()
+_fn = _extrair_funcao_os("_info_youtube_para_salvar", {
+    "_yt_info": {
+        "pendente": True, "pendente_url": _url, "evento": _evento,
+        "resultado": {"titulo": "Antigo"}, "resultado_url": _url,
+        "resultado_token": 3, "token": 4},
+    "threading": threading,
+    "_YOUTUBE_INFO_ESPERA_S": 16.0,
+    "_obter_info_youtube": _info_nova,
+})
+checar("salvar não repete a consulta quando o token mudou",
+       _fn(_url) is None and not _chamadas)
+
+_chamadas.clear()
+_fn = _extrair_funcao_os("_info_youtube_para_salvar", {
+    "_yt_info": {"pendente": False},
+    "threading": threading,
+    "_YOUTUBE_INFO_ESPERA_S": 16.0,
+    "_obter_info_youtube": _info_nova,
+})
+checar("sem consulta em andamento, salvar mantém a consulta direta",
+       _fn(_url) == {"titulo": "Consulta nova"} and _chamadas == [_url])
 
 print("OK" if not falhas else f"\n{falhas} falha(s)")
 sys.exit(1 if falhas else 0)

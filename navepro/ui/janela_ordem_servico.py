@@ -85,6 +85,14 @@ _MARCACAO_SALVAR_MS = 500
 _CONTAGEM_ATIVA_MS = 500
 _CONTAGEM_REPOUSO_MS = 1000
 
+# Metadados do YouTube: espera o operador parar de digitar, mas um link
+# colado consulta quase de imediato (é o caso mais comum).
+_YOUTUBE_INFO_DEBOUNCE_MS = 700
+_YOUTUBE_INFO_COLAR_MS = 100
+# Ao salvar com uma consulta já em andamento, espera o resultado dela em
+# vez de disparar uma segunda consulta ao yt-dlp.
+_YOUTUBE_INFO_ESPERA_S = 16.0
+
 # Botões e campos desenham cantos arredondados (fachada do tkinter).
 tk = TkArredondado(tk)
 
@@ -2865,9 +2873,18 @@ class JanelaOrdemServicoMixin:
                 insertbackground='#f0c040')
             youtube_url_entry.pack(side='left', fill='x', expand=True,
                                    padx=(4, 0), ipady=2)
+            def _colar_url_youtube():
+                _colar_texto_campo(youtube_url_entry)
+                try:
+                    add_win.after_idle(
+                        lambda: _agendar_info_youtube(
+                            atraso_ms=_YOUTUBE_INFO_COLAR_MS))
+                except tk.TclError:
+                    pass
+
             _menu_contexto_campo(
                 youtube_url_entry,
-                [("📋 Colar", lambda: _colar_texto_campo(youtube_url_entry))])
+                [("📋 Colar", _colar_url_youtube)])
 
             _yt_url_inicial = youtube_url_var.get().strip()
             _yt_titulo_inicial = ((item_edit or {}).get("titulo_custom")
@@ -2881,6 +2898,10 @@ class JanelaOrdemServicoMixin:
                     "duracao_estimada_segundos") or 0) if youtube_var.get() else 0,
                 "token": 0, "timer": None, "pendente": False,
                 "pendente_url": "",
+                # Resultado da consulta em andamento (compartilhado com o
+                # salvamento, que não deve disparar um segundo yt-dlp).
+                "evento": None, "resultado": None,
+                "resultado_url": "", "resultado_token": 0,
                 # O título é sempre editável. Quando o operador digita, o
                 # metadado do yt-dlp não pode mais sobrescrever o texto.
                 "editado": bool(_yt_titulo_inicial),
@@ -2944,8 +2965,24 @@ class JanelaOrdemServicoMixin:
                     pass
 
             def _iniciar_info_youtube(url: str, token: int):
+                evento = threading.Event()
+                _yt_info["evento"] = evento
+                _yt_info["resultado"] = None
+                _yt_info["resultado_url"] = url
+                _yt_info["resultado_token"] = token
+
                 def _trabalho():
-                    info = _obter_info_youtube(url)
+                    try:
+                        info = _obter_info_youtube(url)
+                    except Exception as exc:
+                        log.exception("Falha ao obter informações do "
+                                      "YouTube: %s", exc)
+                        info = None
+                    if token == _yt_info.get("token"):
+                        _yt_info["resultado"] = info
+                        _yt_info["resultado_url"] = url
+                        _yt_info["resultado_token"] = token
+                    evento.set()
                     try:
                         self.root.after(
                             0, lambda: _aplicar_info_youtube(info, url, token))
@@ -2955,7 +2992,29 @@ class JanelaOrdemServicoMixin:
                 threading.Thread(target=_trabalho, daemon=True,
                                  name="navepro-youtube-info").start()
 
-            def _agendar_info_youtube(*_args):
+            def _info_youtube_para_salvar(youtube_url: str):
+                """Aproveita a consulta em andamento antes de consultar de novo.
+
+                Sem isso, clicar em Salvar enquanto o yt-dlp já estava
+                buscando o título disparava uma segunda consulta e o
+                operador esperava duas vezes pela rede.
+                """
+                if (_yt_info.get("pendente")
+                        and _yt_info.get("pendente_url") == youtube_url):
+                    evento = _yt_info.get("evento")
+                    if isinstance(evento, threading.Event):
+                        try:
+                            evento.wait(timeout=_YOUTUBE_INFO_ESPERA_S)
+                        except Exception:
+                            pass
+                    if (_yt_info.get("resultado_url") == youtube_url
+                            and _yt_info.get("resultado_token")
+                            == _yt_info.get("token")):
+                        return _yt_info.get("resultado")
+                    return None
+                return _obter_info_youtube(youtube_url)
+
+            def _agendar_info_youtube(*_args, atraso_ms=None):
                 _atualizar_url_abaixo_titulo()
                 timer = _yt_info.get("timer")
                 if timer is not None:
@@ -3006,8 +3065,10 @@ class JanelaOrdemServicoMixin:
                     _yt_info["pendente_url"] = url
                     _iniciar_info_youtube(url, token)
 
+                espera = (_YOUTUBE_INFO_DEBOUNCE_MS if atraso_ms is None
+                          else max(0, int(atraso_ms)))
                 try:
-                    _yt_info["timer"] = add_win.after(700, _disparar)
+                    _yt_info["timer"] = add_win.after(espera, _disparar)
                 except tk.TclError:
                     pass
 
@@ -3018,6 +3079,20 @@ class JanelaOrdemServicoMixin:
                     youtube_url_row.pack_forget()
                 _agendar_info_youtube()
 
+            def _ao_colar_url_youtube(event=None):
+                # O <<Paste>> ocorre antes de o Entry receber o texto; o
+                # after_idle agenda a consulta curta já com a URL final.
+                try:
+                    add_win.after_idle(
+                        lambda: _agendar_info_youtube(
+                            atraso_ms=_YOUTUBE_INFO_COLAR_MS))
+                except tk.TclError:
+                    pass
+
+            youtube_url_entry.bind(
+                "<<Paste>>", _ao_colar_url_youtube, add="+")
+            youtube_url_entry.bind(
+                "<Shift-Insert>", _ao_colar_url_youtube, add="+")
             youtube_url_var.trace_add(
                 "write", lambda *a: _agendar_info_youtube())
             youtube_var.trace_add(
@@ -3126,7 +3201,7 @@ class JanelaOrdemServicoMixin:
                         except tk.TclError:
                             pass
                         try:
-                            info = _obter_info_youtube(youtube_url)
+                            info = _info_youtube_para_salvar(youtube_url)
                         finally:
                             try:
                                 add_win.configure(cursor="")
