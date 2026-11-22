@@ -705,7 +705,8 @@ class JanelaOrdemServicoMixin:
                 estilos.append("overstrike")
             return (familia, tamanho, " ".join(estilos))
 
-        def _aplicar_estilo_reproduzido(iid: str) -> None:
+        def _aplicar_estilo_reproduzido(
+                iid: str, atualizar_selecao: bool = True) -> None:
             dados_card = _cards.get(iid)
             if not dados_card:
                 return
@@ -718,7 +719,8 @@ class JanelaOrdemServicoMixin:
                         font=_fonte_com_risco(fonte, marcado))
                 except tk.TclError:
                     pass
-            _atualizar_selecao_visual()
+            if atualizar_selecao:
+                _atualizar_selecao_visual()
 
         def _alternar_reproduzido(iid: str) -> None:
             serv = _servico_atual()
@@ -806,22 +808,50 @@ class JanelaOrdemServicoMixin:
             if ver:
                 _ver_item(iid)
 
+        _layout: dict[str, object] = {
+            "largura": None, "wrap": None, "timer": None}
+
+        def _cancelar_layout_agendado() -> None:
+            timer = _layout.get("timer")
+            _layout["timer"] = None
+            if timer is None:
+                return
+            try:
+                lista_canvas.after_cancel(timer)
+            except tk.TclError:
+                pass
+
         def _atualizar_layout_canvas(event=None) -> None:
+            """Ajusta largura/wraplength só quando o valor muda de fato."""
+            _layout["timer"] = None
             try:
                 largura = max(1, lista_canvas.winfo_width())
-                lista_canvas.itemconfigure(_canvas_window, width=largura)
                 wrap = max(180, largura - 255)
-                for dados in _cards.values():
-                    dados["titulo"].configure(wraplength=wrap)
-                    url = dados.get("url")
-                    if url is not None:
-                        url.configure(wraplength=wrap)
+                if largura != _layout["largura"]:
+                    lista_canvas.itemconfigure(_canvas_window, width=largura)
+                    _layout["largura"] = largura
+                if wrap != _layout["wrap"]:
+                    for dados in _cards.values():
+                        dados["titulo"].configure(wraplength=wrap)
+                        url = dados.get("url")
+                        if url is not None:
+                            url.configure(wraplength=wrap)
+                    _layout["wrap"] = wrap
                 lista_canvas.configure(
                     scrollregion=lista_canvas.bbox('all'))
             except tk.TclError:
                 pass
 
-        lista_canvas.bind('<Configure>', _atualizar_layout_canvas)
+        def _agendar_layout_canvas(event=None) -> None:
+            """Debounce do <Configure> para não varrer os cartões por evento."""
+            _cancelar_layout_agendado()
+            try:
+                _layout["timer"] = lista_canvas.after(
+                    60, _atualizar_layout_canvas)
+            except tk.TclError:
+                _layout["timer"] = None
+
+        lista_canvas.bind('<Configure>', _agendar_layout_canvas)
         cards_host.bind(
             '<Configure>',
             lambda _e: lista_canvas.configure(
@@ -957,72 +987,144 @@ class JanelaOrdemServicoMixin:
                 return _formatar_duracao_segundos(estimado)
             return "—"
 
-        def _persistir_duracao(caminho: str, duracao) -> None:
-            """Guarda a duração real no item para não depender do ffprobe sempre."""
-            if not caminho or not duracao:
-                return
+        def _persistir_duracoes(resultados: dict[str, float]) -> None:
+            """Guarda as durações reais no item (um único save por lote)."""
             serv = _servico_atual()
-            if not serv:
-                return
-            try:
-                valor = int(round(float(duracao)))
-            except (TypeError, ValueError):
+            if not serv or not resultados:
                 return
             alterou = False
             for it in serv.get("itens") or []:
-                if _linhas_path.get(str(it.get("id"))) != caminho:
+                caminho = _linhas_path.get(str(it.get("id")))
+                if not caminho or caminho not in resultados:
+                    continue
+                duracao = resultados[caminho]
+                if not duracao:
+                    continue
+                try:
+                    valor = int(round(float(duracao)))
+                except (TypeError, ValueError):
                     continue
                 if it.get("duracao_estimada_segundos") != valor:
                     it["duracao_estimada_segundos"] = valor
                     alterou = True
             if alterou and not _salvar_servicos_json(dados):
-                log.debug("Não foi possível guardar a duração em servicos.json.")
+                log.debug("Não foi possível guardar as durações em "
+                          "servicos.json.")
 
-        def _pedir_duracao(caminho: str) -> None:
-            """Consulta a duração real sem travar a interface.
-
-            Arquivos locais usam o ffprobe do player; URLs do YouTube usam
-            os metadados do yt-dlp (sem baixar o vídeo).
-            """
-            if not caminho or caminho in _duracao_cache or caminho in _duracao_pendente:
+        def _persistir_duracao(caminho: str, duracao) -> None:
+            """Guarda a duração real no item (usado pela contagem ao vivo)."""
+            if not caminho or not duracao:
                 return
+            _persistir_duracoes({caminho: duracao})
+
+        # Fila de durações: os cartões apenas enfileiram; a consulta começa
+        # no idle (depois do primeiro desenho) e os resultados são aplicados
+        # em lote, numa única passada de UI.
+        _duracao_fila: dict[str, bool] = {}
+        _duracao_resultados: queue.SimpleQueue = queue.SimpleQueue()
+        _duracao_timers: dict[str, str | None] = {"inicio": None,
+                                                  "poll": None}
+
+        def _agendar_inicio_duracoes() -> None:
+            if _duracao_timers["inicio"] is not None or not _duracao_fila:
+                return
+            try:
+                _duracao_timers["inicio"] = self.root.after_idle(
+                    _iniciar_duracoes)
+            except tk.TclError:
+                _duracao_timers["inicio"] = None
+
+        def _iniciar_duracoes() -> None:
+            _duracao_timers["inicio"] = None
+            fila = list(_duracao_fila.items())
+            _duracao_fila.clear()
             player = getattr(self, "player", None)
-            eh_youtube = _eh_url_youtube(caminho)
-            if not eh_youtube and not os.path.isfile(caminho):
-                return
-            if not eh_youtube and player is None:
-                return
-            _duracao_pendente.add(caminho)
+            for caminho, eh_youtube in fila:
+                if (caminho in _duracao_cache
+                        or caminho in _duracao_pendente):
+                    continue
+                if not eh_youtube and (player is None
+                                       or not os.path.isfile(caminho)):
+                    continue
+                _duracao_pendente.add(caminho)
+                threading.Thread(
+                    target=_trabalho_duracao,
+                    args=(caminho, eh_youtube, player), daemon=True,
+                    name="navepro-duracao-item").start()
+            _agendar_poll_duracoes()
 
-            def _trabalho():
+        def _trabalho_duracao(caminho: str, eh_youtube: bool,
+                              player) -> None:
+            try:
                 if eh_youtube:
                     info = _obter_info_youtube(caminho)
                     duracao = (info or {}).get("duracao") or None
                 else:
                     duracao = player._obter_duracao_arquivo(caminho)
+            except Exception as exc:
+                log.debug("Falha ao obter a duração de %s: %s", caminho, exc)
+                duracao = None
+            _duracao_resultados.put((caminho, duracao))
 
-                def _aplicar():
-                    _duracao_pendente.discard(caminho)
-                    _duracao_cache[caminho] = duracao
-                    if not duracao or not janela.winfo_exists():
-                        return
-                    _persistir_duracao(caminho, duracao)
-                    texto = _formatar_duracao_segundos(duracao)
-                    for iid, path in list(_linhas_path.items()):
-                        if path != caminho:
-                            continue
-                        _textos_base[iid] = texto
-                        if _contagem["iid"] == iid:
-                            continue
-                        _definir_duracao_card(iid, texto)
+        def _agendar_poll_duracoes() -> None:
+            if _duracao_timers["poll"] is not None or not _duracao_pendente:
+                return
+            try:
+                _duracao_timers["poll"] = janela.after(
+                    50, _drenar_duracoes)
+            except tk.TclError:
+                _duracao_timers["poll"] = None
 
+        def _drenar_duracoes() -> None:
+            _duracao_timers["poll"] = None
+            resultados: dict[str, float] = {}
+            while True:
                 try:
-                    self.root.after(0, _aplicar)
-                except (tk.TclError, RuntimeError):
-                    pass
+                    caminho, duracao = _duracao_resultados.get_nowait()
+                except queue.Empty:
+                    break
+                _duracao_pendente.discard(caminho)
+                _duracao_cache[caminho] = duracao
+                if duracao:
+                    resultados[caminho] = duracao
+            if resultados:
+                try:
+                    existe = bool(janela.winfo_exists())
+                except tk.TclError:
+                    existe = False
+                if existe:
+                    alteracoes: dict[str, str] = {}
+                    for caminho, duracao in resultados.items():
+                        texto = _formatar_duracao_segundos(duracao)
+                        for iid, path in list(_linhas_path.items()):
+                            if path != caminho:
+                                continue
+                            _textos_base[iid] = texto
+                            if _contagem["iid"] != iid:
+                                alteracoes[iid] = texto
+                    for iid, texto in alteracoes.items():
+                        _definir_duracao_card(iid, texto)
+                    _persistir_duracoes(resultados)
+            if _duracao_pendente:
+                _agendar_poll_duracoes()
 
-            threading.Thread(target=_trabalho, daemon=True,
-                             name="navepro-duracao-item").start()
+        def _pedir_duracao(caminho: str) -> None:
+            """Enfileira a consulta da duração real (ffprobe/yt-dlp).
+
+            A consulta só começa no idle e os resultados são aplicados em
+            lote, para não criar threads/repinturas durante a montagem.
+            """
+            if (not caminho or caminho in _duracao_cache
+                    or caminho in _duracao_pendente
+                    or caminho in _duracao_fila):
+                return
+            eh_youtube = _eh_url_youtube(caminho)
+            if not eh_youtube and not os.path.isfile(caminho):
+                return
+            if not eh_youtube and getattr(self, "player", None) is None:
+                return
+            _duracao_fila[caminho] = eh_youtube
+            _agendar_inicio_duracoes()
 
         # ── Indicador animado de inserção (drag & drop) ──
         _ind: dict[str, object] = {
@@ -1208,7 +1310,9 @@ class JanelaOrdemServicoMixin:
                 serv["itens"] = itens_antigos
                 log.warning("Não foi possível salvar a reordenação por arrastar.")
                 return "break"
-            _carregar_itens()
+            _ordem[:] = [str(x.get("id")) for x in novo
+                         if str(x.get("id")) in _cards]
+            _reordenar_cards_visual()
             _selecionar_item(str(origem), ver=True)
             return "break"
 
@@ -1325,8 +1429,13 @@ class JanelaOrdemServicoMixin:
             janela.bind(_evento, _fechar_menu_contexto)
         janela.bind("<Escape>", _fechar_menu_contexto)
 
-        def _criar_card(it: dict, indice: int) -> None:
-            """Monta um cartão (ou linha) para um item da ordem de serviço."""
+        def _criar_card(it: dict, indice: int,
+                        pos: int | None = None) -> None:
+            """Monta um cartão (ou linha) para um item da ordem de serviço.
+
+            ``pos`` insere o cartão numa posição existente (edição) em vez
+            de anexá-lo ao fim da lista.
+            """
             tipo = (it.get("tipo") or "slide").strip().lower() or "slide"
             tipo_emoji = {"hino": "📖", "versiculo": "✝️", "video": "🎬",
                           "audio": "🎵", "slide": "📄", "anuncio": "📢",
@@ -1342,6 +1451,15 @@ class JanelaOrdemServicoMixin:
 
             ativo = cartoes_ativo["on"]
             fundo = COR_CARD if ativo else COR_FUNDO_LISTA
+            # Ao criar só um cartão (add/editar), já usa o wrap atual; numa
+            # remontagem completa o _layout ainda está None e o valor real
+            # é aplicado no fim de _carregar_itens.
+            wrap_inicial = 380
+            if _layout.get("wrap") is not None:
+                try:
+                    wrap_inicial = int(_layout["wrap"])
+                except (TypeError, ValueError):
+                    wrap_inicial = 380
             card = tk.Frame(cards_host, bg=fundo, bd=0,
                             highlightthickness=1 if ativo else 0,
                             highlightbackground=COR_BORDA,
@@ -1377,14 +1495,15 @@ class JanelaOrdemServicoMixin:
             titulo_frame.columnconfigure(0, weight=1)
             lbl_titulo = tk.Label(
                 titulo_frame, text=titulo, bg=fundo, fg=COR_TITULO,
-                anchor='w', justify='left', wraplength=380,
+                anchor='w', justify='left', wraplength=wrap_inicial,
                 font=("Arial", 11, "bold" if ativo else "normal"))
             lbl_titulo.grid(row=0, column=0, sticky='ew')
             lbl_url = None
             if url:
                 lbl_url = tk.Label(titulo_frame, text=url, bg=fundo,
                                    fg='#58a6ff', anchor='w', justify='left',
-                                   wraplength=380, font=("Arial", 9))
+                                   wraplength=wrap_inicial,
+                                   font=("Arial", 9))
                 lbl_url.grid(row=1, column=0, sticky='ew', pady=(2, 0))
 
             lbl_dur = tk.Label(card, text=texto_duracao, bg=fundo,
@@ -1412,15 +1531,33 @@ class JanelaOrdemServicoMixin:
                 "titulo": lbl_titulo,
                 "url": lbl_url,
                 "duracao": lbl_dur,
+                "numero": lbl_num,
                 "fundos": fundos,
                 "fontes": fontes,
                 "check_var": check_var,
                 "check": chk,
             }
-            _ordem.append(iid)
+            if pos is None or pos >= len(_ordem):
+                _ordem.append(iid)
+            else:
+                _ordem.insert(pos, iid)
+                # O frame já foi empacotado no fim; reposiciona antes do
+                # cartão que ficou logo abaixo dele.
+                if pos + 1 < len(_ordem):
+                    prox = _ordem[pos + 1]
+                    prox_frame = (_cards.get(prox) or {}).get("frame")
+                    if prox_frame is not None:
+                        try:
+                            card.pack_configure(before=prox_frame)
+                        except tk.TclError:
+                            pass
             _textos_base[iid] = texto_duracao
             if marcado:
-                _aplicar_estilo_reproduzido(iid)
+                # Durante a montagem aplica só o estilo local: a seleção
+                # visual é acertada numa única passada ao final de
+                # _carregar_itens. Sem isso, cada item marcado percorria
+                # todos os cartões já criados (O(n²) de configure).
+                _aplicar_estilo_reproduzido(iid, atualizar_selecao=False)
             if caminho:
                 _linhas_path[iid] = caminho
                 if _eh_url_youtube(caminho):
@@ -1446,32 +1583,139 @@ class JanelaOrdemServicoMixin:
                             lambda e, i=iid: _on_card_button_right(e, i))
                 _ligar_rolagem(widget)
 
+        def _mostrar_cartoes(mostrar: bool) -> None:
+            try:
+                lista_canvas.itemconfigure(
+                    _canvas_window,
+                    state='normal' if mostrar else 'hidden')
+            except tk.TclError:
+                pass
+
         def _carregar_itens():
-            for widget in cards_host.winfo_children():
-                if widget is _ind.get("line"):
-                    continue
+            _cancelar_layout_agendado()
+            # Numa remontagem completa força o wrap a ser reaplicado aos
+            # cartões recém-criados mesmo que a largura não tenha mudado.
+            _layout["wrap"] = None
+            # Monta com a lista oculta: o X/Wayland não chega a exibir os
+            # cartões vazios no meio da construção.
+            _mostrar_cartoes(False)
+            try:
+                for widget in cards_host.winfo_children():
+                    if widget is _ind.get("line"):
+                        continue
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        pass
+                _cards.clear()
+                _ordem.clear()
+                _linhas_path.clear()
+                _textos_base.clear()
+                _contagem["iid"] = None
+                _esconder_indicador()
+                serv = _servico_atual()
+                if not serv:
+                    _definir_selecao(set())
+                else:
+                    for i, it in enumerate(list(serv.get("itens") or [])):
+                        _criar_card(it, i + 1)
+                    _selecionados.intersection_update(_cards)
+                    if _ancora["id"] not in _cards:
+                        _ancora["id"] = None
+                    if _foco["id"] not in _cards:
+                        _foco["id"] = None
+                    _atualizar_selecao_visual()
+                _atualizar_layout_canvas()
+            finally:
+                # Só revela quando todos os cartões já estão montados.
+                _mostrar_cartoes(True)
                 try:
-                    widget.destroy()
+                    lista_canvas.configure(
+                        scrollregion=lista_canvas.bbox('all'))
                 except tk.TclError:
                     pass
-            _cards.clear()
-            _ordem.clear()
-            _linhas_path.clear()
-            _textos_base.clear()
-            _contagem["iid"] = None
-            _esconder_indicador()
-            serv = _servico_atual()
-            if not serv:
-                _definir_selecao(set())
+
+        def _indice_do_card(iid: str) -> int | None:
+            try:
+                return _ordem.index(iid)
+            except ValueError:
+                return None
+
+        def _destruir_card(iid: str) -> None:
+            dados_card = _cards.pop(iid, None)
+            if dados_card is not None:
+                try:
+                    dados_card["frame"].destroy()
+                except tk.TclError:
+                    pass
+            if iid in _ordem:
+                _ordem.remove(iid)
+            _linhas_path.pop(iid, None)
+            _textos_base.pop(iid, None)
+            _selecionados.discard(iid)
+            if _ancora["id"] == iid:
+                _ancora["id"] = None
+            if _foco["id"] == iid:
+                _foco["id"] = None
+            if _contagem["iid"] == iid:
+                _contagem["iid"] = None
+
+        def _atualizar_cartao_item(it: dict) -> None:
+            """Cria/atualiza SÓ o cartão do item (sem remontar a lista)."""
+            iid = str(it.get("id"))
+            pos = _indice_do_card(iid)
+            selecionado = iid in _selecionados
+            focado = _foco["id"] == iid
+            ancora = _ancora["id"] == iid
+            if pos is not None:
+                _destruir_card(iid)
+                indice = pos + 1
             else:
-                for i, it in enumerate(list(serv.get("itens") or [])):
-                    _criar_card(it, i + 1)
-                _selecionados.intersection_update(_cards)
-                if _ancora["id"] not in _cards:
-                    _ancora["id"] = None
-                if _foco["id"] not in _cards:
-                    _foco["id"] = None
-                _atualizar_selecao_visual()
+                indice = len(_ordem) + 1
+            _criar_card(it, indice, pos=pos)
+            if selecionado:
+                _selecionados.add(iid)
+            if focado:
+                _foco["id"] = iid
+            if ancora:
+                _ancora["id"] = iid
+            _atualizar_selecao_visual()
+            _cancelar_layout_agendado()
+            _atualizar_layout_canvas()
+
+        def _reordenar_cards_visual() -> None:
+            """Reordena os widgets existentes sem destruir/recriar cartões."""
+            frames = []
+            for iid in _ordem:
+                dados = _cards.get(iid)
+                if dados is not None:
+                    frames.append(dados["frame"])
+            if not frames:
+                return
+            atuais = list(cards_host.pack_slaves())
+            if atuais and atuais[0] is not frames[0]:
+                try:
+                    frames[0].pack_configure(before=atuais[0])
+                except tk.TclError:
+                    pass
+            anterior = frames[0]
+            for frame in frames[1:]:
+                try:
+                    frame.pack_configure(after=anterior)
+                except tk.TclError:
+                    pass
+                anterior = frame
+            for indice, iid in enumerate(_ordem, start=1):
+                dados = _cards.get(iid)
+                if dados is None:
+                    continue
+                numero = dados.get("numero")
+                if numero is not None:
+                    try:
+                        numero.configure(text=str(indice))
+                    except tk.TclError:
+                        pass
+            _cancelar_layout_agendado()
             _atualizar_layout_canvas()
 
         def _item_em_reproducao():
@@ -1578,6 +1822,15 @@ class JanelaOrdemServicoMixin:
                     except tk.TclError:
                         pass
                     _timers[chave] = None
+            for chave in ("inicio", "poll"):
+                timer = _duracao_timers.get(chave)
+                if timer is not None:
+                    try:
+                        janela.after_cancel(timer)
+                    except tk.TclError:
+                        pass
+                    _duracao_timers[chave] = None
+            _cancelar_layout_agendado()
             _esconder_indicador()
 
         janela.bind("<Destroy>", _ao_destruir_janela, add="+")
@@ -2870,7 +3123,8 @@ class JanelaOrdemServicoMixin:
                             parent=add_win)
                 if getattr(self, "_shutting_down", False):
                     return
-                _carregar_itens()
+                item_salvo = itens[idx] if item_edit else novo_item
+                _atualizar_cartao_item(item_salvo)
                 _selecionar_item(str(novo_id), ver=True)
                 add_win.destroy()
 
@@ -2923,8 +3177,11 @@ class JanelaOrdemServicoMixin:
                 tkinter.messagebox.showwarning(
                     "⚠️", "Não foi possível salvar a reordenação.", parent=janela)
                 return
-            _carregar_itens()
-            _selecionar_item(str(itens[idx_novo].get("id")), ver=True)
+            if idx_atual < len(_ordem) and idx_novo < len(_ordem):
+                _ordem[idx_atual], _ordem[idx_novo] = (
+                    _ordem[idx_novo], _ordem[idx_atual])
+            _reordenar_cards_visual()
+            _selecionar_item(alvo, ver=True)
 
         # Snapshot da janela principal p/ restauração após cada item do
         # serviço vive em self._snapshot_servico (criado no __init__:
