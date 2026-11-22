@@ -555,6 +555,21 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 
 ## 📜 Histórico recente
 
+### 2.4.5
+
+- **Ordem de Projeção — abertura mais leve**: os cartões são montados sem
+  piscar, as durações das mídias rodam com no máximo duas consultas
+  simultâneas e os cartões deixam de consultar o banco item a item.
+- **Ordem de Projeção — arrastar e selecionar**: a geometria dos cartões é
+  calculada uma vez ao arrastar e a seleção/marcação de "reproduzido"
+  atualiza só o cartão afetado.
+- **Marcar reproduzidos**: cliques seguidos são gravados num único
+  salvamento; a janela relê o `servicos.json` antes de gravar e não
+  sobrescreve uma marcação feita pelo controle remoto ou pela execução.
+- **YouTube ao colar a URL**: título e duração são consultados quase de
+  imediato (o atraso maior fica só para quem digita) e o salvamento
+  reaproveita a consulta já em andamento, sem chamar o yt-dlp duas vezes.
+
 ### 2.4.4
 
 - **Espaço em campos de texto**: apertar espaço em Cidade, UF ou na busca não

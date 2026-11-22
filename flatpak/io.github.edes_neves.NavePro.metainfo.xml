@@ -35,6 +35,16 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.4.5" date="2026-11-22">
+      <description>
+        <ul>
+          <li>Ordem de Projeção: cartões abrem sem piscar, durações com concorrência limitada e consultas de banco agrupadas</li>
+          <li>Ordem de Projeção: arraste mais rápido e seleção/marcação de reproduzido atualiza só o cartão afetado</li>
+          <li>Marcar reproduzidos: cliques agrupados num único salvamento, sem sobrescrever alterações do controle remoto ou da execução</li>
+          <li>YouTube: colar a URL consulta título/duração quase de imediato e o salvamento reaproveita a consulta em andamento</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.4.4" date="2026-11-20">
       <description>
         <ul>
