@@ -268,6 +268,20 @@ check("avisa só depois de restaurar a tela",
       and getattr(nos_telao["_retornar_ao_relogio"].body[-1].value.func,
                   "attr", "") == "_avisar_fim_projecao")
 
+chamadas_restaurar = [
+    no.func.attr
+    for no in ast.walk(nos_telao["restaurar_tela"])
+    if isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+]
+check("ao fim do vídeo/áudio o foco volta à apresentação",
+      chamadas_restaurar.count("_avisar_fim_projecao") == 3,
+      str(chamadas_restaurar))
+check("restaurar_tela devolve o foco depois de restaurar o relógio",
+      isinstance(nos_telao["restaurar_tela"].body[-1], ast.Expr)
+      and isinstance(nos_telao["restaurar_tela"].body[-1].value, ast.Call)
+      and getattr(nos_telao["restaurar_tela"].body[-1].value.func,
+                  "attr", "") == "_avisar_fim_projecao")
+
 src_nave = open(os.path.join(RAIZ, "NavePro.py"), encoding="utf-8").read()
 src_exec = open(os.path.join(RAIZ, "navepro", "ui", "execucao_servico.py"),
                 encoding="utf-8").read()

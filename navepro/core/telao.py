@@ -609,6 +609,10 @@ class TelaoWindow:
         ele é retomado no lugar do relógio; caso contrário, restaura o
         relógio + temperatura. Sem isso, a hora/temperatura redesenham por
         cima do número e o nome/frase da contagem some.
+
+        Ao fim de um vídeo/áudio o foco foi para o player externo; depois de
+        restaurar a tela, o foco é devolvido à apresentação em curso (se
+        houver) para o PowerPoint/Impress voltar a responder sem clique.
         """
         if not self._raiz_viva():
             return
@@ -622,12 +626,14 @@ class TelaoWindow:
             sub = self._current_temp or ""
             self._projetar_medidor(
                 cfg, modo, subtitulo=sub, tempo=tempo, guardar_temp=False)
+            self._avisar_fim_projecao()
             return
         if self._is_visible and self.mostrando_relogio:
             return  # Já está visível
         # Medidor suspenso por uma projeção (slide/texto/imagem) que estava
         # na tela quando a música/vídeo terminou: retoma ele, não o relógio.
         if self._retomar_medidor_ativo():
+            self._avisar_fim_projecao()
             return
         self._current_alpha = self._alpha_relogio()
         self._is_visible = True
@@ -641,6 +647,7 @@ class TelaoWindow:
         if getattr(self, "_relogio_oculto", False):
             # O operador optou por não exibir o relógio: mantém limpo.
             self._esconder_textos_relogio()
+        self._avisar_fim_projecao()
     # ── Projeção de texto (letra / versículo) ─────────────────────
     def configurar_projecao(self, cfg: dict | None = None) -> None:
         """Define as configurações de aparência da projeção de texto."""

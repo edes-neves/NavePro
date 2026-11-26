@@ -66,6 +66,9 @@ class Stub(Telao):
         # Sem operador registrado (fora do fluxo do telão real): não assume.
         return False
 
+    def _avisar_fim_projecao(self):
+        self.avisos_foco = getattr(self, 'avisos_foco', 0) + 1
+
     def seguir(self, guardar_temp=True):
         self.projetados.append(('SEGUIR', guardar_temp))
 
@@ -112,6 +115,8 @@ check('sem medidor: volta ao relógio', t.mostrando_relogio is True)
 check('sem medidor: reexibe a janela', t.deiconified == 1, str(t.deiconified))
 check('sem medidor: zera os caches', t._current_text == "" and t._current_temp == "")
 check('sem medidor: não reprojeta medidor', not t.projetados, str(t.projetados))
+check('sem medidor: devolve o foco à apresentação',
+      getattr(t, 'avisos_foco', 0) == 1, str(getattr(t, 'avisos_foco', 0)))
 
 # 4) projeção comum (letra) ativa: também volta ao relógio
 t = Stub(modo=None, mostrando_letra=True, mostrando_relogio=False)
@@ -123,11 +128,15 @@ check('letra projetada: não reprojeta medidor', not t.projetados, str(t.projeta
 t = Stub(modo=None, mostrando_letra=False, mostrando_relogio=True, visible=True)
 t.restaurar_tela()
 check('já no relógio: não reexibe', t.deiconified == 0, str(t.deiconified))
+check('já no relógio: não mexe no foco',
+      getattr(t, 'avisos_foco', 0) == 0, str(getattr(t, 'avisos_foco', 0)))
 
 # 6) telão morto: não faz nada
 t = Stub(modo="contagem", mostrando_letra=True, vivo=False)
 t.restaurar_tela()
 check('telão morto: não reprojeta', not t.projetados, str(t.projetados))
+check('telão morto: não mexe no foco',
+      getattr(t, 'avisos_foco', 0) == 0, str(getattr(t, 'avisos_foco', 0)))
 
 print('\n' + ('TODOS OS CASOS PASSARAM' if not falhas else f'FALHAS: {falhas}'))
 sys.exit(1 if falhas else 0)
