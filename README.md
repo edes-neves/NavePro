@@ -555,6 +555,17 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 
 ## 📜 Histórico recente
 
+### 2.4.6
+
+- **Apresentações — foco após vídeo**: ao terminar um vídeo (ou áudio)
+  durante uma apresentação do PowerPoint/Impress aberta pela Ordem de
+  Projeção, o foco volta sozinho para a apresentação, que continua
+  respondendo ao controle/passador sem precisar clicar no computador. Vale
+  também para vários vídeos em sequência e para a parada manual do player.
+- **Painel no GNOME 51**: no Linux, o painel do operador abre com uma folga
+  em relação à área útil do monitor, evitando que o mutter 51 mova a janela
+  para o telão; no Windows o tamanho pedido continua exato.
+
 ### 2.4.5
 
 - **Ordem de Projeção — abertura mais leve**: os cartões são montados sem

@@ -35,6 +35,15 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.4.6" date="2026-11-26">
+      <description>
+        <ul>
+          <li>Apresentações: ao terminar um vídeo ou áudio, o foco volta sozinho ao PowerPoint/Impress e a apresentação continua respondendo sem clique</li>
+          <li>Vários vídeos em sequência e a parada manual do player também devolvem o foco à apresentação</li>
+          <li>Painel do operador permanece no monitor primário no GNOME 51 (mutter 51), sem pular para o telão</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.4.5" date="2026-11-22">
       <description>
         <ul>
