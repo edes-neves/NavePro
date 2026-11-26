@@ -327,7 +327,16 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
                 try:
                     # Em alguns setups, setar a geometria completa antes de maximizar
                     # evita que a janela fique parcialmente atrás da barra de tarefas
-                    self.root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
+                    # No Linux, o GNOME 51 (mutter 51) move para o outro monitor a
+                    # janela que não cabe na área útil (barra superior + dock).
+                    # Pedir o tamanho exato do monitor fazia o painel abrir no
+                    # telão; a folga abaixo mantém o painel no monitor primário.
+                    if _eh_windows():
+                        largura, altura = m.width, m.height
+                    else:
+                        largura = max(900, m.width - 40)
+                        altura = max(620, m.height - 80)
+                    self.root.geometry(f"{largura}x{altura}+{m.x}+{m.y}")
                     self.root.update_idletasks()
                     self.root.state('zoomed')
                     self.root.update_idletasks()
@@ -1607,7 +1616,14 @@ class AppInterface(NavegacaoSlidesMixin, TemaPainelMixin, ControleRemotoMixin, E
             except Exception:
                 if hasattr(self, '_monitor_geo') and self._monitor_geo:
                     mw, mh, mx, my = self._monitor_geo
-                    self.root.geometry(f"{mw}x{mh}+{mx}+{my}")
+                    if _eh_windows():
+                        w, h = mw, mh
+                    else:
+                        # Mesma folga da abertura: com o tamanho exato do
+                        # monitor, o mutter 51 move a janela para o telão.
+                        w = max(900, mw - 40)
+                        h = max(620, mh - 80)
+                    self.root.geometry(f"{w}x{h}+{mx}+{my}")
             self._maximizado = True
 
     def _area_monitor_operador(self) -> tuple[int, int, int, int] | None:
