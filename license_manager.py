@@ -101,15 +101,53 @@ _ESTADO: dict = {
 }
 
 
+_CAMINHOS_MACHINE_ID = ("/etc/machine-id", "/var/lib/dbus/machine-id")
+
+
+def _machine_id_sistema() -> str:
+    """Conteúdo de ``/etc/machine-id`` (estável por instalação do sistema)."""
+    for caminho in _CAMINHOS_MACHINE_ID:
+        try:
+            with open(caminho, encoding="utf-8") as arquivo:
+                valor = arquivo.read().strip()
+        except OSError:
+            continue
+        if valor:
+            return valor
+    return ""
+
+
+def _node_maquina() -> str:
+    """Nó estável usado no cálculo do ID da máquina.
+
+    Em sandboxes (Flatpak) o ``uuid.getnode()`` normalmente cai no fallback
+    aleatório do Python: o valor muda a cada execução e fazia o teste de 30
+    dias reiniciar (e a licença não reconhecer mais a máquina). O fallback
+    aleatório liga o bit de multicast do primeiro octeto; nesse caso usamos o
+    ``/etc/machine-id`` do sistema, que é estável entre execuções. Fora dos
+    sandboxes o MAC real continua sendo usado como antes, preservando o ID de
+    instalações existentes.
+    """
+    try:
+        node = uuid.getnode()
+    except Exception:
+        node = 0
+    if node and not ((node >> 40) & 1):
+        return str(node)
+    return _machine_id_sistema() or str(node)
+
+
 def obter_id_maquina() -> str:
     """Identificador de hardware estável, com 16 caracteres hexadecimais.
 
     Combina o MAC/nó retornado por :func:`uuid.getnode` com dados da
     plataforma (sistema, arquitetura e processador). O hostname não entra:
-    trocar o nome do computador não pode invalidar a licença.
+    trocar o nome do computador não pode invalidar a licença. Quando o nó é
+    aleatório (Flatpak), usa o ``/etc/machine-id`` para não reiniciar o teste
+    a cada abertura.
     """
     base = "|".join((
-        str(uuid.getnode()),
+        _node_maquina(),
         platform.system(),
         platform.machine(),
         platform.processor(),

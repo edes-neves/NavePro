@@ -91,6 +91,61 @@ def _rodar() -> int:
            len(mid) == 16 and all(c in "0123456789ABCDEF" for c in mid), mid)
     checar("machine_id é estável", lm.obter_id_maquina() == mid)
 
+    # Flatpak: uuid.getnode() cai no fallback aleatório (bit de multicast
+    # ligado), que mudava o machine_id a cada execução e reiniciava o teste.
+    _getnode_original = lm.uuid.getnode
+    _machine_id_original = lm._machine_id_sistema
+    try:
+        aleatorios = iter([0xEDA1B2C3D4E5, 0x11AABBCCDDEE])
+        lm.uuid.getnode = lambda: next(aleatorios)
+        lm._machine_id_sistema = lambda: "6fa2f0abc9b5477a92916119f8324ef4"
+        id_flatpak_1 = lm.obter_id_maquina()
+        id_flatpak_2 = lm.obter_id_maquina()
+        checar("machine_id estável com uuid.getnode aleatório (Flatpak)",
+               id_flatpak_1 == id_flatpak_2, id_flatpak_1)
+
+        lm.uuid.getnode = lambda: 0xEDA1B2C3D4E5
+        no_flatpak = lm._node_maquina()
+        checar("Flatpak usa o /etc/machine-id como nó",
+               no_flatpak == "6fa2f0abc9b5477a92916119f8324ef4", no_flatpak)
+
+        lm.uuid.getnode = lambda: 0xE01A0D0D07  # MAC unicast (host)
+        lm._machine_id_sistema = lambda: "outro-machine-id"
+        no_host = lm._node_maquina()
+        checar("MAC real continua com prioridade",
+               no_host == str(0xE01A0D0D07), no_host)
+
+        lm.uuid.getnode = lambda: 0xEDA1B2C3D4E5
+        lm._machine_id_sistema = lambda: ""
+        no_sem_machine_id = lm._node_maquina()
+        checar("sem /etc/machine-id ainda devolve o nó",
+               no_sem_machine_id == str(0xEDA1B2C3D4E5), no_sem_machine_id)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            trial_flatpak = os.path.join(tmp, lm.NOME_ARQUIVO_TESTE)
+            dirs_original_tmp = lm._diretorios_licenca
+            trial_original_tmp = lm._caminho_registro_teste
+            try:
+                lm._diretorios_licenca = lambda: [tmp]
+                lm._caminho_registro_teste = lambda: trial_flatpak
+                lm._machine_id_sistema = lambda: "6fa2f0abc9b5477a92916119f8324ef4"
+                # Cada abertura sorteia outro nó aleatório.
+                aleatorios = iter([0xEDA1B2C3D4E5, 0x11AABBCCDDEE])
+                lm.uuid.getnode = lambda: next(aleatorios)
+                mid_flatpak = lm.obter_id_maquina()
+                _gravar_teste(trial_flatpak, mid_flatpak, inicio_dias=5)
+                ok, _motivo, _ = lm.verificar_licenca(
+                    consultar_lista_negra=False)
+                restantes = lm.status_licenca()["dias_restantes"]
+                checar("teste não reinicia com nó aleatório a cada abertura",
+                       ok and restantes == lm.DIAS_TESTE - 5, str(restantes))
+            finally:
+                lm._diretorios_licenca = dirs_original_tmp
+                lm._caminho_registro_teste = trial_original_tmp
+    finally:
+        lm.uuid.getnode = _getnode_original
+        lm._machine_id_sistema = _machine_id_original
+
     chave, publico = _chave_teste()
     publico_original = lm.CHAVE_PUBLICA_PEM
     dirs_original = lm._diretorios_licenca
