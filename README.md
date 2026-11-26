@@ -565,6 +565,10 @@ No Windows esta pasta é `%USERPROFILE%\.navepro`.
 - **Painel no GNOME 51**: no Linux, o painel do operador abre com uma folga
   em relação à área útil do monitor, evitando que o mutter 51 mova a janela
   para o telão; no Windows o tamanho pedido continua exato.
+- **Licença/teste no Flatpak**: o ID da máquina deixa de mudar a cada
+  abertura no sandbox (usa o `/etc/machine-id` quando o `uuid.getnode` é
+  aleatório). Assim o teste de 30 dias passa a contar de verdade e a licença
+  reconhece a máquina nas próximas execuções.
 
 ### 2.4.5
 

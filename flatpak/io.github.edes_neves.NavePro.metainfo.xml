@@ -41,6 +41,7 @@
           <li>Apresentações: ao terminar um vídeo ou áudio, o foco volta sozinho ao PowerPoint/Impress e a apresentação continua respondendo sem clique</li>
           <li>Vários vídeos em sequência e a parada manual do player também devolvem o foco à apresentação</li>
           <li>Painel do operador permanece no monitor primário no GNOME 51 (mutter 51), sem pular para o telão</li>
+          <li>Licença/teste no Flatpak: ID de máquina estável; o teste de 30 dias conta de verdade e a licença reconhece a máquina</li>
         </ul>
       </description>
     </release>
